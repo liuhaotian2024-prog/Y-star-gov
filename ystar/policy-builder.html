@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Y* Policy Builder</title>
+<style>
+:root{--bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;--border:#2e3350;--accent:#6c8ef7;--green:#4ade80;--yellow:#fbbf24;--red:#f87171;--text:#e2e8f0;--muted:#7c85a2;--code-bg:#0d1020;--radius:8px;--mono:'JetBrains Mono','Fira Code',monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;min-height:100vh}
+header{padding:22px 36px 16px;border-bottom:1px solid var(--border);display:flex;align-items:baseline;gap:12px}
+header h1{font-size:20px;font-weight:700}header h1 span{color:var(--accent)}
+header p{color:var(--muted);font-size:12px}
+.layout{display:grid;grid-template-columns:1fr 400px;min-height:calc(100vh - 65px)}
+.left{border-right:1px solid var(--border);overflow-y:auto}
+.right{background:var(--code-bg);position:sticky;top:0;height:calc(100vh - 65px);display:flex;flex-direction:column}
+.tabs{display:flex;border-bottom:1px solid var(--border);background:var(--surface)}
+.tab{padding:10px 18px;font-size:12px;font-weight:600;letter-spacing:.4px;cursor:pointer;border-bottom:2px solid transparent;color:var(--muted);transition:all .15s;user-select:none}
+.tab.active{color:var(--text);border-bottom-color:var(--accent)}
+.tab-panel{display:none;padding:24px 28px}.tab-panel.active{display:block}
+.lbadge{display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;padding:3px 8px;border-radius:20px;margin-bottom:16px}
+.l1{background:rgba(74,222,128,.12);color:var(--green)}.l2{background:rgba(251,191,36,.12);color:var(--yellow)}.l3{background:rgba(248,113,113,.12);color:var(--red)}
+.stitle{font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin:18px 0 10px;display:flex;align-items:center;gap:8px}
+.stitle::after{content:'';flex:1;height:1px;background:var(--border)}
+.tpl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:7px;margin-bottom:18px}
+.tbtn{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 11px;cursor:pointer;text-align:left;transition:all .15s}
+.tbtn:hover{border-color:var(--accent);background:rgba(108,142,247,.08)}
+.tbtn .tn{font-size:11px;font-weight:600;font-family:var(--mono);color:var(--accent)}
+.tbtn .td{font-size:10px;color:var(--muted);margin-top:1px}
+.ablock{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px;overflow:hidden}
+.ahead{display:flex;align-items:center;padding:8px 12px;background:var(--surface2);border-bottom:1px solid var(--border);gap:7px}
+.aname{background:transparent;border:none;border-bottom:1px solid var(--border);color:var(--accent);font-family:var(--mono);font-size:13px;font-weight:600;width:120px;padding:2px 3px;outline:none}
+.aname:focus{border-bottom-color:var(--accent)}
+.abody{padding:12px}
+.rm{margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;padding:0 3px}.rm:hover{color:var(--red)}
+.row{display:flex;align-items:flex-start;gap:8px;margin-bottom:8px}
+.row label{min-width:125px;font-size:11px;color:var(--muted);padding-top:7px;font-family:var(--mono);line-height:1.4}
+.row label .h{display:block;font-size:10px;color:#3a4060;margin-top:1px}
+.tw{flex:1;display:flex;flex-wrap:wrap;gap:4px;min-height:32px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 6px;cursor:text}
+.tw:focus-within{border-color:var(--accent)}
+.tag{display:inline-flex;align-items:center;gap:3px;border-radius:4px;padding:2px 6px;font-size:11px;font-family:var(--mono)}
+.at{background:rgba(74,222,128,.06);border:1px solid rgba(74,222,128,.3);color:var(--green)}
+.dt{background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.3);color:var(--red)}
+.ct{background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.3);color:var(--yellow)}
+.tx{cursor:pointer;color:var(--muted);font-size:10px;padding:1px}.tx:hover{color:var(--red)}
+.ti{background:none;border:none;outline:none;color:var(--text);font-size:11px;font-family:var(--mono);min-width:55px;flex:1}
+.nin{background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px;padding:5px 7px;width:78px;outline:none}
+.nin:focus{border-color:var(--accent)}
+.pin{background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--accent);font-family:var(--mono);font-size:12px;padding:5px 7px;width:85px;outline:none}
+.pin:focus{border-color:var(--accent)}
+.txin{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px;padding:5px 7px;outline:none}
+.txin:focus{border-color:var(--accent)}
+.sel{background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px 7px;font-size:12px;outline:none;cursor:pointer}
+.addbtn{width:100%;padding:8px;background:transparent;border:1px dashed var(--border);border-radius:var(--radius);color:var(--muted);cursor:pointer;font-size:12px;transition:all .15s;margin-top:3px}
+.addbtn:hover{border-color:var(--accent);color:var(--accent);background:rgba(108,142,247,.05)}
+.ca{width:100%;background:var(--code-bg);border:1px solid var(--border);border-radius:6px;color:#c9d1d9;font-family:var(--mono);font-size:12px;line-height:1.6;padding:9px 11px;resize:vertical;outline:none;min-height:65px}
+.ca:focus{border-color:var(--accent)}
+.eh{font-size:11px;color:#3a4060;font-family:var(--mono);background:rgba(108,142,247,.05);border-left:2px solid var(--accent);padding:5px 9px;border-radius:0 4px 4px 0;white-space:pre;margin-bottom:6px}
+.rh{padding:11px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--muted);font-family:var(--mono)}
+.dots{display:flex;gap:5px}.dot{width:9px;height:9px;border-radius:50%}
+.dr{background:#ff5f56}.dy{background:#ffbd2e}.dg{background:#27c93f}
+pre#out{flex:1;overflow-y:auto;padding:16px;font-family:var(--mono);font-size:12px;line-height:1.75;color:#c9d1d9;white-space:pre}
+.cpbtn{background:rgba(108,142,247,.15);border:1px solid rgba(108,142,247,.3);color:var(--accent);border-radius:5px;padding:4px 10px;font-size:11px;cursor:pointer}
+.cpbtn:hover{background:rgba(108,142,247,.25)}.cpbtn.ok{color:var(--green);border-color:rgba(74,222,128,.3)}
+.kw{color:#c792ea}.fn{color:#82aaff}.str{color:#c3e88d}.num{color:#f78c6c}
+.cmt{color:#4a5570;font-style:italic}.key{color:#ffcb6b}.pun{color:#89ddff}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Y<span>*</span> Policy Builder</h1>
+  <p>Three-layer constraint builder → executable Python · fill blanks, get code</p>
+</header>
+<div class="layout">
+<div class="left">
+  <div class="tabs">
+    <div class="tab active" onclick="st('l1',this)">① Fill in blanks</div>
+    <div class="tab" onclick="st('l2',this)">② Advanced</div>
+    <div class="tab" onclick="st('l3',this)">③ Expert</div>
+  </div>
+
+  <div id="tab-l1" class="tab-panel active">
+    <div class="lbadge l1">● Layer 1 — Basic · covers 95% of needs</div>
+    <div class="stitle">Quick start — built-in templates</div>
+    <div class="tpl-grid" id="tg"></div>
+    <div class="stitle">Your agents / roles / players</div>
+    <div id="ag"></div>
+    <button class="addbtn" onclick="addA()">＋ Add agent / role</button>
+  </div>
+
+  <div id="tab-l2" class="tab-panel">
+    <div class="lbadge l2">◆ Layer 2 — HigherOrderContract · time, aggregate, context</div>
+    <div class="stitle">Rate limit / temporal</div>
+    <div class="row"><label>max calls<span class="h">rate limit</span></label>
+      <div style="display:flex;gap:7px;align-items:center;flex:1">
+        <input type="number" class="nin" id="mc" placeholder="e.g. 100" min="1" oninput="upd()">
+        <span style="color:var(--muted);font-size:11px">per</span>
+        <select class="sel" id="win" onchange="upd()">
+          <option value="">— not set —</option><option value="60">minute</option>
+          <option value="3600">hour</option><option value="86400">day</option>
+        </select>
+      </div>
+    </div>
+    <div class="row"><label>min interval<span class="h">seconds</span></label><input type="number" class="nin" id="mi" placeholder="e.g. 5" oninput="upd()"></div>
+    <div class="row"><label>requires before<span class="h">prerequisites</span></label><input type="text" class="txin" id="rb" placeholder='task_acked, auth_check' oninput="upd()"></div>
+    <div class="stitle">Aggregate / cumulative</div>
+    <div class="row"><label>param name<span class="h">e.g. amount</span></label><input type="text" class="pin" id="ap" placeholder="amount" oninput="upd()"></div>
+    <div class="row"><label>daily max<span class="h">cumulative/day</span></label><input type="number" class="nin" id="dm" placeholder="e.g. 50000" oninput="upd()"></div>
+    <div class="row"><label>hourly max<span class="h">cumulative/hour</span></label><input type="number" class="nin" id="hm" placeholder="e.g. 5000" oninput="upd()"></div>
+    <div class="stitle">Context / roles / environment</div>
+    <div class="row"><label>required roles<span class="h">comma-separated</span></label><input type="text" class="txin" id="rr" placeholder='operator, finance' oninput="upd()"></div>
+    <div class="row"><label>deny env<span class="h">blocked envs</span></label><input type="text" class="txin" id="de" placeholder='production, prod, live' oninput="upd()"></div>
+    <div class="stitle">Scheduled window</div>
+    <div class="row"><label>allowed hours<span class="h">HH:MM-HH:MM</span></label>
+      <div style="display:flex;gap:7px;flex:1">
+        <input type="text" class="txin" id="hrs" placeholder="09:30-17:00" oninput="upd()" style="flex:none;width:120px">
+        <input type="text" class="txin" id="tz" placeholder="UTC" oninput="upd()" style="flex:none;width:150px">
+      </div>
+    </div>
+    <div class="stitle">Resource limits</div>
+    <div class="row"><label>max exec secs</label><input type="number" class="nin" id="es" placeholder="e.g. 30" oninput="upd()"></div>
+    <div class="row"><label>max memory MB</label><input type="number" class="nin" id="mm" placeholder="e.g. 512" oninput="upd()"></div>
+  </div>
+
+  <div id="tab-l3" class="tab-panel">
+    <div class="lbadge l3">▲ Layer 3 — Expert · direct Python expressions</div>
+    <p style="color:var(--muted);font-size:12px;margin-bottom:18px">For parameter relationships, output validation, complex conditions.</p>
+    <div class="stitle">invariant — input constraints</div>
+    <div class="eh">
+# Evaluated against call parameters — all must hold
+invariant=["amount > 0", "amount &lt;= budget"]
+invariant=["price * qty &lt;= notional_limit"]
+invariant=["withdrawal &lt;= available_balance"]</div>
+    <textarea class="ca" id="inv" rows="3" placeholder='["amount > 0", "amount <= budget"]' oninput="upd()"></textarea>
+    <div class="stitle" style="margin-top:16px">optional_invariant — conditional</div>
+    <div class="eh">
+# Only checked when the parameter is present in the call
+optional_invariant=["price >= cost * 1.1"]</div>
+    <textarea class="ca" id="opt" rows="2" placeholder='["price >= cost * 1.1"]' oninput="upd()"></textarea>
+    <div class="stitle" style="margin-top:16px">postcondition — output validation</div>
+    <div class="eh">
+# Checked against the function return value ("result")
+postcondition=["result.get('status') == 'ok'"]</div>
+    <textarea class="ca" id="post" rows="2" placeholder="[\"result.get('status') == 'ok'\"]" oninput="upd()"></textarea>
+  </div>
+</div>
+
+<div class="right">
+  <div class="rh">
+    <div style="display:flex;align-items:center;gap:8px">
+      <div class="dots"><div class="dot dr"></div><div class="dot dy"></div><div class="dot dg"></div></div>
+      <span>policy.py</span>
+    </div>
+    <button class="cpbtn" id="cb" onclick="doCopy()">Copy</button>
+  </div>
+  <pre id="out"></pre>
+</div>
+</div>
+
+<script>
+let seq=0;const A={};
+const T={
+  rd:{d:"Developer",can_write_to:["./workspace/"],cannot_touch:[".env","production","prod","secret"],cannot_run:["rm -rf","git push --force"]},
+  rd_strict:{d:"Dev strict",can_write_to:["./workspace/src/","./workspace/tests/"],cannot_touch:[".env","production","secret","../","/etc/"],cannot_run:["rm -rf","sudo","git push --force"]},
+  ops:{d:"DevOps",can_write_to:["./deploy/","./config/staging/"],cannot_touch:[".env","credentials","/etc/passwd"],cannot_run:["rm -rf /","sudo rm"],field_env_deny:["production","prod","live"]},
+  ops_deploy:{d:"Deploy",can_write_to:["./deploy/"],cannot_touch:["credentials",".env"],cannot_run:["rm -rf /"],required_roles:["operator"],max_calls_per_hour:10},
+  finance:{d:"Finance",cannot_run:["DELETE FROM","DROP TABLE","TRUNCATE"],amount_min:0.01,amount_limit:10000,aggregate_param:"amount",aggregate_daily_max:50000,required_roles:["finance"],allowed_hours:"08:00-18:00"},
+  finance_strict:{d:"Finance+",cannot_run:["DELETE FROM","DROP TABLE"],amount_min:0.01,amount_limit:1000,required_roles:["finance","approver"],allowed_hours:"09:00-17:00"},
+  sales:{d:"Sales/CRM",can_call:["api.hubspot.com","api.salesforce.com","api.stripe.com"],cannot_touch:["192.168.","10.","localhost","credentials",".env"],price_min:0,max_calls_per_hour:200},
+  sales_outreach:{d:"Outreach",can_call:["api.hubspot.com","api.sendgrid.com"],cannot_touch:["192.168.","payment","billing"],cannot_run:["DELETE FROM"],max_calls_per_hour:100},
+  manager:{d:"Manager",cannot_touch:["/etc/","/sys/","credentials",".env"],cannot_run:["rm -rf","sudo","DROP TABLE","kubectl delete"],required_roles:["manager"]},
+  analyst:{d:"Analyst",cannot_run:["DELETE FROM","DROP TABLE","UPDATE","INSERT","TRUNCATE"],cannot_touch:["credentials",".env"],field_env_deny:["production","prod"]},
+  openclaw_agent:{d:"OpenClaw",can_write_to:["./workspace/"],cannot_touch:[".env","credentials","production","secret"],cannot_run:["rm -rf","sudo"],max_calls_per_hour:500},
+  readonly:{d:"Read-only",cannot_run:["rm","delete","drop","truncate","insert","update"],cannot_touch:[".env","credentials","secret"]},
+  sandboxed:{d:"Sandboxed",can_write_to:["./sandbox/"],cannot_touch:[".env","credentials","/etc/","production"],cannot_run:["rm -rf","sudo","chmod","curl | bash"],max_calls_per_hour:50},
+  clinician:{d:"Clinician",can_call:["ehr.internal","lab.internal"],cannot_touch:["billing_admin"],cannot_run:["DELETE FROM patients"],required_roles:["clinician"],allowed_hours:"06:00-22:00"},
+  readonly:{d:"Read-only",cannot_run:["rm","delete","drop","truncate","insert","update","write","mkdir"],cannot_touch:[".env","credentials","secret"]},
+};
+
+function initGrid(){
+  const g=document.getElementById("tg");
+  Object.entries(T).forEach(([k,t])=>{
+    const b=document.createElement("div");b.className="tbtn";b.dataset.k=k;
+    b.innerHTML=`<div class="tn">${k}</div><div class="td">${t.d}</div>`;
+    b.onclick=()=>{document.querySelectorAll(".tbtn").forEach(x=>x.style.borderColor="");b.style.borderColor="var(--accent)";addA(k,t);};
+    g.appendChild(b);
+  });
+}
+
+function addA(name,d){
+  const id="a"+(++seq);const dd=d||{};
+  A[id]={name:name||("agent_"+seq),cw:[...(dd.can_write_to||[])],cc:[...(dd.can_call||[])],ct:[...(dd.cannot_touch||[])],cr:[...(dd.cannot_run||[])],lims:[],fd:dd.field_env_deny?{env:dd.field_env_deny}:{}};
+  // extract numeric limits
+  Object.entries(dd).forEach(([k,v])=>{
+    if((k.endsWith("_limit")||k.endsWith("_max"))&&typeof v==="number"){const p=k.replace(/_limit$|_max$/,"");let l=A[id].lims.find(x=>x.p===p);if(!l){l={p,mn:"",mx:""};A[id].lims.push(l);}l.mx=v;}
+    if(k.endsWith("_min")&&typeof v==="number"){const p=k.replace(/_min$/,"");let l=A[id].lims.find(x=>x.p===p);if(!l){l={p,mn:"",mx:""};A[id].lims.push(l);}l.mn=v;}
+  });
+  renderA(id);upd();
+}
+function rmA(id){delete A[id];document.getElementById("b"+id)?.remove();upd();}
+
+function renderA(id){
+  const a=A[id];const el=document.createElement("div");el.className="ablock";el.id="b"+id;
+  el.innerHTML=`<div class="ahead"><span style="color:var(--muted);font-size:10px;font-family:var(--mono)">name:</span>
+    <input class="aname" value="${a.name}" oninput="A['${id}'].name=this.value;upd()">
+    <button class="rm" onclick="rmA('${id}')">×</button></div>
+    <div class="abody">
+      ${mr(id,"cw","can_write_to","paths…","at","Allowed paths<br><span class='h'>e.g. ./workspace/dev/</span>")}
+      ${mr(id,"cc","can_call","domains…","at","Allowed domains<br><span class='h'>e.g. api.hubspot.com</span>")}
+      ${mr(id,"ct","cannot_touch","strings…","dt","Blocked strings<br><span class='h'>e.g. .env, production</span>")}
+      ${mr(id,"cr","cannot_run","commands…","ct","Blocked commands<br><span class='h'>e.g. rm -rf</span>")}
+      ${mlr(id)}
+    </div>`;
+  document.getElementById("ag").appendChild(el);
+  ["cw","cc","ct","cr"].forEach(f=>a[f].forEach(v=>addTag(id,f,v)));
+  a.lims.forEach((l,i)=>renderLim(id,i,l));
+}
+function mr(id,f,lbl,ph,cls,tip){return`<div class="row"><label>${lbl}<br><span class="h">${tip}</span></label><div class="tw" id="tw_${id}_${f}" onclick="this.querySelector('.ti').focus()"><input class="ti" placeholder="${ph}" onkeydown="onTag(event,'${id}','${f}','${cls}')"></div></div>`;}
+function mlr(id){return`<div class="row"><label>numeric limits<br><span class="h">param_limit / param_min</span></label><div style="flex:1"><div id="ls_${id}"></div><button onclick="addLim('${id}')" style="font-size:10px;color:var(--muted);background:none;border:none;cursor:pointer;padding:2px 0;margin-top:2px">＋ add limit</button></div></div>`;}
+function addLim(id){const i=A[id].lims.length;A[id].lims.push({p:"",mn:"",mx:""});renderLim(id,i,{p:"",mn:"",mx:""});upd();}
+function renderLim(id,i,l){const c=document.getElementById("ls_"+id);const r=document.createElement("div");r.id=`l_${id}_${i}`;r.style="display:flex;align-items:center;gap:6px;margin-bottom:5px";r.innerHTML=`<input class="pin" placeholder="param" value="${l.p||""}" oninput="A['${id}'].lims[${i}].p=this.value;upd()"><label style="min-width:auto;padding:0;font-size:11px">min</label><input type="number" class="nin" placeholder="—" value="${l.mn||""}" oninput="A['${id}'].lims[${i}].mn=this.value;upd()"><label style="min-width:auto;padding:0;font-size:11px">max</label><input type="number" class="nin" placeholder="—" value="${l.mx||""}" oninput="A['${id}'].lims[${i}].mx=this.value;upd()"><button onclick="rmLim('${id}',${i})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px">×</button>`;c.appendChild(r);}
+function rmLim(id,i){A[id].lims.splice(i,1);document.getElementById(`l_${id}_${i}`)?.remove();upd();}
+
+function onTag(e,id,f,cls){
+  if(e.key==="Enter"||e.key===","){e.preventDefault();const v=e.target.value.replace(/,/g,"").trim();if(!v)return;if(!A[id][f].includes(v)){A[id][f].push(v);addTag(id,f,v);upd();}e.target.value="";}
+  if(e.key==="Backspace"&&!e.target.value){const arr=A[id][f];if(arr.length){arr.pop();const tw=document.getElementById(`tw_${id}_${f}`);tw.querySelectorAll(".tag").forEach((t,i,a)=>{if(i===a.length-1)t.remove();});upd();}}
+}
+function addTag(id,f,val){const tw=document.getElementById(`tw_${id}_${f}`);const inp=tw.querySelector(".ti");const c={cw:"at",cc:"at",ct:"dt",cr:"ct"}[f]||"";const t=document.createElement("span");t.className=`tag ${c}`;t.innerHTML=`${val}<span class="tx" onclick="rmTag(this,'${id}','${f}')">×</span>`;tw.insertBefore(t,inp);}
+function rmTag(x,id,f){const tag=x.parentElement;const v=tag.childNodes[0].textContent;const i=A[id][f].indexOf(v);if(i>-1)A[id][f].splice(i,1);tag.remove();upd();}
+
+function st(id,tab){document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));document.querySelectorAll(".tab-panel").forEach(p=>p.classList.remove("active"));tab.classList.add("active");document.getElementById("tab-"+id).classList.add("active");}
+
+function upd(){
+  const ids=Object.keys(A).filter(id=>document.getElementById("b"+id));
+  const L=[];
+  const ho=hasHO();const l3=hasL3();
+  const b2b=ids.some(id=>["manager","rd","sales","finance","ops","ceo","hr","analyst","dev"].includes((A[id]?.name||"").toLowerCase()));
+  L.push(`<span class="kw">from</span> <span class="fn">ystar</span> <span class="kw">import</span> from_template, Policy`);
+  if(b2b)L.push(`<span class="kw">from</span> <span class="fn">ystar.patterns</span> <span class="kw">import</span> Company`);
+  if(ho)L.push(`<span class="kw">from</span> <span class="fn">ystar.dimensions</span> <span class="kw">import</span> (`);
+  if(ho)L.push(`    HigherOrderContract, TemporalConstraint, AggregateConstraint,`);
+  if(ho)L.push(`    ContextConstraint, ScheduledWindow, ResourceConstraint,`);
+  if(ho)L.push(`)`);
+  if(l3)L.push(`<span class="kw">from</span> <span class="fn">ystar</span> <span class="kw">import</span> IntentContract`);
+  L.push("");
+
+  if(ho){L.push(`<span class="cmt"># ── Layer 2: HigherOrderContract ────────────────────</span>`);L.push(...buildHO());L.push("");}
+  if(l3){
+    L.push(`<span class="cmt"># ── Layer 3: expert constraints ─────────────────────</span>`);
+    L.push(`<span class="key">expert</span> <span class="pun">=</span> IntentContract(`);
+    const inv=g("inv");if(inv)L.push(`    <span class="key">invariant</span><span class="pun">=</span><span class="str">${e(inv)}</span>,`);
+    const opt=g("opt");if(opt)L.push(`    <span class="key">optional_invariant</span><span class="pun">=</span><span class="str">${e(opt)}</span>,`);
+    const post=g("post");if(post)L.push(`    <span class="key">postcondition</span><span class="pun">=</span><span class="str">${e(post)}</span>,`);
+    L.push(`)`);L.push("");
+  }
+
+  L.push(`<span class="cmt"># ── Policy ──────────────────────────────────────────</span>`);
+  const cls=b2b?"Company":"Policy";const kw=b2b?"agents":"rules";const vr=b2b?"company":"policy";
+  L.push(`<span class="key">${vr}</span> <span class="pun">=</span> <span class="fn">${cls}</span>(<span class="key">${kw}</span><span class="pun">={</span>`);
+  ids.forEach(id=>{
+    const a=A[id];if(!a)return;const nm=a.name||`agent_${id}`;
+    L.push(`    <span class="str">"${nm}"</span><span class="pun">:</span> from_template(<span class="pun">{</span>`);
+    const rows=[];
+    if(a.cw.length)rows.push(["can_write_to",a.cw]);if(a.cc.length)rows.push(["can_call",a.cc]);
+    if(a.ct.length)rows.push(["cannot_touch",a.ct]);if(a.cr.length)rows.push(["cannot_run",a.cr]);
+    a.lims.forEach(l=>{if(!l.p)return;if(l.mx!=="")rows.push([`${l.p}_limit`,[+l.mx]]);if(l.mn!=="")rows.push([`${l.p}_min`,[+l.mn]]);});
+    rows.forEach(([k,vals])=>{const fv=vals.map(v=>typeof v==="number"?`<span class="num">${v}</span>`:`<span class="str">"${v}"</span>`).join(", ");L.push(`        <span class="key">"${k}"</span><span class="pun">:</span> ${vals.length>1||typeof vals[0]==="string"?`[${fv}]`:fv},`);});
+    L.push(`    <span class="pun">}),</span>`);
+  });
+  L.push(`<span class="pun">})</span>`);L.push("");
+
+  L.push(`<span class="cmt"># ── Usage ───────────────────────────────────────────</span>`);
+  const m=b2b?"act":"check";
+  if(ids.length>0){const n=(A[ids[0]]?.name)||"agent";
+    L.push(`result <span class="pun">=</span> ${vr}.<span class="fn">${m}</span>(<span class="str">"${n}"</span>, <span class="str">"write"</span>, path<span class="pun">=</span><span class="str">"./workspace/main.py"</span>)`);
+    L.push(`result <span class="pun">=</span> ${vr}.<span class="fn">${m}</span>(<span class="str">"${n}"</span>, <span class="str">"fetch"</span>, url<span class="pun">=</span><span class="str">"https://api.example.com"</span>)`);
+    L.push(`result <span class="pun">=</span> ${vr}.<span class="fn">${m}</span>(<span class="str">"${n}"</span>, <span class="str">"execute"</span>, command<span class="pun">=</span><span class="str">"pytest tests/"</span>)`);
+  }
+  L.push(`<span class="cmt"># result.allowed → True / False</span>`);
+  L.push(`<span class="cmt"># result.reason  → "ok" or denial message</span>`);
+  document.getElementById("out").innerHTML=L.join("\n");
+}
+
+function buildHO(){
+  const L=[];L.push(`higher_order <span class="pun">=</span> HigherOrderContract(`);
+  const mc=g("mc"),win=g("win"),mi=g("mi"),rb=g("rb");
+  if(mc&&win||mi||rb){L.push(`    <span class="key">temporal</span><span class="pun">=</span>TemporalConstraint(`);
+    if(mc&&win)L.push(`        <span class="key">max_calls_per_window</span><span class="pun">=</span><span class="num">${mc}</span>, <span class="key">window_seconds</span><span class="pun">=</span><span class="num">${win}</span>,`);
+    if(mi)L.push(`        <span class="key">min_interval_seconds</span><span class="pun">=</span><span class="num">${mi}</span>,`);
+    if(rb)L.push(`        <span class="key">requires_before</span><span class="pun">=</span>[${rb.split(",").map(s=>`<span class="str">"${s.trim()}"</span>`).join(", ")}],`);
+    L.push(`    ),`);}
+  const ap=g("ap"),dm=g("dm"),hm=g("hm");
+  if(ap&&(dm||hm)){const mx=dm||hm,ws=dm?"86400":"3600";
+    L.push(`    <span class="key">aggregate</span><span class="pun">=</span>AggregateConstraint(<span class="key">param</span><span class="pun">=</span><span class="str">"${ap}"</span>, <span class="key">max_sum</span><span class="pun">=</span><span class="num">${mx}</span>, <span class="key">window_seconds</span><span class="pun">=</span><span class="num">${ws}</span>),`);}
+  const rr=g("rr"),de=g("de");
+  if(rr||de){L.push(`    <span class="key">context</span><span class="pun">=</span>ContextConstraint(`);
+    if(rr)L.push(`        <span class="key">required_roles</span><span class="pun">=</span>[${rr.split(",").map(s=>`<span class="str">"${s.trim()}"</span>`).join(", ")}],`);
+    if(de)L.push(`        <span class="key">deny_env</span><span class="pun">=</span>[${de.split(",").map(s=>`<span class="str">"${s.trim()}"</span>`).join(", ")}],`);
+    L.push(`    ),`);}
+  const hrs=g("hrs"),tz=g("tz")||"UTC";
+  if(hrs&&hrs.includes("-")){const[st,et]=hrs.split("-");L.push(`    <span class="key">scheduled_window</span><span class="pun">=</span>ScheduledWindow(<span class="key">start_time</span><span class="pun">=</span><span class="str">"${st.trim()}"</span>, <span class="key">end_time</span><span class="pun">=</span><span class="str">"${et.trim()}"</span>, <span class="key">timezone</span><span class="pun">=</span><span class="str">"${tz}"</span>),`);}
+  const es=g("es"),mm=g("mm");
+  if(es||mm){L.push(`    <span class="key">resource</span><span class="pun">=</span>ResourceConstraint(`);
+    if(es)L.push(`        <span class="key">max_execution_seconds</span><span class="pun">=</span><span class="num">${es}</span>,`);
+    if(mm)L.push(`        <span class="key">max_memory_mb</span><span class="pun">=</span><span class="num">${mm}</span>,`);
+    L.push(`    ),`);}
+  L.push(`)`);return L;
+}
+function hasHO(){return!!(g("mc")||g("mi")||g("rb")||(g("ap")&&(g("dm")||g("hm")))||g("rr")||g("de")||g("hrs")||g("es")||g("mm"));}
+function hasL3(){return!!(g("inv")||g("opt")||g("post"));}
+function g(id){return document.getElementById(id)?.value?.trim()||"";}
+function e(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+function doCopy(){navigator.clipboard.writeText(document.getElementById("out").innerText).then(()=>{const b=document.getElementById("cb");b.textContent="Copied ✓";b.classList.add("ok");setTimeout(()=>{b.textContent="Copy";b.classList.remove("ok");},1800);});}
+
+initGrid();
+addA("rd",T.rd);addA("finance",T.finance);addA("sales",T.sales);
+upd();
+</script>
+</body>
+</html>
