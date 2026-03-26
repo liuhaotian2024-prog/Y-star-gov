@@ -1321,6 +1321,13 @@ def _cmd_hook_install() -> None:
 
     # 构建 hook 命令
     python_exec = sys.executable
+
+    # Windows Git Bash fix: convert backslashes to forward slashes
+    # Git Bash converts C:\path to /c/path (MSYS path conversion)
+    # Using forward slashes works on both Windows and Unix
+    if sys.platform == "win32":
+        python_exec = python_exec.replace("\\", "/")
+
     hook_script = (
         "import json,sys;"
         "from ystar import Policy;"
@@ -1334,7 +1341,7 @@ def _cmd_hook_install() -> None:
 
     ystar_hook = {
         "type":    "command",
-        "command": f"{python_exec} -c '{hook_script}'",
+        "command": f"MSYS_NO_PATHCONV=1 {python_exec} -c '{hook_script}'",
     }
 
     hook_entry = {
@@ -1710,6 +1717,13 @@ def _cmd_hook_install() -> None:
 
     # 构建 hook 命令
     python_exec = sys.executable
+
+    # Windows Git Bash fix: convert backslashes to forward slashes
+    # Git Bash converts C:\path to /c/path (MSYS path conversion)
+    # Using forward slashes works on both Windows and Unix
+    if sys.platform == "win32":
+        python_exec = python_exec.replace("\\", "/")
+
     hook_script = (
         "import json,sys;"
         "from ystar import Policy;"
@@ -1723,7 +1737,7 @@ def _cmd_hook_install() -> None:
 
     ystar_hook = {
         "type":    "command",
-        "command": f"{python_exec} -c '{hook_script}'",
+        "command": f"MSYS_NO_PATHCONV=1 {python_exec} -c '{hook_script}'",
     }
 
     hook_entry = {
@@ -1890,8 +1904,8 @@ def _cmd_doctor(args: list) -> None:
         if loc.exists():
             try:
                 cfg = json.loads(loc.read_text())
-                hooks = cfg.get("hooks", cfg.get("preToolUseHooks", []))
-                if any("ystar" in str(h).lower() for h in hooks):
+                hooks_obj = cfg.get("hooks", {})
+                if "ystar" in __import__("json").dumps(hooks_obj).lower():
                     ok(f"Hook registered in {loc}")
                     hook_found = True
                     break
