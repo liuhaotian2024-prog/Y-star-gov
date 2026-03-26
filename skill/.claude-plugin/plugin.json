@@ -1,0 +1,17 @@
+{
+  "name": "ystar-governance",
+  "version": "0.41.0",
+  "description": "Runtime governance for multi-agent Claude Code workflows. Validates delegation chains, enforces compliance contracts, and writes tamper-proof CIEU audit records before any subagent spawn or handoff.",
+  "author": {
+    "name": "Haotian Liu",
+    "email": "liuhaotian2024@gmail.com",
+    "url": "https://github.com/liuhaotian2024-prog/Y-star-gov"
+  },
+  "homepage": "https://github.com/liuhaotian2024-prog/Y-star-gov",
+  "repository": "https://github.com/liuhaotian2024-prog/Y-star-gov",
+  "license": "MIT",
+  "keywords": [
+    "governance", "compliance", "multi-agent", "audit",
+    "delegation-chain", "security", "cieu", "ystar"
+  ]
+}
