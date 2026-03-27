@@ -94,21 +94,66 @@ Every subagent spawned by Claude Code is governed by the same hook. No per-agent
 Y*gov ships a first-class OpenClaw adapter at `ystar/domains/openclaw/`.
 
 ```python
-from ystar.domains.openclaw import AccountabilityPack
-
-pack = AccountabilityPack(
-    agents=["orchestrator", "cs_agent", "data_agent"],
-    agents_md_path="./AGENTS.md",
+from ystar.domains.openclaw import OpenClawDomainPack, make_openclaw_chain
+from ystar.domains.openclaw.adapter import (
+    make_session, enforce, OpenClawEvent, EventType, SessionState, extract_params
 )
-pack.attach(claw_session)
+
+# Create domain pack with role-based contracts
+pack = OpenClawDomainPack(
+    workspace_root="./workspace",
+    doc_domains=["docs.python.org", "github.com"]
+)
+
+# Build delegation chain: planner -> coder -> tester
+chain = make_openclaw_chain(
+    pack=pack,
+    allowed_paths=["./src", "./tests"],
+    allowed_domains=None,  # restrict external access
+    include_release=False
+)
+
+# Create session state
+session = make_session(
+    session_id="demo_session",
+    allowed_paths=["./src"],
+    pack=pack,
+    chain=chain,
+    strict=False  # set True for production
+)
+
+# Enforce governance on events
+event = OpenClawEvent(
+    event_type=EventType.FILE_WRITE,
+    agent_id="coder_agent",
+    session_id="demo_session",
+    file_path="./src/main.py",
+    patch_summary="Fix null pointer bug",
+    task_ticket_id="TASK-001"
+)
+
+decision, cieu_records = enforce(event, session)
+# decision: EnforceDecision.ALLOW / DENY / ESCALATE
+# cieu_records: List[OpenClawCIEU] with full audit trail
 ```
 
-`AccountabilityPack` registers Y*gov governance on all OpenClaw tool calls in the session. CIEU records are written to the shared audit chain alongside OpenClaw's native telemetry.
+**Core functions:**
+
+- `OpenClawDomainPack`: 6 role contracts (planner, coder, tester, reviewer, researcher, release)
+- `make_openclaw_chain()`: builds delegation chain with monotonicity guarantees
+- `make_session()`: creates SessionState with delegation chain
+- `enforce()`: main governance entry point (ALLOW/DENY/ESCALATE)
+- `extract_params()`: converts OpenClawEvent to check() parameters
 
 **OpenClaw-specific features:**
+
 - Delegation chain verification on `HANDOFF` events
 - Obligation SLA enforcement across agent handoffs
+- Goal drift detection on `SUBAGENT_SPAWN`
+- Skill supply chain risk assessment
 - Cross-session audit chain continuity
+
+**Note:** OpenClaw integration test coverage is incomplete — tests coming in v0.42
 
 ### LangChain / CrewAI / AutoGen (coming)
 
