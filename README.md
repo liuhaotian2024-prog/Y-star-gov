@@ -149,6 +149,15 @@ decision, cieu_records = enforce(event, session)
 
 **Test coverage:** 55 passing tests, 979 lines of test code covering all 6 role contracts, delegation chain verification, and CIEU record generation.
 
+**Common issues:**
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `enforce()` always returns `DENY` | `agent_id` not recognized | Use exact role names: `coder_agent`, `planner_agent`, `tester_agent`, `reviewer_agent` |
+| `enforce()` returns `DENY` on your file | `file_path` outside `allowed_paths` | Set `allowed_paths` to match your project, e.g. `['./my_project']` |
+| `enforce()` returns `DENY` with `strict=True` | `task_ticket_id` missing | Add `task_ticket_id='TASK-001'` to `OpenClawEvent`, or use `strict=False` for dev |
+| `ystar doctor` shows red checks on fresh install | Session not initialized yet | Run `ystar setup --yes` first, then `ystar hook-install` |
+
 ### Python API (Direct Integration)
 
 Use Y*gov's core API directly in any Python application:
@@ -426,4 +435,5 @@ Enterprise licensing · Domain pack development · Research collaboration
 **Source:** https://github.com/liuhaotian2024-prog/Y-star-gov
 **Issues:** https://github.com/liuhaotian2024-prog/Y-star-gov/issues
 **Docs:** https://ystar-gov.com (coming soon)
+
 
