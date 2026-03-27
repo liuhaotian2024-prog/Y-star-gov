@@ -66,6 +66,16 @@ When a task is assigned, an obligation record is created with a deadline. If the
 
 Every decision (ALLOW or DENY, with full context) is written to a SHA-256 Merkle-chained SQLite database. Records cannot be modified after creation. Any tampering breaks the hash chain, detectable by `ystar verify`.
 
+### The 5 Pain Points Y*gov Solves
+
+| # | Pain Point | Without Y*gov | With Y*gov |
+|---|-----------|---------------|------------|
+| 1 | Permission violation | Agent accesses any file; discovered after the fact | `check()` blocks before execution in 0.042ms |
+| 2 | Obligation forgotten | Task assigned, then lost; no one notices | OmissionEngine two-phase SOFT/HARD enforcement |
+| 3 | Audit record fabrication | Agent self-reports compliance; unverifiable | SHA-256 Merkle chain; tampering breaks the hash |
+| 4 | Subagent privilege escalation | Child agent inherits or exceeds parent permissions | DelegationChain monotonicity verified at spawn |
+| 5 | Governance rules unauditable | Rules buried in prompts; regulators cannot inspect | AGENTS.md plaintext; every decision traces to rule version |
+
 ---
 
 ## Integration Paths
