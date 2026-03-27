@@ -1,4 +1,4 @@
-# ystar/_cli.py  —  CLI entrypoint v0.41.0
+# ystar/_cli.py  —  CLI entrypoint v0.41.1
 """
 ystar CLI
 

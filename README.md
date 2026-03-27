@@ -416,7 +416,7 @@ Enterprise licensing · Domain pack development · Research collaboration
 
 **Tests failing:**
 - Run tests: `python -m pytest tests/ -v`
-- Expected: 86/86 passing
+- Expected: 141/141 passing
 - Report failures to: liuhaotian2024@gmail.com
 
 ---
