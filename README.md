@@ -295,6 +295,124 @@ Every enforcement decision is written to the CIEU database (`cieu_events` table)
 
 ---
 
+## Natural Language → Contract: The Full Flow
+
+Writing governance rules in plain English is how Y*gov is meant to be used. Here is the complete pipeline from a human-readable policy document to an enforced, auditable contract.
+
+### Step 1 — Write your rules in AGENTS.md
+```markdown
+# AGENTS.md
+- Never access /production or /staging environments
+- Do not execute trades above $10,000 without risk approval
+- Only access: api.stripe.com, api.alpaca.markets
+- Never run rm, sudo, or git push --force
+- All tasks must complete within 300 seconds
+```
+
+### Step 2 — Translate to IntentContract
+
+Y*gov provides two translation paths. The LLM path handles complex, indirect, and context-dependent language. The regex path works offline as a fallback.
+
+**With LLM (recommended):**
+```python
+import anthropic
+from ystar.kernel.nl_to_contract import translate_to_contract
+
+client = anthropic.Anthropic()  # uses ANTHROPIC_API_KEY
+
+def llm_call(prompt: str) -> str:
+    resp = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=1000,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return resp.content[0].text
+
+policy = open("AGENTS.md").read()
+contract_dict, confidence_label, confidence_score = translate_to_contract(
+    policy,
+    api_call_fn=llm_call   # omit this argument to use regex fallback
+)
+# confidence_score: 0.90 (LLM) or 0.50 (regex)
+# contract_dict keys: deny, deny_commands, only_domains,
+#                     only_paths, value_range, obligation_timing, invariant
+```
+
+**Without LLM (regex fallback, no API key required):**
+```python
+contract_dict, label, score = translate_to_contract(policy)
+# score = 0.50 — covers explicit patterns, misses indirect constraints
+```
+
+### Step 3 — Quality check before activation
+
+Before any contract is activated, Y*gov runs a deterministic quality check that catches:
+
+- Invariant syntax errors (malformed Python expressions)
+- `value_range` direction inversions (`min > max`)
+- Missing coverage for high-risk patterns found in the source text
+- Conflicting rules
+```python
+from ystar.kernel.nl_to_contract import validate_contract_draft
+from ystar.kernel.dimensions import IntentContract
+
+draft = IntentContract(
+    name="my_agent",
+    deny=contract_dict.get("deny", []),
+    deny_commands=contract_dict.get("deny_commands", []),
+    only_domains=contract_dict.get("only_domains", []),
+    value_range=contract_dict.get("value_range", {}),
+    obligation_timing=contract_dict.get("obligation_timing", {}),
+    invariant=contract_dict.get("invariant", []),
+)
+
+report = validate_contract_draft(draft, source_text=policy)
+# report.issues  — list of problems found
+# report.passed  — True if safe to activate
+```
+
+### Step 4 — Human confirmation, then activate
+
+The contract does not enforce anything until you explicitly confirm it. This is by design — the LLM translation step is the only non-deterministic part of the pipeline. Once confirmed, all enforcement is fully deterministic.
+```python
+if report.passed:
+    print("Contract ready. Review:")
+    print(f"  deny:              {draft.deny}")
+    print(f"  deny_commands:     {draft.deny_commands}")
+    print(f"  only_domains:      {draft.only_domains}")
+    print(f"  value_range:       {draft.value_range}")
+    print(f"  obligation_timing: {draft.obligation_timing}")
+
+    confirm = input("Activate this contract? [y/N]: ")
+    if confirm.lower() == "y":
+        active_contract = draft
+        print("Contract activated.")
+else:
+    print("Issues found — review before activating:")
+    for issue in report.issues:
+        print(f"  WARNING: {issue}")
+```
+
+### The complete trust boundary
+```
+AGENTS.md (human-written, version-controlled)
+    │
+    ▼  translate_to_contract()    ← only non-deterministic step
+Draft IntentContract
+    │
+    ▼  validate_contract_draft()  ← deterministic quality check
+Validation Report (issues / passed)
+    │
+    ▼  Human confirms             ← explicit human gate
+Active IntentContract
+    │
+    ▼  check() / enforce()        ← fully deterministic, 0.042ms
+ALLOW / DENY + CIEU record (SHA-256 chained, tamper-evident)
+```
+
+Once a contract is active, **no LLM is involved in any enforcement decision**. Every ALLOW and DENY is computed deterministically from the rules you confirmed. Every decision is written to the CIEU audit chain with the SHA-256 hash of the contract that produced it — auditors can verify exactly which version of your policy governed each agent action.
+
+
 ## Differentiation
 
 ### vs. LangSmith / Langfuse / Arize
