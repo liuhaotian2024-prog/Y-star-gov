@@ -1,4 +1,4 @@
-# Y*gov — Runtime Governance Framework for Multi-Agent AI Systems
+﻿# Y*gov — Runtime Governance Framework for Multi-Agent AI Systems
 
 **v0.41.1 · MIT License · Y* Bridge Labs**
 
