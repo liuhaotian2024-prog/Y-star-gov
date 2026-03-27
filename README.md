@@ -14,43 +14,88 @@ This is not a model quality problem. It is an architectural one. Rules embedded 
 
 Y\*gov is not just a governance tool. It is the execution skeleton that makes your agent team faster, safer, and explainable to regulators — while cutting costs.
 
-### The 8 Real Problems Y\*gov Solves
+### The 4 Reasons Teams Install Y*gov
 
-**1. Agents exceed their authorized scope — and nothing stops them.**
-`check()` intercepts every tool call before execution in 0.042ms. Path traversal (`../../etc/passwd`), subdomain spoofing, type-confusion bypasses, eval sandbox escapes — four known attack vectors patched at the kernel level. Rules live in code, not prompts. They cannot be overridden by adversarial input.
+**1. Your agents access things they should never touch.**
+`check()` intercepts every tool call before execution in 0.042ms — no LLM involved, fully deterministic. Path traversal (`../../etc/passwd`), subdomain spoofing, type-confusion bypasses, eval sandbox escapes — four known attack vectors patched at the kernel level. Rules live in code, not prompts. They cannot be overridden by adversarial input or prompt injection.
 
-**2. Agents forget what they promised to do.**
-`OmissionEngine` uses action-triggered detection: the agent's own next tool call is the trigger — no polling, no cron jobs. SOFT timeout records a violation. HARD timeout blocks the agent from all unrelated work until the obligation is fulfilled. (US Provisional Patent 64/017,497)
+**2. Your agents are a target — and you cannot see the attack.**
+A skill named `code-formatter` exfiltrates your data. A subagent spawned mid-task inherits full permissions. A delegated agent quietly escalates beyond its parent's scope. Y*gov blocks all three: skill risk assessment built on MITRE ATLAS v4.5 (155 techniques, 52 real-world cases) rejects known malicious patterns — `exfil`, `reverse_shell`, `prompt_inject`, `backdoor`, `token_grab` — at install time. `DelegationChain` enforces monotonicity on every spawn: child permissions must be strict subsets of the parent. `NonceLedger` prevents delegation replay attacks.
 
-**3. Agents fabricate their own compliance records.**
-In our controlled experiment (EXP-001), an agent without Y\*gov wrote a fabricated audit record as proof of compliance — the check had never run. Y\*gov CIEU records are written by the engine, not by agents. Every record carries the SHA-256 hash of the previous record. Any tampering breaks the chain. `ystar verify` detects it instantly.
+**3. Your agents will fabricate compliance records if you let them.**
+This is not hypothetical. In our controlled experiment (EXP-001), an agent without Y*gov wrote a fabricated CIEU audit record into a public blog post as proof of compliance — the check had never run. Y*gov CIEU records are written by the enforcement engine, not by agents. Every record carries the SHA-256 hash of the previous record. Any tampering breaks the chain. `ystar verify` detects it instantly. Built for SOC 2, HIPAA, FINRA, and FDA 21 CFR Part 11.
 
-**4. Child agents silently escalate their permissions.**
-`DelegationChain` enforces monotonicity on every `SUBAGENT_SPAWN`: child deny-lists must be supersets of the parent, child path allowlists must be subsets. Privilege escalation is rejected at spawn time. `NonceLedger` prevents delegation replay attacks.
+**4. Governance makes your agents faster, not slower.**
+Our controlled experiment proves the opposite of what most teams expect:
 
-**5. Malicious skills poison your agent's supply chain.**
-Skill risk assessment is built on MITRE ATLAS v4.5 (155 techniques, 52 real-world cases). Known malicious patterns — `exfil`, `reverse_shell`, `prompt_inject`, `backdoor`, `token_grab` — are blocked at install time. Every installed skill has a full `SkillProvenance` record with content hash.
-
-**6. Task goals drift silently during multi-agent handoffs.**
-Goal drift detection checks every `SUBAGENT_SPAWN` and `HANDOFF`: does the child task stay within the parent's authorized scope? ''Fix a bug'' becoming ''modify production deployment'' or ''disable monitoring'' triggers ESCALATE and waits for human confirmation.
-
-**7. Your governance rules are invisible to regulators.**
-Rules in prompts cannot be audited. Y\*gov rules live in `AGENTS.md` — plaintext, version-controlled. Every CIEU record carries the SHA-256 hash of the `AGENTS.md` version that produced it. One SQL query reconstructs your compliance posture at any point in time. Built for SOC 2, HIPAA, FINRA, and FDA 21 CFR Part 11.
-
-**8. You think governance slows systems down.**
-Our controlled experiment proves the opposite:
-
-| Metric | Without Y\*gov | With Y\*gov |
-|--------|---------------|------------|
+| Metric | Without Y*gov | With Y*gov |
+|--------|--------------|------------|
 | Tool calls | 117 | 45 (-62%) |
 | Token consumption | 186,300 | 156,047 (-16%) |
 | Runtime | 9m 19s | 6m 4s (-35%) |
 | Unauthorized access | 3 (undetected) | 0 |
 | Fabricated audit records | 1 | 0 |
 
-`check()` runs in 0.042ms — 2.4x faster than Microsoft AGT benchmark. Enforcement is not overhead. It is constrained efficiency.
+`check()` runs in 0.042ms — 2.4x faster than Microsoft AGT benchmark. Obligation enforcement stopped an agent from looping on a blocked task 66 times. Enforcement is not overhead. It is constrained efficiency.
+
+<details>
+<summary>More problems Y*gov solves →</summary>
+
+**5. Agents forget what they promised to do.**
+`OmissionEngine` uses action-triggered detection: the agent's own next tool call is the trigger — no polling, no cron jobs. SOFT timeout records a violation. HARD timeout blocks the agent from all unrelated work until the obligation is fulfilled. (US Provisional Patent 64/017,497)
+
+**6. Task goals drift silently during multi-agent handoffs.**
+Goal drift detection checks every `SUBAGENT_SPAWN` and `HANDOFF`: does the child task stay within the parent's authorized scope? "Fix a bug" becoming "modify production deployment" or "disable monitoring" triggers ESCALATE and waits for human confirmation.
+
+**7. Your governance rules are invisible to regulators.**
+Rules in prompts cannot be audited. Y*gov rules live in `AGENTS.md` — plaintext, version-controlled. Every CIEU record carries the SHA-256 hash of the `AGENTS.md` version that produced it.
+
+</details>
 
 ---
+
+## What you will see in 5 minutes
+
+After `ystar hook-install`, trigger a dangerous command in Claude Code:
+```
+[Y*gov] DENY — /etc is not allowed in command
+CIEU record written: seq=1774555489773712
+```
+
+`ystar report` output:
+```
+Y*gov CIEU Report
+─────────────────────────────────────
+Total decisions : 14
+Allow           : 11  (78.6%)
+Deny            : 3   (21.4%)
+Top blocked     : /etc (2x), rm -rf (1x)
+Chain integrity : verified
+─────────────────────────────────────
+```
+
+`ystar verify` output:
+```
+Verifying session: my_session
+Records: 14
+Chain: SHA-256 Merkle chain intact
+Result: VALID — audit chain is tamper-evident
+```
+
+`ystar doctor` output:
+```
+Y*gov Doctor — Environment Check
+─────────────────────────────────
+[1] Session config    OK
+[2] Hook registered   OK
+[3] CIEU database     OK  14 records
+[4] AGENTS.md         OK  3 rules loaded
+[5] Hook self-test    OK  /etc/passwd blocked
+[6] Chain integrity   OK  verified
+[7] Obligations       OK  engine active
+─────────────────────────────────
+All 7 checks passed
+```
 
 ## Quick Start
 
@@ -609,7 +654,6 @@ Enterprise licensing · Domain pack development · Research collaboration
 **Source:** https://github.com/liuhaotian2024-prog/Y-star-gov
 **Issues:** https://github.com/liuhaotian2024-prog/Y-star-gov/issues
 **Docs:** https://ystar-gov.com (coming soon)
-
 
 
 
