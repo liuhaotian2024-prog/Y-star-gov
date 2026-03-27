@@ -1,4 +1,5 @@
 ---
+name: ystar-govern
 description: >
   Y*gov multi-agent governance. Use automatically when: spawning a subagent,
   handing off a task between agents, delegating work to a specialist agent,
