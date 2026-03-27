@@ -1502,7 +1502,7 @@ def _cmd_init() -> None:
     print("  Next steps:")
     print(f"   • Edit {out} to customise your rules")
     print( "   • Run:  python " + out)
-    print( "   • Docs: https://github.com/liuhaotian2024-prog/K9Audit")
+    print( "   • Docs: https://github.com/liuhaotian2024-prog/Y-star-gov")
     print()
 
 def main() -> None:

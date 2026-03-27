@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Y*gov runtime files
+.ystar_cieu.db
+.ystar_session.json
+*.db
+*.sqlite
+
+# Environment & secrets
+.env
+.env.*
+*.pem
+*.key
+*.secret
+id_rsa*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
