@@ -1,4 +1,4 @@
-{
+﻿{
   "hooks": {
     "PreToolUse": [
       {
@@ -23,5 +23,5 @@
       }
     ]
   },
-  "notes": "Y*gov 治理层配置。PreToolUse hook 在每次工具调用前验证合规性。安装方法：pip install ystar"
+  "notes": "Y*gov governance layer. PreToolUse hook verifies compliance before every tool call. Install: pip install ystar"
 }
