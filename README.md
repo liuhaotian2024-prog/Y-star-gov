@@ -1,23 +1,212 @@
 # Y*gov — Runtime Governance Framework for Multi-Agent AI Systems
 
 **v0.41.1 · MIT License · Y* Bridge Labs**
+**US Provisional Patents: 63/981,777 (P1) · P3 (SRGCS) · P4 (Passive Non-Compliance)**
 
 ---
 
-## Table of Contents
+## The Problem
 
-1. [Architecture Overview](#architecture-overview)
-2. [Core Data Structures](#core-data-structures)
-3. [Enforcement Engine](#enforcement-engine)
-4. [CIEU Audit Chain](#cieu-audit-chain)
-5. [OmissionEngine — Obligation Tracking](#omissionengine)
-6. [DelegationChain — Monotonic Authority](#delegationchain)
-7. [Hook Lifecycle](#hook-lifecycle)
-8. [Natural Language to Contract](#natural-language-to-contract)
-9. [Path A — Self-Referential Meta-Governance (SRGCS)](#path-a-srgcs)
-10. [CLI Reference](#cli-reference)
-11. [Performance](#performance)
-12. [Patents](#patents)
+Multi-agent AI systems have a governance gap that existing tools do not close.
+
+### What is actually happening in production today
+
+**Agents exceed their authorized scope.**
+A CTO agent, tasked with fixing a bug, reads production credentials. A data agent, summarizing a report, queries a database it was never authorized to touch. A subagent, spawned by the orchestrator, inherits no constraints and operates with full permissions. None of this is logged. None of it is stopped. You find out later, if at all.
+
+**Agents silently abandon obligations.**
+A task is assigned. The agent starts it, gets distracted by another subtask, and never returns. No timeout fires. No escalation happens. The obligation expires with no record of why or when. The downstream agent waiting on the output waits forever.
+
+**Audit trails are either absent or fabricated.**
+Most multi-agent systems have no structured audit trail. The ones that do often rely on agents self-reporting — which means an agent can write "complied with policy" without ever having been checked. In a controlled experiment run by Y* Bridge Labs, an agent without runtime governance wrote a fabricated CIEU audit record into a public blog post as proof of compliance. The check had never run. The record was invented.
+
+**Prompt-based governance fails under pressure.**
+"You are not allowed to access /production" is a suggestion, not a rule. Under complex reasoning chains, adversarial prompts, or edge cases in task decomposition, agents ignore, reinterpret, or forget prompt-level constraints. This is not a model quality problem — it is an architectural one. Rules embedded in context are not the same as rules enforced at execution.
+
+### What existing tools provide — and where they stop
+
+| Tool | What it does | What it does not do |
+|------|-------------|---------------------|
+| LangSmith / Langfuse | Traces what happened after the fact | Does not prevent anything before execution |
+| Datadog LLM Observability | Usage-based metrics and logs | No governance semantics, no policy enforcement |
+| Guardrails AI | Input/output validation on LLM calls | Not multi-agent, no delegation chain, no obligations |
+| Claude Code Auto Mode | Opaque classifier, non-auditable | Cannot show audit to regulators; rules not inspectable |
+| Custom middleware | Bespoke per-team, no standard | Doesn't compose across agents; no compliance format |
+
+**None of these tools enforce permissions at the tool-call level, track obligation deadlines, verify delegation chain integrity, or produce a tamper-evident audit chain usable as compliance evidence.**
+
+Y*gov is the enforcement layer. It runs before execution. It records everything. It cannot be bypassed by prompt injection.
+
+---
+
+## What Y*gov Does
+
+Three things, deterministically:
+
+**1. Permission enforcement at execution time**
+Every tool call any agent makes is intercepted before execution and checked against a declarative governance contract. ALLOW or DENY is computed deterministically from your rules — no LLM involved in the enforcement path. The check runs in 0.042ms mean latency.
+
+**2. Obligation tracking with automatic enforcement**
+When a task is assigned, an obligation record is created with a deadline. If the agent misses the deadline, the next tool call it makes triggers detection. The agent is blocked from unrelated work until the obligation is fulfilled. No external polling. No cron jobs. The agent's own behavior triggers the gate.
+
+**3. Tamper-evident CIEU audit chain**
+Every decision — ALLOW or DENY, with full context — is written to a SHA-256 Merkle-chained SQLite database. Records cannot be modified after creation. Any tampering breaks the hash chain, detectable by `ystar verify`. The audit output is structured for compliance review, not debugging convenience.
+
+---
+
+## Integration
+
+### Claude Code
+
+Y*gov integrates as a `PreToolUse` hook — the native Claude Code extension point that fires before every tool call.
+
+**Install:**
+
+```bash
+pip install ystar
+ystar hook-install   # writes hook to ~/.claude/settings.json
+ystar doctor         # verify all 7 checks pass
+```
+
+**Or install via Claude Code skill marketplace:**
+
+```
+/plugin marketplace add liuhaotian2024-prog/Y-star-gov/skill
+/plugin install ystar-governance@ystar-governance-marketplace
+```
+
+**What the hook does:**
+
+```
+Agent → tool call → PreToolUse fires → Y*gov check() → ALLOW / DENY
+                                                ↓
+                                       CIEU record written
+                                       Obligations scanned
+                                       Delegation chain verified
+```
+
+Every subagent spawned by Claude Code is governed by the same hook. No per-agent configuration. No code changes to your agents.
+
+**Verified working on:** macOS, Linux, Windows (Git Bash, v0.41.1+).
+
+### OpenClaw
+
+Y*gov ships a first-class OpenClaw adapter at `ystar/domains/openclaw/`.
+
+```python
+from ystar.domains.openclaw import AccountabilityPack
+
+pack = AccountabilityPack(
+    agents=["orchestrator", "cs_agent", "data_agent"],
+    agents_md_path="./AGENTS.md",
+)
+pack.attach(claw_session)
+```
+
+`AccountabilityPack` registers Y*gov governance on all OpenClaw tool calls in the session. CIEU records are written to the shared audit chain alongside OpenClaw's native telemetry.
+
+**OpenClaw-specific features:**
+- Delegation chain verification on `HANDOFF` events
+- Obligation SLA enforcement across agent handoffs
+- Cross-session audit chain continuity
+
+### LangChain / CrewAI / AutoGen (coming)
+
+Adapter interface at `ystar/integrations/base.py`. Implement `BaseGovernanceAdapter` to connect any agent framework.
+
+---
+
+## Differentiation
+
+### vs. LangSmith / Langfuse / Arize
+
+These are observability tools. They record what happened. They are cameras.
+
+Y*gov is enforcement. It determines what is allowed to happen. It is a gate.
+
+You need both. Y*gov does not replace observability — it adds the enforcement layer that observability cannot provide.
+
+### vs. Guardrails AI
+
+Guardrails validates LLM inputs and outputs. It sits at the model API boundary.
+
+Y*gov sits at the tool execution boundary. These are different problems:
+- Guardrails: "Is this text safe to send to the LLM?"
+- Y*gov: "Is this file write authorized for this agent at this moment?"
+
+Multi-agent governance requires tool-level enforcement, delegation chain verification, and obligation tracking — none of which are in scope for Guardrails.
+
+### vs. Claude Code Auto Mode
+
+Auto Mode uses an internal classifier. Its rules are not inspectable. Its decisions are not auditable. You cannot show its output to a regulator and say "here is proof that this agent operated within authorized scope."
+
+Y*gov uses **your** rules, written in plain English in `AGENTS.md`, enforced deterministically, with every decision written to a tamper-evident audit chain you own and control.
+
+For personal projects: Auto Mode is fine.
+For anything subject to SOC 2, HIPAA, FINRA, FDA 21 CFR Part 11, or any enterprise audit requirement: you need Y*gov.
+
+### vs. writing your own middleware
+
+Every team that has tried to build custom agent governance has hit the same three walls:
+
+1. It doesn't compose. When agents spawn subagents, hand-rolled middleware has no mechanism to verify that the child's permissions are a subset of the parent's. Privilege escalation goes undetected.
+2. It has no standard. Your compliance team cannot review a log format that a developer invented last quarter.
+3. It doesn't track obligations. Detecting what agents did is solvable. Detecting what agents were supposed to do but didn't — passive non-compliance — requires the `OmissionEngine` architecture. Building it correctly takes months.
+
+Y*gov provides all three, tested, with 86/86 passing tests, in `pip install ystar`.
+
+---
+
+## Technical Innovations
+
+### 1. Action-Triggered Passive Non-Compliance Detection (P4)
+
+The canonical approach to obligation tracking requires external polling: a cron job or scheduler that periodically checks whether deadlines have passed. This has three failure modes: race conditions, missed fires, and no causal connection between the detection event and the agent's current context.
+
+Y*gov's `OmissionEngine` uses a fundamentally different architecture: **the agent's own next tool call is the detection trigger**. Every call to `enforce()` — which runs on every tool call — internally invokes `_auto_feed_omission()`, which scans pending obligations. The detection is causally linked to the agent's behavior, runs in the agent's execution context, and requires no external infrastructure.
+
+The enforcement gate (HARD_OVERDUE) clears automatically when the required event type is produced. No human intervention. No manual reset.
+
+### 2. Self-Referential Governance Closure (P3 — SRGCS)
+
+The quis custodiet problem in AI governance: who governs the meta-governance agent?
+
+Y*gov's Path A resolves this by deriving the meta-agent's behavioral constraints from the outputs of the same governance system it is improving. `suggestion_to_contract()` maps `GovernanceSuggestion` objects to `IntentContract` instances using a lossy, bounded homomorphism — lossy by design to prevent the meta-agent from crafting suggestions that produce permissive contracts.
+
+The result: Path A operates under the same `check()` enforcement and CIEU audit chain as operational agents. The governance system governs itself without requiring a separate authority layer.
+
+### 3. DelegationChain Monotonicity Verification
+
+In multi-agent hierarchies, the standard failure mode is privilege escalation through subagent spawning: Agent A has limited permissions, creates Agent B with broader permissions, bypassing its own constraints.
+
+Y*gov formalizes and enforces the monotonic authority property:
+
+```
+∀ (parent P, child C) in delegation chain:
+  C.deny ⊇ P.deny
+  C.deny_commands ⊇ P.deny_commands
+  C.only_paths ⊆ P.only_paths
+  C.only_domains ⊆ P.only_domains
+```
+
+`DelegationChain.validate()` checks this on every `SUBAGENT_SPAWN` and `HANDOFF` event. Violations are written to the CIEU chain and block the spawn.
+
+### 4. Constitutional Hash Traceability
+
+Every `IntentContract` carries the SHA-256 hash of the `AGENTS.md` document that produced it. Every CIEU record carries the contract hash. This creates a complete traceability chain:
+
+```
+AGENTS.md → contract_hash → IntentContract → CIEU record
+```
+
+Auditors can verify that any specific enforcement decision derived from a specific version of the governance document. If `AGENTS.md` is modified, the hash changes, and all subsequent CIEU records reflect the new contract version.
+
+### 5. Dual-Path LLM/Regex Translation
+
+`nl_to_contract()` provides a robust pipeline for converting natural language governance documents to machine-enforceable `IntentContract` instances:
+
+- **LLM path (confidence 0.90):** Uses `claude-sonnet` to parse complex, indirect, or context-dependent governance language. Followed by `validate_contract_draft()` — a deterministic quality checker that catches invariant syntax errors, value_range direction inversions, and coverage gaps before the contract is activated.
+- **Regex path (confidence 0.50):** Constitutional rules approach — `[deontic operator] × [semantic domain] → constraint type`. Covers the most common explicit patterns without LLM dependency. Used as fallback when LLM is unavailable.
 
 ---
 
@@ -25,62 +214,44 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        Claude Code Runtime                       │
+│                        Claude Code / OpenClaw Runtime            │
 │                                                                  │
-│  Agent → Tool Call → PreToolUse Hook → Y*gov check()            │
-│                              │                                   │
-│                    ┌─────────▼──────────┐                        │
-│                    │   Y*gov Kernel     │                        │
-│                    │                    │                        │
-│                    │  IntentContract    │                        │
-│                    │  ← AGENTS.md       │                        │
-│                    │    (via LLM/regex) │                        │
-│                    │                    │                        │
-│                    │  check(params,     │                        │
-│                    │        contract)   │                        │
-│                    │                    │                        │
-│                    │  ALLOW / DENY      │                        │
-│                    └─────────┬──────────┘                        │
-│                              │                                   │
-│              ┌───────────────┼───────────────┐                  │
-│              ▼               ▼               ▼                  │
-│       CIEU Store      OmissionEngine   DelegationChain          │
-│    (audit chain)    (obligation SLA)  (monotonicity)            │
+│  Agent → Tool Call → PreToolUse Hook ──────────────────────┐    │
+│                                                            │    │
+│  ┌─────────────────────────────────────────────────────────▼──┐ │
+│  │                      Y*gov Kernel                           │ │
+│  │                                                             │ │
+│  │  AGENTS.md ──► nl_to_contract() ──► IntentContract         │ │
+│  │                                           │                │ │
+│  │                              check(params, contract)        │ │
+│  │                                    │                        │ │
+│  │              ┌─────────────────────┤                        │ │
+│  │              │ deny / deny_commands│                        │ │
+│  │              │ only_paths / domains│                        │ │
+│  │              │ invariant / range   │                        │ │
+│  │              └─────────────────────┘                        │ │
+│  │                         │                                   │ │
+│  │               ALLOW ────┴──── DENY + reason                 │ │
+│  │                         │                                   │ │
+│  │         ┌───────────────┼───────────────┐                  │ │
+│  │         ▼               ▼               ▼                  │ │
+│  │   CIEU Store      OmissionEngine   DelegationChain         │ │
+│  │ (SHA-256 chain)  (SOFT/HARD gate)  (monotonicity)          │ │
+│  └─────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Path A (Meta-Governance)                      │
+│              Path A — SRGCS Meta-Governance Layer                │
 │                                                                  │
-│  GovernanceLoop → GovernanceSuggestion                          │
-│       │                    │                                     │
-│       │         suggestion_to_contract()                         │
-│       │                    │                                     │
-│       └────────► IntentContract (governs Path A itself)          │
-│                    │                                             │
-│                  check() ← same kernel as operational agents     │
+│  GovernanceLoop ──► GovernanceSuggestion                         │
+│        │                     │                                   │
+│        │          suggestion_to_contract() [lossy]               │
+│        │                     │                                   │
+│        └──────────► IntentContract (governs Path A itself)        │
+│                              │                                   │
+│                           check()  ← same kernel                 │
+│                           CIEU     ← same chain                  │
 └─────────────────────────────────────────────────────────────────┘
-```
-
-**Package structure:**
-
-```
-ystar/
-├── kernel/
-│   ├── dimensions.py      # IntentContract, DelegationChain, CallRecord
-│   ├── engine.py          # check() — the enforcement core
-│   ├── nl_to_contract.py  # Natural language → IntentContract
-│   └── prefill.py         # Regex-based constraint extraction
-├── adapters/
-│   ├── hook.py            # Claude Code PreToolUse integration
-│   └── omission_adapter.py
-├── governance/
-│   ├── cieu_store.py      # Append-only audit database
-│   ├── omission_engine.py # Two-phase obligation enforcement
-│   ├── governance_loop.py # Health observation + suggestions
-│   └── ...
-├── module_graph/
-│   └── meta_agent.py      # Path A SRGCS implementation
-└── _cli.py                # CLI entry points
 ```
 
 ---
@@ -89,397 +260,39 @@ ystar/
 
 ### IntentContract
 
-Defined in `ystar/kernel/dimensions.py`. Specifies behavioral boundaries for a single agent or session.
-
 ```python
 @dataclass
 class IntentContract:
     name:               str   = ""
-    
-    # Path-based access control
-    deny:               List[str] = field(default_factory=list)
-    # Strings that must NOT appear in file_path, url, or command params.
-    # Substring match (not glob). Applied before only_paths whitelist.
-    # Example: ["/etc", "/production", ".env"]
-    
-    only_paths:         List[str] = field(default_factory=list)
-    # If non-empty: file_path must start with one of these prefixes.
-    # Empty = no path restriction (allow all paths not in deny).
-    
-    deny_commands:      List[str] = field(default_factory=list)
-    # Command prefixes that are absolutely forbidden.
-    # Matched against the 'command' parameter.
-    # Example: ["rm -rf", "sudo", "DROP TABLE"]
-    
-    only_domains:       List[str] = field(default_factory=list)
-    # If non-empty: url must be under one of these domains.
-    
-    invariant:          List[str] = field(default_factory=list)
-    # Python boolean expressions evaluated against action params.
-    # All must be True for the action to be allowed.
-    # Example: ["amount > 0", "risk_approved == True"]
-    
-    optional_invariant: List[str] = field(default_factory=list)
-    # Evaluated only when the referenced variable exists in params.
-    
-    value_range:        Dict[str, Dict] = field(default_factory=dict)
-    # Numeric bounds: {"param_name": {"min": N, "max": M}}
-    
-    obligation_timing:  Dict[str, Any] = field(default_factory=dict)
-    # SLA deadlines: {"task_completion": 600, "acknowledgement": 60}
-    # Units: seconds
-    
-    postcondition:      List[str] = field(default_factory=list)
-    # Boolean expressions evaluated after action completes.
-    
-    hash:               str   = ""
-    # SHA-256 of the source document (AGENTS.md) that produced this contract.
-    # Used for constitutional traceability in Path A.
+    deny:               List[str] = []  # forbidden substrings in any param
+    only_paths:         List[str] = []  # file_path whitelist (prefix match)
+    deny_commands:      List[str] = []  # forbidden command prefixes
+    only_domains:       List[str] = []  # url domain whitelist
+    invariant:          List[str] = []  # boolean expressions (AST-safe eval)
+    optional_invariant: List[str] = []  # conditional invariants
+    value_range:        Dict[str, Dict] = {}  # {"param": {"min": N, "max": M}}
+    obligation_timing:  Dict[str, Any]  = {}  # {"task_completion": 600}
+    postcondition:      List[str] = []  # post-execution assertions
+    hash:               str   = ""      # SHA-256 of source AGENTS.md
 ```
 
-**Evaluation semantics:** `deny` takes precedence over `only_paths`. All active dimensions must pass for ALLOW. First failing dimension produces DENY with specific reason.
-
----
-
-### CheckResult
-
-Returned by `check()`:
-
-```python
-@dataclass
-class CheckResult:
-    passed:     bool
-    violations: List[Violation]  # empty if passed
-    contract:   Optional[IntentContract]
-    params:     Dict[str, Any]   # normalized input params
-```
-
-### CallRecord (CIEU Five-Tuple)
-
-Written to the audit chain on every `check()` call:
-
-```python
-@dataclass  
-class CallRecord:
-    session_id:     str    # session or project identifier
-    agent_id:       str    # agent that made the call
-    action:         str    # tool name (Read, Write, Bash, etc.)
-    params:         dict   # sanitized action parameters
-    result:         dict   # {decision: allow/deny, violations: [...]}
-    contract_hash:  str    # SHA-256 of governing IntentContract
-    ts:             float  # epoch timestamp (immutable after write)
-```
-
----
-
-## Enforcement Engine
-
-`check()` in `ystar/kernel/engine.py`.
-
-**Evaluation order (short-circuit on first violation):**
-
-1. `deny` — substring scan of all string params
-2. `deny_commands` — prefix match on `command` param  
-3. `only_domains` — domain suffix match on `url` param
-4. `only_paths` — prefix match on `file_path` param
-5. `value_range` — numeric bounds check on specified params
-6. `invariant` — safe Python expression evaluation (whitelist sandbox)
-7. `optional_invariant` — conditional invariant (skipped if var absent)
-8. `postcondition` — evaluated post-execution (advisory, not blocking)
-
-**Security hardening (FIX-1 through FIX-4):**
-
-- `_safe_eval()` uses AST whitelist — only literals, comparisons, boolean ops
-- No `exec`, `eval`, `import`, attribute access, or function calls in invariants
-- param normalization prevents injection via alias keys
-- Contract hash verification in Path A detects tampering
-
-**Signature:**
-
-```python
-def check(
-    params:   Dict[str, Any],
-    state:    Dict[str, Any],
-    contract: Optional[IntentContract] = None,
-) -> CheckResult
-```
-
----
-
-## CIEU Audit Chain
-
-`ystar/governance/cieu_store.py`
-
-SQLite-backed, append-only. Each record contains a `prev_hash` field linking to the SHA-256 of the previous record, forming a Merkle chain.
-
-**Schema (cieu_events table):**
-
-| Column | Type | Description |
-|--------|------|-------------|
-| seq_global | INTEGER | Monotonic global sequence |
-| event_id | TEXT | UUID |
-| session_id | TEXT | |
-| agent_id | TEXT | |
-| event_type | TEXT | Tool name (Read, Write, Bash...) |
-| decision | TEXT | allow / deny |
-| passed | INTEGER | 1 = allowed |
-| violations | TEXT | JSON array of violation objects |
-| contract_hash | TEXT | SHA-256 of governing contract |
-| file_path | TEXT | Extracted from params |
-| command | TEXT | Extracted from params |
-| url | TEXT | Extracted from params |
-| prev_hash | TEXT | SHA-256 of previous record |
-| record_hash | TEXT | SHA-256 of this record |
-| created_at | REAL | Epoch timestamp |
-
-**Chain integrity verification:**
-
-```bash
-ystar verify --session <session_id>
-```
-
-Recomputes all hashes and verifies the chain has not been tampered with.
-
-**Sealing:**
-
-```bash
-ystar seal --session <session_id>
-```
-
-Writes a Merkle root record marking the session as sealed. Sealed sessions cannot be amended.
-
----
-
-## OmissionEngine
-
-`ystar/governance/omission_engine.py`
-
-Detects passive non-compliance: obligations that were created but not fulfilled by their deadline.
-
-**Key innovation:** Detection is triggered by the agent's own next tool invocation — no external polling or cron required. When `enforce()` is called (on every tool call), `_auto_feed_omission()` invokes `scan()` internally.
-
-**ObligationRecord fields:**
-
-```python
-obligation_id:         str    # UUID
-entity_id:             str    # agent or entity obligated  
-actor_id:              str    # specific agent
-obligation_type:       str    # semantic type
-required_event_types:  List[str]  # events that constitute fulfillment
-due_at:                float  # absolute epoch deadline
-hard_overdue_secs:     float  # seconds after due_at before HARD phase
-status:                ObligationStatus
-severity:              Severity  # LOW / MEDIUM / HIGH / CRITICAL
-soft_count:            int    # number of SOFT cycles elapsed
-```
-
-**Two-phase state machine:**
-
-```
-PENDING
-    │
-    │  now >= due_at
-    ▼
-SOFT_OVERDUE ──────────────────────────────────────────────────────┐
-    │                                                               │
-    │  now >= due_at + hard_overdue_secs                           │
-    ▼                                                               │
-HARD_OVERDUE                                              FULFILLED ◄─┘
-    │                                                       ▲
-    │  INTERRUPT_GATE active: tool calls DENIED             │
-    │  except required_event_types                          │
-    └──────────────────────────────────────────────────────►┘
-         agent produces required_event_type → gate clears
-```
-
-**SOFT_OVERDUE:** Warning attached to tool call response. Call proceeds. `soft_count` increments. Severity escalates at thresholds (soft_count ≥ 2 → MEDIUM, ≥ 3 → HIGH).
-
-**HARD_OVERDUE:** `InterventionEngine` produces INTERRUPT_GATE pulse. Subsequent tool calls denied unless `event_type ∈ required_event_types`. Gate clears automatically when obligation is fulfilled — no manual intervention needed.
-
----
-
-## DelegationChain
-
-`ystar/kernel/dimensions.py`
-
-Enforces the monotonic authority property across multi-agent hierarchies.
-
-**Formal property:**
-
-For any parent contract `P` and child contract `C` in a delegation chain:
-
-```
-C.deny ⊇ P.deny
-C.deny_commands ⊇ P.deny_commands  
-C.only_paths ⊆ P.only_paths  (whitelist shrinks, never grows)
-C.only_domains ⊆ P.only_domains
-```
-
-A child agent can never be granted permissions exceeding its parent. This prevents privilege escalation through subagent spawning.
-
-**Verification:**
-
-```python
-chain = DelegationChain(contracts=[parent_contract, child_contract])
-result = chain.validate()
-# result.valid: bool
-# result.violations: List[str]  — specific monotonicity violations
-```
-
-**Integration:** Verified automatically on every SUBAGENT_SPAWN or HANDOFF event in the hook adapter.
-
----
-
-## Hook Lifecycle
-
-`ystar/adapters/hook.py`
-
-Registered as a Claude Code `PreToolUse` hook. Executes before every tool call.
-
-**Execution sequence:**
-
-```
-Claude Code emits tool call
-    │
-    ▼
-hook command (in settings.json):
-  MSYS_NO_PATHCONV=1 python -c "
-    payload = json.loads(sys.stdin.read())  # {tool_name, tool_input, agent_id, ...}
-    policy = Policy.from_agents_md('AGENTS.md', confirm=False)
-    result = check_hook(payload, policy)
-    print(json.dumps(result))
-  "
-    │
-    ▼
-check_hook(payload, policy):
-    1. extract_params(payload)       # normalize tool_input → flat params dict
-    2. resolve_effective_contract()  # look up agent's contract from policy
-    3. check(params, {}, contract)   # enforce IntentContract
-    4. _auto_feed_omission(event)    # scan pending obligations
-    5. gate_check(actor_id)          # check INTERRUPT_GATE (HARD_OVERDUE)
-    6. write_cieu(result)            # append to audit chain
-    7. return {action: allow/block, message: str}
-    │
-    ▼
-Claude Code reads stdout:
-  {} or {"action": "allow"}  → tool call proceeds
-  {"action": "block", "message": "..."}  → tool call denied
-```
-
-**Settings.json format (Windows-compatible):**
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [{
-      "matcher": "",
-      "hooks": [{
-        "type": "command",
-        "command": "MSYS_NO_PATHCONV=1 C:/Users/.../python.exe -c \"...\""
-      }]
-    }]
-  }
-}
-```
-
-Note: Forward slashes in Python path (`C:/Users/...`) prevent MSYS path mangling in Git Bash on Windows (v0.41.1 fix).
-
----
-
-## Natural Language to Contract
-
-`ystar/kernel/nl_to_contract.py`
-
-Translates `AGENTS.md` (plain English governance rules) into an `IntentContract`.
-
-**Pipeline:**
-
-```
-AGENTS.md text
-    │
-    ▼
-translate_to_contract(text)
-    │
-    ├─► _try_llm_translation(text)
-    │       │
-    │       ├─ Requires ANTHROPIC_API_KEY env var
-    │       ├─ Model: claude-sonnet-4-20250514
-    │       ├─ Structured JSON output (valid IntentContract fields only)
-    │       ├─ validate_contract_draft() — deterministic quality check
-    │       │     checks: invariant syntax, value_range direction,
-    │       │             command truncation, coverage rate
-    │       └─ Returns (contract_dict, "llm", 0.90)
-    │
-    └─► _try_regex_translation(text)   ← fallback if LLM unavailable
-            │
-            ├─ Constitutional rules: [deontic operator] × [semantic domain]
-            │    "never access /etc" → deny: ["/etc"]
-            │    "never run rm" → deny_commands: ["rm"]
-            │    "only write to ./src/" → only_paths: ["./src/"]
-            └─ Returns (contract_dict, "regex", 0.50)
-```
-
-**confirm=False required in hook context** (stdin is JSON payload, not terminal).
-
-**Supported AGENTS.md patterns (regex fallback):**
-
-| Pattern | Maps to |
-|---------|---------|
-| `never access <path>` | `deny` |
-| `never run <cmd>` | `deny_commands` |
-| `only write to <path>` | `only_paths` |
-| `only connect to <domain>` | `only_domains` |
-
----
-
-## Path A — SRGCS
-
-`ystar/module_graph/meta_agent.py`
-
-**Self-Referential Governance Closure System** (US Provisional Patent P3).
-
-Resolves the quis custodiet problem: the meta-governance agent (Path A) is constrained by contracts derived from the outputs of the governance system it improves.
-
-**Core function:**
-
-```python
-def suggestion_to_contract(
-    suggestion: GovernanceSuggestion,
-    allowed_modules: List[str],
-    deadline_secs: float = 600.0,
-) -> IntentContract:
-```
-
-Maps a `GovernanceSuggestion` (produced by `GovernanceLoop.tighten()`) to an `IntentContract` that governs Path A's own actions during the improvement cycle.
-
-**Mapping (lossy, intentionally):**
-
-```
-suggestion.suggested_value  →  contract.obligation_timing["target"]
-suggestion.target_rule_id   →  contract.obligation_timing["trigger"]
-suggestion.confidence       →  obligation severity weighting
-[system safety rules]       →  contract.deny + contract.deny_commands
-```
-
-**Lossy by design:** Prevents Path A from gaming the constraint derivation by crafting suggestions that produce permissive contracts.
-
-**Post-condition obligation:** After each improvement action, an `ObligationRecord` is created requiring observable health improvement within `deadline_secs`. Failure triggers HARD_OVERDUE enforcement on Path A itself — same mechanism as operational agents.
-
-**Constitutional hash verification:**
-
-```python
-current_hash = sha256(PATH_A_AGENTS.md)
-if current_hash != stored_hash:
-    cieu_store.write(event_type="constitution_tamper_detected")
-    return None  # abort cycle
-```
-
-**Closure properties:**
-
-- Path A's constraints are derived from governance system outputs (not external authority)
-- Enforcement uses identical `check()` and `PreToolUse` hook as operational agents
-- All Path A actions written to the same CIEU chain
-- Path A cannot expand its own authority: suggestions are bounded by observed metrics
+**Evaluation order:** deny → deny_commands → only_domains → only_paths → value_range → invariant → optional_invariant. Short-circuit on first violation.
+
+### CIEU Record (cieu_events schema)
+
+| Column | Description |
+|--------|-------------|
+| seq_global | Monotonic global sequence number |
+| event_id | UUID |
+| agent_id | Agent that made the call |
+| event_type | Tool name (Read, Write, Bash, Agent...) |
+| decision | allow / deny |
+| violations | JSON array: [{dimension, message}] |
+| contract_hash | SHA-256 of governing IntentContract |
+| file_path / command / url | Extracted params |
+| prev_hash | SHA-256 of previous record |
+| record_hash | SHA-256 of this record |
+| created_at | Epoch timestamp (immutable) |
 
 ---
 
@@ -487,98 +300,105 @@ if current_hash != stored_hash:
 
 ```
 ystar setup [--yes]
-    Generate .ystar_session.json in current directory.
-    --yes: use defaults without interactive prompts
+    Initialize .ystar_session.json in current directory.
 
-ystar hook-install [--config <path>]
-    Write PreToolUse hook to ~/.claude/settings.json (or specified path).
-    Idempotent: skips if hook already present.
+ystar hook-install
+    Register PreToolUse hook in ~/.claude/settings.json.
+    Idempotent.
 
 ystar doctor
-    Run 7-point environment diagnostic:
-    [1] Session Config — .ystar_session.json exists
-    [2] Hook Registration — hook found in settings.json
-    [3] CIEU Database — accessible, record count
-    [4] AGENTS.md — found, contains constraint rules
-    [5] Hook Self-Test — /etc/passwd correctly blocked
-    Exit 0 if all pass, 1 if any fail.
+    7-point health check. Exit 0 = healthy, 1 = issues found.
+    Checks: session config, hook registration, CIEU database,
+            AGENTS.md, hook self-test (/etc/passwd blocked).
 
 ystar report [--db <path>] [--format text|json]
-    Generate CIEU summary report.
-    Default db: .ystar_cieu.db
-    Default format: text
+    CIEU summary: total decisions, deny rate, by-agent breakdown.
 
 ystar verify [--session <id>] [--db <path>]
     Verify SHA-256 Merkle chain integrity.
-    Detects any post-write tampering.
 
-ystar seal [--session <id>] [--db <path>]
-    Write Merkle root record. Marks session as sealed.
+ystar seal [--session <id>]
+    Write Merkle root. Session becomes immutable.
 
 ystar version
-    Print version string.
+    Print version.
 
 ystar policy-builder
-    Launch local HTML policy builder UI (port 7379).
+    Launch local HTML policy builder (port 7379).
 ```
 
 ---
 
 ## Performance
 
-All measurements on single thread, Python 3.11, M2 MacBook Pro.
+Single thread, Python 3.11, M2 MacBook Pro:
 
-| Operation | Mean | p99 | Notes |
-|-----------|------|-----|-------|
-| `check()` ALLOW | 0.042ms | 0.080ms | 5-dim contract |
-| `check()` DENY | 0.041ms | 0.065ms | fails on dim 1 |
-| `enforce()` full chain | 0.021ms | 0.055ms | includes CIEU write |
-| `OmissionEngine.scan()` 20 obligations | 0.011ms | 0.018ms | |
-| `gate_check()` | 0.001ms | 0.002ms | |
-| `nl_to_contract()` LLM path | ~2000ms | ~5000ms | network-bound |
-| `nl_to_contract()` regex path | 0.8ms | 2.1ms | fallback |
+| Operation | Mean | p99 |
+|-----------|------|-----|
+| `check()` ALLOW | 0.042ms | 0.080ms |
+| `check()` DENY | 0.041ms | 0.065ms |
+| `enforce()` full pipeline | 0.021ms | 0.055ms |
+| `OmissionEngine.scan()` 20 obligations | 0.011ms | 0.018ms |
+| `nl_to_contract()` regex path | 0.8ms | 2.1ms |
+| `nl_to_contract()` LLM path | ~2000ms | ~5000ms |
 
-**Industry reference:** Microsoft AGT < 0.1ms. Y\*gov `check()` at 0.042ms mean is 2.4× faster.
+Industry reference (Microsoft AGT): < 0.1ms.
+Y*gov `check()` at 0.042ms mean: **2.4× faster.**
 
-**At 100 agents × 10 tool calls/second:** `check()` consumes 4.2% CPU on a single core.
+CIEU write throughput: ~8,000 records/second (SQLite WAL).
 
-**CIEU write throughput:** ~8,000 records/second (SQLite WAL mode, local disk).
+---
+
+## Experimental Evidence
+
+Y* Bridge Labs ran a controlled experiment (EXP-001) comparing the same multi-agent company with and without Y*gov governance:
+
+| Metric | Without Y*gov | With Y*gov |
+|--------|--------------|------------|
+| Tool calls | 117 | 45 (-62%) |
+| Token consumption | 186,300 | 156,047 (-16%) |
+| Runtime | 9m 19s | 6m 4s (-35%) |
+| Unauthorized system access | 3 (undetected) | 0 |
+| Fabricated audit evidence | 1 instance | 0 |
+| Real CIEU records | 0 | 14 |
+
+Governance reduced cost and time while eliminating all violations. The runtime enforcement mechanism (obligation timeout) was responsible for the majority of efficiency gains by preventing the CTO agent from looping on a blocked task 66 times.
+
+Full report: [ystar-bridge-labs/reports/](https://github.com/liuhaotian2024-prog/ystar-bridge-labs)
+
+---
+
+## Requirements
+
+- Python 3.11+
+- Claude Code (any plan) or OpenClaw
+- SQLite (stdlib, no install needed)
+- `ANTHROPIC_API_KEY` — optional, for LLM-assisted AGENTS.md translation
 
 ---
 
 ## Patents
 
-### P1 — US Provisional 63/981,777 (filed January 2026)
+**P1 — US Provisional 63/981,777** (January 2026)
+CIEU five-tuple structure, SHA-256 Merkle chain, DelegationChain monotonicity, session sealing.
 
-Covers:
-- CIEU five-tuple causal evidence structure (`CallRecord` schema)
-- SHA-256 Merkle chain integrity
-- `DelegationChain` monotonicity formal verification
-- Session sealing protocol
+**P3 — SRGCS** (March 26, 2026)
+Self-referential governance closure: meta-governance agent constrained by contracts derived from its own governance outputs via `suggestion_to_contract()`.
 
-### P3 — Self-Referential Governance Closure System (SRGCS) (filed March 26, 2026)
-
-Core claim: A method for meta-governance of autonomous AI agent systems wherein the meta-governance agent's behavioral constraints are derived from, validated by, and enforced by the same governance machinery it is responsible for improving — without requiring a separate meta-governance layer.
-
-Key technical mechanism: `suggestion_to_contract()` homomorphic mapping from `GovernanceSuggestion` to `IntentContract`.
-
-### P4 — Action-Triggered Passive Non-Compliance Detection (filed March 26, 2026)
-
-Core claim: A method for detecting obligation expiry in autonomous AI agent systems using the agent's own subsequent tool invocations as the sole detection trigger — no external polling or cron required.
-
-Key technical mechanism: `_auto_feed_omission()` invoked inside `enforce()` on every tool call; two-phase SOFT/HARD enforcement with automatic gate release on fulfillment.
+**P4 — Action-Triggered Passive Non-Compliance Detection** (March 26, 2026)
+Obligation expiry detection triggered by agent's own subsequent tool invocations; two-phase SOFT/HARD enforcement with automatic gate release.
 
 ---
 
 ## License
 
-MIT — free for commercial use, internal deployment, academic research.
+MIT. Free for commercial use, internal deployment, academic research, OEM embedding.
 
 ---
 
 ## Contact
 
-**Haotian Liu · Y\* Bridge Labs**
+**Haotian Liu · Y* Bridge Labs**
 liuhaotian2024@gmail.com
 
-Enterprise licensing, domain pack development, research collaboration.
+Enterprise licensing · Domain pack development · Research collaboration
