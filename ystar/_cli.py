@@ -176,12 +176,16 @@ def _cmd_init() -> None:
     print()
 
 
-def _run_retroactive_baseline(contract_dict: dict) -> None:
+def _run_retroactive_baseline(contract_dict: dict, skip_prompt: bool = False) -> None:
     """
     扫描既有历史行为，运行追溯基线分析。
 
     通过 kernel/history_scanner.scan_history() 调度，
     不关心数据来自哪个框架（Claude Code / OpenClaw / JSONL …）。
+
+    Args:
+        contract_dict: 当前规则合约字典
+        skip_prompt: 如果为 True，自动执行不询问确认（用于 --yes 模式）
     """
     import warnings as _w
     _w.filterwarnings("ignore")
@@ -195,6 +199,14 @@ def _run_retroactive_baseline(contract_dict: dict) -> None:
     sources = available_sources()
     any_available = any(s["available"] for s in sources)
 
+    # ② 构建合约（提前准备，即使无历史也要创建基线文件）
+    cd = dict(contract_dict or {})
+    cd.pop("temporal", None)
+    try:
+        contract = normalize_aliases(**cd)
+    except Exception:
+        contract = IntentContract()
+
     if not any_available:
         print("  ─── 初始基线 ────────────────────────────────────────────────")
         print("  未找到任何历史行为记录。")
@@ -203,20 +215,39 @@ def _run_retroactive_baseline(contract_dict: dict) -> None:
             if not s["available"]:
                 print(f"  · {s['label']}: {s.get('reason', '不可用')}")
         print()
-        print("  这是正常的。运行 Agent 后，Y* 将开始记录 CIEU 因果链。")
+        # 仍然创建空基线文件，确保 ystar doctor 通过
+        store = RetroBaselineStore()
+        baseline_id = store.begin_baseline(
+            contract_hash=contract.hash,
+            notes="ystar setup, 0 historical records (no history sources)",
+        )
+        print(f"  ✅ 基线文件已创建: .ystar_retro_baseline.db")
+        print(f"     基线 ID: {baseline_id}")
+        print(f"     历史记录: 0 条（这是正常的）")
+        print()
+        print("  运行 Agent 后，Y* 将开始记录 CIEU 因果链。")
         print("  运行 Agent 后执行：")
         print("    ystar audit          查看意图 vs 行动的因果报告")
         print("    ystar quality        评估规则覆盖率")
         return
 
-    # ② 扫描（框架无关）
+    # ③ 扫描（框架无关）
     print("  正在扫描历史记录...", end="", flush=True)
     records, source_id, source_desc = scan_history(days_back=30, max_records=5000)
 
     if not records:
         print(" 未找到记录")
         print()
-        print("  最近 30 天内没有历史记录。")
+        # 仍然创建空基线文件
+        store = RetroBaselineStore()
+        baseline_id = store.begin_baseline(
+            contract_hash=contract.hash,
+            notes=f"ystar setup, source={source_id}, 0 records in last 30 days",
+        )
+        print(f"  ✅ 基线文件已创建: .ystar_retro_baseline.db")
+        print(f"     基线 ID: {baseline_id}")
+        print(f"     历史记录: 0 条（最近 30 天内无记录）")
+        print()
         print("  运行 Agent 后执行 ystar audit 建立第一份因果报告。")
         return
 
@@ -224,35 +255,45 @@ def _run_retroactive_baseline(contract_dict: dict) -> None:
     summary_info = scan_summary(records)
     print(f" 发现 {summary_info['total']} 条记录（来源: {source_desc}）")
 
-    # ③ 询问确认
-    print()
-    print(f"  {summary_info['sessions']} 个会话，"
-          f"时间范围: {summary_info['date_range']}")
-    print(f"  工具调用: "
-          + ", ".join(f"{n}×{c}" for n, c in summary_info["top_tools"][:4]))
-    print()
-    print("  Y* 将用你的当前规则回放这些历史记录，")
-    print("  告诉你「如果 Y* 一直在运行，它会看到什么」。")
-    print()
-    print("  结果写入 .ystar_retro_baseline.db（独立文件，不影响实时 CIEU）。")
-    print()
-    try:
-        answer = input("  是否立即生成初始基线报告？[Y/n] ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
+    # ④ 询问确认（除非 skip_prompt=True）
+    if not skip_prompt:
         print()
-        return
-    if answer in ("n", "no", "否"):
+        print(f"  {summary_info['sessions']} 个会话，"
+              f"时间范围: {summary_info['date_range']}")
+        print(f"  工具调用: "
+              + ", ".join(f"{n}×{c}" for n, c in summary_info["top_tools"][:4]))
         print()
-        print("  跳过。稍后可运行 ystar baseline 生成追溯基线报告。")
-        return
-
-    # ④ 构建合约
-    cd = dict(contract_dict or {})
-    cd.pop("temporal", None)
-    try:
-        contract = normalize_aliases(**cd)
-    except Exception:
-        contract = IntentContract()
+        print("  Y* 将用你的当前规则回放这些历史记录，")
+        print("  告诉你「如果 Y* 一直在运行，它会看到什么」。")
+        print()
+        print("  结果写入 .ystar_retro_baseline.db（独立文件，不影响实时 CIEU）。")
+        print()
+        try:
+            answer = input("  是否立即生成初始基线报告？[Y/n] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            # 即使用户中断，也创建空基线
+            store = RetroBaselineStore()
+            baseline_id = store.begin_baseline(
+                contract_hash=contract.hash,
+                notes=f"ystar setup, source={source_id}, user cancelled",
+            )
+            print(f"  ✅ 基线文件已创建: .ystar_retro_baseline.db (空)")
+            print(f"     基线 ID: {baseline_id}")
+            return
+        if answer in ("n", "no", "否"):
+            print()
+            # 用户拒绝，仍然创建空基线
+            store = RetroBaselineStore()
+            baseline_id = store.begin_baseline(
+                contract_hash=contract.hash,
+                notes=f"ystar setup, source={source_id}, user skipped",
+            )
+            print(f"  ✅ 基线文件已创建: .ystar_retro_baseline.db (空)")
+            print(f"     基线 ID: {baseline_id}")
+            print()
+            print("  跳过。稍后可运行 ystar baseline 生成追溯基线报告。")
+            return
 
     # ⑤ 追溯检查（核心层）
     print()
@@ -1168,7 +1209,8 @@ def main() -> None:
     rest = args[1:]
 
     if cmd == "setup":
-        _cmd_setup()
+        skip_prompt = "--yes" in rest or "-y" in rest
+        _cmd_setup(skip_prompt=skip_prompt)
 
     elif cmd == "hook-install":
         _cmd_hook_install()
@@ -1210,10 +1252,13 @@ def main() -> None:
 #  ystar setup — 生成 .ystar_session.json
 # ══════════════════════════════════════════════════════════════════════
 
-def _cmd_setup() -> None:
+def _cmd_setup(skip_prompt: bool = False) -> None:
     """
     交互式生成 .ystar_session.json。
     这是 enforce() 完整治理链路（check + CIEU + omission）的必要配置文件。
+
+    Args:
+        skip_prompt: 如果为 True，使用所有默认值（用于 --yes 模式）
     """
     import pathlib, json, uuid
 
@@ -1227,31 +1272,51 @@ def _cmd_setup() -> None:
 
     # 项目名称 → session_id
     default_name = pathlib.Path.cwd().name
-    project = input(f"  项目名称 [{default_name}]: ").strip() or default_name
+    if skip_prompt:
+        project = default_name
+        print(f"  项目名称: {project}")
+    else:
+        project = input(f"  项目名称 [{default_name}]: ").strip() or default_name
     session_id = f"{project}_{uuid.uuid4().hex[:8]}"
 
     # CIEU 数据库路径
-    cieu_db = input(f"  CIEU 审计库路径 [.ystar_cieu.db]: ").strip() or ".ystar_cieu.db"
+    if skip_prompt:
+        cieu_db = ".ystar_cieu.db"
+        print(f"  CIEU 审计库路径: {cieu_db}")
+    else:
+        cieu_db = input(f"  CIEU 审计库路径 [.ystar_cieu.db]: ").strip() or ".ystar_cieu.db"
 
     # 合约：禁止路径
     print()
-    print("  禁止访问的路径（逗号分隔，直接回车使用默认值）:")
-    raw_deny = input("  [/etc,/root,/production]: ").strip()
-    deny_paths = [p.strip() for p in raw_deny.split(",") if p.strip()]         if raw_deny else ["/etc", "/root", "/production"]
+    if skip_prompt:
+        deny_paths = ["/etc", "/root", "/production"]
+        print(f"  禁止访问的路径: {deny_paths}")
+    else:
+        print("  禁止访问的路径（逗号分隔，直接回车使用默认值）:")
+        raw_deny = input("  [/etc,/root,/production]: ").strip()
+        deny_paths = [p.strip() for p in raw_deny.split(",") if p.strip()]         if raw_deny else ["/etc", "/root", "/production"]
 
     # 合约：禁止命令
-    print("  禁止执行的命令（逗号分隔）:")
-    raw_cmds = input("  [rm -rf,sudo,DROP TABLE]: ").strip()
-    deny_cmds = [c.strip() for c in raw_cmds.split(",") if c.strip()]         if raw_cmds else ["rm -rf", "sudo", "DROP TABLE"]
+    if skip_prompt:
+        deny_cmds = ["rm -rf", "sudo", "DROP TABLE"]
+        print(f"  禁止执行的命令: {deny_cmds}")
+    else:
+        print("  禁止执行的命令（逗号分隔）:")
+        raw_cmds = input("  [rm -rf,sudo,DROP TABLE]: ").strip()
+        deny_cmds = [c.strip() for c in raw_cmds.split(",") if c.strip()]         if raw_cmds else ["rm -rf", "sudo", "DROP TABLE"]
 
     # 义务时限
     print()
-    print("  义务时限配置（秒，0=不启用）:")
-    complaint_secs = input("  respond_to_complaint [300]: ").strip()
-    try:
-        complaint_timeout = float(complaint_secs) if complaint_secs else 300.0
-    except ValueError:
+    if skip_prompt:
         complaint_timeout = 300.0
+        print(f"  义务时限配置: respond_to_complaint={complaint_timeout}秒")
+    else:
+        print("  义务时限配置（秒，0=不启用）:")
+        complaint_secs = input("  respond_to_complaint [300]: ").strip()
+        try:
+            complaint_timeout = float(complaint_secs) if complaint_secs else 300.0
+        except ValueError:
+            complaint_timeout = 300.0
 
     obligation_timing = {}
     if complaint_timeout > 0:
@@ -1284,7 +1349,7 @@ def _cmd_setup() -> None:
     # ── 追溯初始基线扫描 ──────────────────────────────────────────
     # 扫描历史会话，用当前规则回放，告诉用户"如果 Y* 一直在运行，它会说什么"。
     # 追溯数据写入独立的 .ystar_retro_baseline.db，永不混入实时 CIEU 链。
-    _run_retroactive_baseline(session_config["contract"])
+    _run_retroactive_baseline(session_config["contract"], skip_prompt=skip_prompt)
     print()
 
     print("  下一步: ystar hook-install")
@@ -1523,7 +1588,8 @@ def main() -> None:
     rest = args[1:]  # v0.41 fix: rest 未定义导致 pretrain 崩溃
 
     if cmd == "setup":
-        _cmd_setup()
+        skip_prompt = "--yes" in rest or "-y" in rest
+        _cmd_setup(skip_prompt=skip_prompt)
 
     elif cmd == "hook-install":
         _cmd_hook_install()
@@ -1630,10 +1696,13 @@ def _cmd_report(path: str) -> None:
 #  ystar setup — 生成 .ystar_session.json
 # ══════════════════════════════════════════════════════════════════════
 
-def _cmd_setup() -> None:
+def _cmd_setup(skip_prompt: bool = False) -> None:
     """
     交互式生成 .ystar_session.json。
     这是 enforce() 完整治理链路（check + CIEU + omission）的必要配置文件。
+
+    Args:
+        skip_prompt: 如果为 True，使用所有默认值（用于 --yes 模式）
     """
     import pathlib, json, uuid
 
@@ -1647,31 +1716,51 @@ def _cmd_setup() -> None:
 
     # 项目名称 → session_id
     default_name = pathlib.Path.cwd().name
-    project = input(f"  项目名称 [{default_name}]: ").strip() or default_name
+    if skip_prompt:
+        project = default_name
+        print(f"  项目名称: {project}")
+    else:
+        project = input(f"  项目名称 [{default_name}]: ").strip() or default_name
     session_id = f"{project}_{uuid.uuid4().hex[:8]}"
 
     # CIEU 数据库路径
-    cieu_db = input(f"  CIEU 审计库路径 [.ystar_cieu.db]: ").strip() or ".ystar_cieu.db"
+    if skip_prompt:
+        cieu_db = ".ystar_cieu.db"
+        print(f"  CIEU 审计库路径: {cieu_db}")
+    else:
+        cieu_db = input(f"  CIEU 审计库路径 [.ystar_cieu.db]: ").strip() or ".ystar_cieu.db"
 
     # 合约：禁止路径
     print()
-    print("  禁止访问的路径（逗号分隔，直接回车使用默认值）:")
-    raw_deny = input("  [/etc,/root,/production]: ").strip()
-    deny_paths = [p.strip() for p in raw_deny.split(",") if p.strip()]         if raw_deny else ["/etc", "/root", "/production"]
+    if skip_prompt:
+        deny_paths = ["/etc", "/root", "/production"]
+        print(f"  禁止访问的路径: {deny_paths}")
+    else:
+        print("  禁止访问的路径（逗号分隔，直接回车使用默认值）:")
+        raw_deny = input("  [/etc,/root,/production]: ").strip()
+        deny_paths = [p.strip() for p in raw_deny.split(",") if p.strip()]         if raw_deny else ["/etc", "/root", "/production"]
 
     # 合约：禁止命令
-    print("  禁止执行的命令（逗号分隔）:")
-    raw_cmds = input("  [rm -rf,sudo,DROP TABLE]: ").strip()
-    deny_cmds = [c.strip() for c in raw_cmds.split(",") if c.strip()]         if raw_cmds else ["rm -rf", "sudo", "DROP TABLE"]
+    if skip_prompt:
+        deny_cmds = ["rm -rf", "sudo", "DROP TABLE"]
+        print(f"  禁止执行的命令: {deny_cmds}")
+    else:
+        print("  禁止执行的命令（逗号分隔）:")
+        raw_cmds = input("  [rm -rf,sudo,DROP TABLE]: ").strip()
+        deny_cmds = [c.strip() for c in raw_cmds.split(",") if c.strip()]         if raw_cmds else ["rm -rf", "sudo", "DROP TABLE"]
 
     # 义务时限
     print()
-    print("  义务时限配置（秒，0=不启用）:")
-    complaint_secs = input("  respond_to_complaint [300]: ").strip()
-    try:
-        complaint_timeout = float(complaint_secs) if complaint_secs else 300.0
-    except ValueError:
+    if skip_prompt:
         complaint_timeout = 300.0
+        print(f"  义务时限配置: respond_to_complaint={complaint_timeout}秒")
+    else:
+        print("  义务时限配置（秒，0=不启用）:")
+        complaint_secs = input("  respond_to_complaint [300]: ").strip()
+        try:
+            complaint_timeout = float(complaint_secs) if complaint_secs else 300.0
+        except ValueError:
+            complaint_timeout = 300.0
 
     obligation_timing = {}
     if complaint_timeout > 0:
@@ -1704,7 +1793,7 @@ def _cmd_setup() -> None:
     # ── 追溯初始基线扫描 ──────────────────────────────────────────
     # 扫描历史会话，用当前规则回放，告诉用户"如果 Y* 一直在运行，它会说什么"。
     # 追溯数据写入独立的 .ystar_retro_baseline.db，永不混入实时 CIEU 链。
-    _run_retroactive_baseline(session_config["contract"])
+    _run_retroactive_baseline(session_config["contract"], skip_prompt=skip_prompt)
     print()
 
     print("  下一步: ystar hook-install")
