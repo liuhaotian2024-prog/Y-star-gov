@@ -1595,6 +1595,13 @@ def main() -> None:
         _cmd_hook_install()
 
     elif cmd == "init":
+        # Issue #2 fix: handle --retroactive flag
+        if "--retroactive" in rest:
+            print()
+            print("  Note: Retroactive baseline runs automatically during 'ystar setup'.")
+            print("        For A/B comparison, use 'ystar simulate'.")
+            print()
+            sys.exit(0)
         _cmd_init()
 
     elif cmd == "version":
@@ -1636,10 +1643,20 @@ def main() -> None:
     elif cmd == "seal":
         _cmd_seal(rest)
 
+    elif cmd == "baseline":
+        # Issue #3 fix: add baseline command as helpful alias
+        print()
+        print("  Note: Baseline is captured automatically during 'ystar setup'.")
+        print("        To re-run baseline, use 'ystar setup --yes'.")
+        print("        For A/B simulation, use 'ystar simulate'.")
+        print()
+        sys.exit(0)
+
     else:
         print(f"Unknown command: {cmd}\n")
         print("Available commands: setup, hook-install, doctor, verify, report,")
-        print("                    seal, policy-builder, audit, check, init, version")
+        print("                    seal, policy-builder, audit, check, init, version,")
+        print("                    simulate, quality, baseline")
         sys.exit(1)
 
 

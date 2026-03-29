@@ -544,6 +544,32 @@ For anything subject to SOC 2, HIPAA, FINRA, FDA 21 CFR Part 11, or any enterpri
 
 ---
 
+## Advanced Features
+
+### ObligationTrigger — Automatic Follow-Up Obligations
+
+When certain tool calls are allowed, Y*gov can automatically create follow-up obligations that agents must fulfill. This bridges tool-call-layer governance with obligation-layer governance.
+
+**Example use case:** After a web search tool call, automatically create an obligation to update the knowledge base within 30 minutes.
+
+```python
+from ystar.governance.obligation_triggers import ObligationTrigger, TriggerRegistry
+
+trigger = ObligationTrigger(
+    trigger_id="research_knowledge_update",
+    trigger_tool_pattern=r"web_search|WebSearch",
+    obligation_type="knowledge_update_required",
+    description="After web research, update knowledge base with findings",
+    target_agent="caller",
+    deadline_seconds=1800,
+    severity="SOFT"
+)
+```
+
+Available in v0.41.1. Full documentation coming in v0.42.
+
+---
+
 ## Technical Innovations
 
 ### 1. Action-Triggered Passive Non-Compliance Detection (US Provisional Patent P4)
