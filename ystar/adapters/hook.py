@@ -233,6 +233,15 @@ def check_hook(
     _write_cieu(who, tool_name, params, result,
                 session_id_payload or "unknown", contract_hash, cieu_db)
 
+    # ── NEW: Process obligation triggers after check() ──────────────────────
+    # If the check passed (ALLOW), check for any triggered obligations
+    if result.allowed:
+        _process_obligation_triggers(
+            tool_name, tool_input, who,
+            session_id_payload or "unknown",
+            result
+        )
+
     return _result_to_response(result)
 
 
@@ -349,7 +358,13 @@ def _check_hook_full(
         if suggested and suggested != "None":
             message = f"{reason}\n\n{suggested}"
 
+        # ── NEW: Process DENY triggers (Trigger #7: Failure Case Documentation) ──
+        _process_obligation_triggers(tool_name, tool_input, who, session_id, decision)
+
         return {"action": "block", "message": message}
+
+    # ── NEW: Process ALLOW triggers (full path) ──────────────────────────────
+    _process_obligation_triggers(tool_name, tool_input, who, session_id, decision)
 
     return {}
 
@@ -457,4 +472,69 @@ def _setup_omission_from_contract(
 
     except Exception:
         pass   # omission 配置失败不影响主路径
+
+
+# ── ObligationTrigger Integration ──────────────────────────────────────────
+
+
+def _process_obligation_triggers(
+    tool_name: str,
+    tool_input: dict,
+    agent_id: str,
+    session_id: str,
+    check_result: Optional[Any] = None,
+) -> None:
+    """
+    Check for and create any triggered obligations after a tool call.
+
+    This function is called AFTER check() returns, whether ALLOW or DENY.
+    - For ALLOW: creates obligations like "update knowledge after web_search"
+    - For DENY: creates obligations like "document failure case"
+
+    Args:
+        tool_name:     Name of the tool being called
+        tool_input:    Parameters passed to the tool
+        agent_id:      ID of the agent making the call
+        session_id:    Current session ID
+        check_result:  Result from policy check (PolicyResult or EnforceDecision)
+    """
+    try:
+        from ystar.governance.obligation_triggers import (
+            get_trigger_registry, match_triggers, create_obligation_from_trigger
+        )
+        from ystar.adapters.omission_adapter import get_omission_adapter
+
+        # Get trigger registry
+        registry = get_trigger_registry()
+        if not registry:
+            return
+
+        # Get omission adapter
+        adapter = get_omission_adapter()
+        if not adapter:
+            return
+
+        # Match triggers against this tool call
+        triggers = match_triggers(registry, tool_name, tool_input, agent_id, check_result)
+
+        # Create obligations for each matched trigger
+        for trigger in triggers:
+            # Special handling for content accuracy review trigger (#9)
+            # Only create obligation if writing to content/ or marketing/
+            if trigger.trigger_id == "content_accuracy_review":
+                file_path = tool_input.get("file_path") or tool_input.get("path") or ""
+                if not ("content/" in file_path or "marketing/" in file_path):
+                    continue
+
+            create_obligation_from_trigger(
+                trigger=trigger,
+                agent_id=agent_id,
+                session_id=session_id,
+                omission_adapter=adapter,
+                tool_name=tool_name,
+                tool_input=tool_input,
+            )
+
+    except Exception:
+        pass  # Trigger processing failure does not block the tool call
 

@@ -5,7 +5,7 @@
       "hooks": [
         {
           "type": "command",
-          "command": "python3 ${CLAUDE_PLUGIN_ROOT}/skills/ystar-govern/check.py --action ${TOOL_NAME} --params '${TOOL_INPUT_JSON}' --principal ${AGENT_ID} --actor subagent"
+          "command": "python ${CLAUDE_PLUGIN_ROOT}/skills/ystar-govern/check.py --action ${TOOL_NAME} --params '${TOOL_INPUT_JSON}' --principal ${AGENT_ID} --actor subagent"
         }
       ]
     }
@@ -16,7 +16,7 @@
       "hooks": [
         {
           "type": "command",
-          "command": "python3 -c \"import json,sys; d=json.loads(sys.stdin.read() or '{}'); print(f'[Y*gov] Subagent {d.get(\\\"agent_id\\\",\\\"?\\\")}: completed')\""
+          "command": "python -c \"import json,sys; d=json.loads(sys.stdin.read() or '{}'); print(f'[Y*gov] Subagent {d.get(\\\"agent_id\\\",\\\"?\\\")}: completed')\""
         }
       ]
     }

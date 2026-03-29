@@ -2,6 +2,9 @@
 
 **v0.41.1 · MIT License · Y* Bridge Labs**
 
+Zero external dependencies. Installs in seconds. Runs anywhere Python runs.
+No supply chain risk. The enforcement layer contains no LLM. Governance cannot be prompt-injected.
+
 **Your AI agents are doing things you don't know about.**
 
 Not because they are malicious — because nothing stops them.

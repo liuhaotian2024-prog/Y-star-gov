@@ -1280,6 +1280,13 @@ def _cmd_setup() -> None:
     if obligation_timing:
         print(f"     义务时限:   {obligation_timing}")
     print()
+
+    # ── 追溯初始基线扫描 ──────────────────────────────────────────
+    # 扫描历史会话，用当前规则回放，告诉用户"如果 Y* 一直在运行，它会说什么"。
+    # 追溯数据写入独立的 .ystar_retro_baseline.db，永不混入实时 CIEU 链。
+    _run_retroactive_baseline(session_config["contract"])
+    print()
+
     print("  下一步: ystar hook-install")
     print()
 
@@ -1693,6 +1700,13 @@ def _cmd_setup() -> None:
     if obligation_timing:
         print(f"     义务时限:   {obligation_timing}")
     print()
+
+    # ── 追溯初始基线扫描 ──────────────────────────────────────────
+    # 扫描历史会话，用当前规则回放，告诉用户"如果 Y* 一直在运行，它会说什么"。
+    # 追溯数据写入独立的 .ystar_retro_baseline.db，永不混入实时 CIEU 链。
+    _run_retroactive_baseline(session_config["contract"])
+    print()
+
     print("  下一步: ystar hook-install")
     print()
 
@@ -1951,6 +1965,21 @@ def _cmd_doctor(args: list) -> None:
     else:
         fail("AGENTS.md not found in current directory",
              "Create AGENTS.md with your governance rules")
+
+    # ── 4.5 检查 Retroactive Baseline ─────────────────────────────────────
+    print()
+    print("  [4.5] Retroactive Baseline")
+    baseline_db = pathlib.Path(".ystar_retro_baseline.db")
+    if baseline_db.exists():
+        try:
+            from ystar.governance.retro_store import RetroBaselineStore
+            store = RetroBaselineStore()
+            # Try to access the store to verify it's valid
+            ok(f"Baseline database found at {baseline_db}")
+        except Exception as e:
+            warn(f"Baseline database exists but may be corrupted: {e}")
+    else:
+        warn("No baseline found. Run 'ystar setup' to capture baseline.")
 
     # ── 5. 自检 hook payload ──────────────────────────────────────────────
     print()

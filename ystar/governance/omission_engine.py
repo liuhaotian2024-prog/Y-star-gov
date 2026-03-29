@@ -355,7 +355,13 @@ class OmissionEngine:
     def _trigger_obligations(self, ev: GovernanceEvent) -> List[ObligationRecord]:
         """
         检查事件是否触发任何 OmissionRule，并创建对应的 ObligationRecord。
+        v0.42.0: 新增 tool_trigger 事件处理（ObligationTrigger 框架）。
         """
+        # ── NEW: Handle tool_trigger events from ObligationTrigger framework ──
+        if ev.event_type.startswith("tool_trigger:"):
+            return self._create_triggered_obligation(ev)
+
+        # ── Original rule-based obligation creation ──────────────────────────
         entity = self.store.get_entity(ev.entity_id)
         if entity is None:
             return []
@@ -401,6 +407,73 @@ class OmissionEngine:
             new_obs.append(ob)
 
         return new_obs
+
+    def _create_triggered_obligation(self, ev: GovernanceEvent) -> List[ObligationRecord]:
+        """
+        Create ObligationRecord from a tool_trigger event.
+        Called when ObligationTrigger framework generates a tool_trigger:* event.
+
+        Event payload contains:
+          - trigger_id:     ID of the trigger that fired
+          - obligation_type: type of obligation to create
+          - deadline_secs:  deadline in seconds
+          - fulfillment:    fulfillment event type
+          - tool_name:      tool that triggered this
+          - tool_input:     tool input parameters
+          - triggered_by:   agent who triggered it
+        """
+        payload = ev.payload or {}
+        trigger_id = payload.get("trigger_id", "unknown")
+        obligation_type = payload.get("obligation_type", "unknown")
+        deadline_secs = payload.get("deadline_secs", 3600)
+        fulfillment = payload.get("fulfillment", "file_write")
+
+        # Calculate due_at from event timestamp
+        due_at = ev.ts + deadline_secs
+
+        # Get trigger details from registry to configure escalation
+        from ystar.governance.obligation_triggers import get_trigger_registry
+        registry = get_trigger_registry()
+        trigger = registry.get(trigger_id) if registry else None
+
+        # Configure escalation policy from trigger
+        from ystar.governance.omission_models import EscalationPolicy, EscalationAction
+
+        if trigger:
+            escalation_policy = EscalationPolicy(
+                escalate_after_secs=deadline_secs * 2 if trigger.escalate_to_hard else None,
+                escalate_to=trigger.escalate_to_actor,
+                actions=[EscalationAction.ESCALATE] if trigger.escalate_to_hard else [],
+                deny_closure_on_open=trigger.deny_closure_on_open,
+            )
+            grace_period_secs = trigger.grace_period_secs
+            hard_overdue_secs = trigger.hard_overdue_secs
+            severity = Severity.HIGH if trigger.severity == "HARD" else Severity.MEDIUM
+        else:
+            escalation_policy = EscalationPolicy()
+            grace_period_secs = 0.0
+            hard_overdue_secs = deadline_secs
+            severity = Severity.MEDIUM
+
+        # Create obligation record
+        ob = ObligationRecord(
+            entity_id            = ev.entity_id,
+            actor_id             = ev.actor_id,
+            obligation_type      = obligation_type,
+            trigger_event_id     = ev.event_id,
+            required_event_types = [fulfillment],
+            due_at               = due_at,
+            grace_period_secs    = grace_period_secs,
+            hard_overdue_secs    = hard_overdue_secs,
+            status               = ObligationStatus.PENDING,
+            violation_code       = f"trigger_{trigger_id}_violation",
+            severity             = severity,
+            escalation_policy    = escalation_policy,
+            notes                = f"triggered by tool_trigger:{trigger_id}",
+        )
+
+        self.store.add_obligation(ob)
+        return [ob]
 
     # ── 私有：violation 创建 ──────────────────────────────────────────────────
 
