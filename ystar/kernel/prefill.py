@@ -355,6 +355,7 @@ def _extract_constraints_from_text(text: str, external_ctx=None) -> Dict[str, An
     """
     result: Dict[str, Any] = {
         "deny": [], "deny_commands": [], "only_paths": [], "only_domains": [],
+        "value_range": {},  # {"param_name": {"min": N, "max": N}}
         "_deny_env": [], "_required_roles": [], "_readonly": False,
         "_rate_limit": None,
         "_prov": {},   # {"dim:value": source_description} — 来源追踪
@@ -384,7 +385,7 @@ def _extract_constraints_from_text(text: str, external_ctx=None) -> Dict[str, An
             if ll.startswith(marker):
                 rest = line[len(marker):].strip()
                 for token in re.split(r"[\s,]+", rest):
-                    token = token.strip("\"'`")
+                    token = token.strip("\"'`.,;:!?")  # Strip punctuation
                     if len(token) > 2 and ("/" in token or token.startswith(".")):
                         result["deny"].append(token)
                         _note("deny", token, "Source1_explicit(marker={}, line={})".format(marker, line[:60]))
@@ -392,10 +393,22 @@ def _extract_constraints_from_text(text: str, external_ctx=None) -> Dict[str, An
         for marker in ["never run", "do not run", "never execute", "do not execute"]:
             if ll.startswith(marker):
                 rest = line[len(marker):].strip()
-                cmd = rest.split()[0] if rest.split() else ""
-                if cmd:
-                    result["deny_commands"].append(cmd)
-                    _note("deny_commands", cmd, f"Source1_explicit(marker='{marker}', line='{line[:60]}')")
+                # Extract the full command phrase (up to period or 3 words minimum)
+                # This ensures "rm -rf" is captured, not just "rm"
+                words = rest.split()
+                if words:
+                    # Take up to first punctuation or end of line, minimum 2 words for compound commands
+                    cmd_parts = []
+                    for i, word in enumerate(words):
+                        clean_word = word.rstrip(".,;:!?")
+                        cmd_parts.append(clean_word)
+                        # Stop at punctuation or after getting a reasonable command phrase
+                        if word != clean_word or i >= 4:  # Max 5 words for a command
+                            break
+                    cmd = " ".join(cmd_parts)
+                    if cmd:
+                        result["deny_commands"].append(cmd)
+                        _note("deny_commands", cmd, f"Source1_explicit(marker='{marker}', line='{line[:60]}')")
 
         for marker in ["only write to", "only write files to", "only save to"]:
             if ll.startswith(marker):
@@ -493,6 +506,53 @@ def _extract_constraints_from_text(text: str, external_ctx=None) -> Dict[str, An
                 n, unit = 0, "hour"
             if result["_rate_limit"] is None and n > 0:
                 result["_rate_limit"] = (n, _RATE_LIMIT_UNITS.get(unit, 3600))
+
+        # Amount/value limit patterns
+        # "maximum amount 5000" / "maximum transaction amount 5000" / "amount limit 999"
+        # Note: handle compound nouns like "transaction amount"
+        amount_max_pat = re.compile(
+            r"(?:maximum|max|no more than)\s+(?:transaction\s+)?(?:amount|transaction|value|payment|transfer)(?:\s+amount)?\s+(?:of\s+)?(\d+)"
+            r"|(?:transaction\s+)?(?:amount|transaction|value|payment|transfer)(?:\s+amount)?\s+(?:limit|max|maximum)\s+(?:of\s+)?(\d+)"
+            r"|(?:transaction\s+)?(?:amount|transaction|value|payment|transfer)(?:\s+amount)?\s+(?:less than|under|below)\s+(\d+)",
+            re.IGNORECASE,
+        )
+        m_max = amount_max_pat.search(ll)
+        if m_max:
+            max_val = int(m_max.group(1) or m_max.group(2) or m_max.group(3))
+            # Determine parameter name from the pattern (prefer "amount" if present)
+            param_name = "amount"  # default
+            for keyword in ["amount", "transaction", "value", "payment", "transfer"]:
+                if keyword in ll:
+                    param_name = keyword
+                    if keyword == "amount":
+                        break  # "amount" has highest priority
+            if param_name not in result["value_range"]:
+                result["value_range"][param_name] = {}
+            result["value_range"][param_name]["max"] = max_val
+            _note(f"value_range.{param_name}.max", str(max_val),
+                  f"Source1_explicit(amount_limit, line='{line[:60]}')")
+
+        # "minimum amount 100" / "at least 50"
+        amount_min_pat = re.compile(
+            r"(?:minimum|min|at least)\s+(?:transaction\s+)?(?:amount|transaction|value|payment|transfer)(?:\s+amount)?\s+(?:of\s+)?(\d+)"
+            r"|(?:transaction\s+)?(?:amount|transaction|value|payment|transfer)(?:\s+amount)?\s+(?:min|minimum)\s+(?:of\s+)?(\d+)"
+            r"|(?:transaction\s+)?(?:amount|transaction|value|payment|transfer)(?:\s+amount)?\s+(?:greater than|above|over)\s+(\d+)",
+            re.IGNORECASE,
+        )
+        m_min = amount_min_pat.search(ll)
+        if m_min:
+            min_val = int(m_min.group(1) or m_min.group(2) or m_min.group(3))
+            param_name = "amount"  # default
+            for keyword in ["amount", "transaction", "value", "payment", "transfer"]:
+                if keyword in ll:
+                    param_name = keyword
+                    if keyword == "amount":
+                        break  # "amount" has highest priority
+            if param_name not in result["value_range"]:
+                result["value_range"][param_name] = {}
+            result["value_range"][param_name]["min"] = min_val
+            _note(f"value_range.{param_name}.min", str(min_val),
+                  f"Source1_explicit(amount_limit, line='{line[:60]}')")
 
         # Double negation ("do not block X" → X should not be added to deny)
         double_neg = re.search(

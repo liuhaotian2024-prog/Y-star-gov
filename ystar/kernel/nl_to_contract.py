@@ -145,8 +145,15 @@ def _try_llm_translation(
             # 注入的测试函数
             response_text = api_call_fn(prompt)
         else:
-            # 真实 API 调用（与 metalearning.py 保持一致的模式）
+            # 真实 API 调用
+            import os
             import urllib.request
+
+            api_key = os.environ.get("ANTHROPIC_API_KEY")
+            if not api_key:
+                print("  [Y*] Note: ANTHROPIC_API_KEY not set. Using regex fallback (limited coverage: paths and basic commands only).", file=sys.stderr)
+                return None
+
             req_body = json.dumps({
                 "model": "claude-sonnet-4-20250514",
                 "max_tokens": 1000,
@@ -156,7 +163,11 @@ def _try_llm_translation(
             req = urllib.request.Request(
                 "https://api.anthropic.com/v1/messages",
                 data=req_body,
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                },
                 method="POST",
             )
             with urllib.request.urlopen(req, timeout=15) as resp:
@@ -176,7 +187,9 @@ def _try_llm_translation(
                   if k in valid_fields and v}
         return result if result else None
 
-    except Exception:
+    except Exception as e:
+        # Log the error for debugging
+        print(f"  [Y*] LLM translation failed: {type(e).__name__}: {str(e)[:100]}. Falling back to regex.", file=sys.stderr)
         return None
 
 
