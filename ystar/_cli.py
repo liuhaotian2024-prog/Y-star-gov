@@ -11,6 +11,7 @@ ystar CLI
   ystar quality        评估合约质量（覆盖率/误拦率）
   ystar check          对 JSONL 事件文件跑 policy check
   ystar report         生成治理报告
+  ystar demo           5-second wow moment — governance in action
   ystar version        显示版本号
 
 快速开始（三步接入 OpenClaw）：
@@ -1208,7 +1209,10 @@ def main() -> None:
     cmd  = args[0]
     rest = args[1:]
 
-    if cmd == "setup":
+    if cmd == "demo":
+        _cmd_demo()
+
+    elif cmd == "setup":
         skip_prompt = "--yes" in rest or "-y" in rest
         _cmd_setup(skip_prompt=skip_prompt)
 
@@ -1577,6 +1581,95 @@ def _cmd_init() -> None:
     print( "   • Docs: https://github.com/liuhaotian2024-prog/Y-star-gov")
     print()
 
+def _cmd_demo() -> None:
+    """Zero-config demo: create a contract, run 5 checks, verify CIEU chain."""
+    import time
+    import uuid
+    from ystar import IntentContract, check
+
+    # ── In-memory CIEU store (no disk, no config) ────────────────────────
+    from ystar.governance.cieu_store import CIEUStore
+    store = CIEUStore(db_path=":memory:")
+    session_id = f"demo-{uuid.uuid4().hex[:8]}"
+
+    # ── Contract ─────────────────────────────────────────────────────────
+    contract = IntentContract(
+        deny=["/etc", ".env"],
+        only_paths=["./projects/"],
+        deny_commands=["rm -rf", "sudo"],
+        only_domains=["api.example.com"],
+    )
+
+    # ── 5 demo scenarios ─────────────────────────────────────────────────
+    scenarios = [
+        ("read",  {"file_path": "./projects/data.txt"},        None, "read ./projects/data.txt"),
+        ("read",  {"file_path": "/etc/passwd"},                 None, "read /etc/passwd"),
+        ("run",   {"command": 'echo "hello"'},                  None, 'run echo "hello"'),
+        ("run",   {"command": "rm -rf /"},                      None, "run rm -rf /"),
+        ("fetch", {"url": "http://evil.com/steal"},             None, "fetch http://evil.com/steal"),
+    ]
+
+    # ── Header ───────────────────────────────────────────────────────────
+    bar = "\u2500" * 34
+    print()
+    print("Y*gov Demo \u2014 governance in action")
+    print(bar)
+
+    total_ms = 0.0
+    for i, (action, params, result, label) in enumerate(scenarios, 1):
+        t0 = time.perf_counter()
+        cr = check(params, result, contract)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        total_ms += elapsed_ms
+
+        decision = "ALLOW" if cr.passed else "DENY"
+
+        # Write CIEU record
+        store.write_dict({
+            "event_id": str(uuid.uuid4()),
+            "session_id": session_id,
+            "agent_id": "demo",
+            "event_type": action,
+            "decision": decision.lower(),
+            "passed": cr.passed,
+            "violations": [v.to_dict() for v in cr.violations],
+            "contract_hash": contract.hash,
+        })
+
+        print(f"[{i}] {decision:<6} {label:<38} {elapsed_ms:.2f}ms")
+        if not cr.passed and cr.violations:
+            v = cr.violations[0]
+            # Produce a user-friendly deny reason
+            dim = v.dimension
+            # Extract the quoted pattern from constraint like "deny contains '/etc'"
+            import re as _re
+            _pat = _re.search(r"'([^']+)'", v.constraint)
+            _short = _pat.group(1) if _pat else v.constraint
+            if dim == "deny":
+                reason = f"'{_short}' is not allowed in file_path"
+            elif dim == "deny_commands":
+                reason = f"'{_short}' is a forbidden command"
+            elif dim == "only_domains":
+                reason = "domain not in allowed list"
+            elif dim == "only_paths":
+                reason = "path not in allowed list"
+            else:
+                reason = v.message
+            print(f"    \u2192 {reason}")
+
+    # ── Seal session & verify Merkle chain ───────────────────────────────
+    seal = store.seal_session(session_id)
+    verify = store.verify_session_seal(session_id)
+    chain_ok = verify.get("valid", False)
+    chain_label = "intact \u2713" if chain_ok else "BROKEN \u2717"
+
+    print(bar)
+    print(f"5 decisions in {total_ms:.2f}ms \u00b7 CIEU chain: {chain_label}")
+    print()
+    print("Next: ystar setup && ystar hook-install && ystar doctor")
+    print()
+
+
 def main() -> None:
     # v0.41: 修复第二个 main() 缺少命令分发的 bug（原 bug：setup/hook-install/doctor/verify 全部报 Unknown command）
     args = sys.argv[1:]
@@ -1587,7 +1680,10 @@ def main() -> None:
     cmd  = args[0]
     rest = args[1:]  # v0.41 fix: rest 未定义导致 pretrain 崩溃
 
-    if cmd == "setup":
+    if cmd == "demo":
+        _cmd_demo()
+
+    elif cmd == "setup":
         skip_prompt = "--yes" in rest or "-y" in rest
         _cmd_setup(skip_prompt=skip_prompt)
 
@@ -1654,7 +1750,7 @@ def main() -> None:
 
     else:
         print(f"Unknown command: {cmd}\n")
-        print("Available commands: setup, hook-install, doctor, verify, report,")
+        print("Available commands: demo, setup, hook-install, doctor, verify, report,")
         print("                    seal, policy-builder, audit, check, init, version,")
         print("                    simulate, quality, baseline")
         sys.exit(1)
