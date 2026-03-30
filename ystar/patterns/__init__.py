@@ -12,7 +12,7 @@ Available patterns:
 """
 from __future__ import annotations
 from typing import Dict, Any
-from ..dimensions import IntentContract
+from ..kernel.dimensions import IntentContract
 from ..session import Policy, PolicyResult
 
 
