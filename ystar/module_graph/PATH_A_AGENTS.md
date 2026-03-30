@@ -27,12 +27,17 @@ Path A may only operate on:
 
 ## Goal Constraints (POSTCONDITION)
 
-At the end of each task, at least one must be true:
-1. GovernanceLoop observes a health improvement
-2. At least one new obligation record was created
-3. At least one ModuleGraph edge changed from is_wired=False to is_wired=True
+At the end of each task, success requires at least one:
+1. GovernanceLoop health score improves by >= 0.1 (equivalent to one health rank, e.g. degraded → stable)
+2. GovernanceSuggestion count decreases by >= 1
 
-If none are satisfied and deadline_secs is exceeded: HARD_OVERDUE triggered.
+If neither is met after execution, the cycle is marked INCONCLUSIVE.
+Three consecutive INCONCLUSIVE cycles trigger HUMAN_REVIEW_REQUIRED.
+
+Note: Structural actions (wiring edges) alone do not constitute success.
+The system must demonstrate measurable governance improvement.
+
+If deadline_secs is exceeded: HARD_OVERDUE triggered.
 
 ## Obligation Timing
 

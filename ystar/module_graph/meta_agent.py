@@ -283,9 +283,29 @@ class PathAAgent:
 
             # 尝试激活目标模块（如果有 activation 方法）
             try:
-                # 检查目标模块是否有激活函数
-                # 实际实现中，这可能是动态导入模块并调用其 activate() 方法
-                # 这里使用模拟激活来保持向后兼容
+                # Gap 2: 真实激活 - 尝试动态导入并调用 activate()
+                activation_status = "graph_only"  # 默认：仅图接线
+
+                # 尝试真实激活
+                if target_node.module_path:
+                    try:
+                        import importlib
+                        module = importlib.import_module(target_node.module_path)
+
+                        # 查找 activate() 可调用对象
+                        if hasattr(module, 'activate') and callable(getattr(module, 'activate')):
+                            activate_fn = getattr(module, 'activate')
+                            activate_fn()  # 调用真实激活
+                            activation_status = "real_activated"
+                        else:
+                            # 模块存在但没有 activate()，这是正常情况
+                            activation_status = "graph_only_no_activate"
+                    except ImportError as ie:
+                        # 模块不可导入（可能是虚拟节点），图接线仍然有效
+                        activation_status = f"graph_only_import_failed:{str(ie)[:50]}"
+                    except Exception as act_err:
+                        # activate() 调用失败 - 这是真正的错误
+                        raise Exception(f"activate() failed: {act_err}")
 
                 # 记录激活意图到 CIEU
                 activation_record = {
@@ -298,7 +318,7 @@ class PathAAgent:
                         "module_path": target_node.module_path,
                         "func_name": target_node.func_name,
                     },
-                    "result": {"status": "activated"},
+                    "result": {"status": activation_status},
                     "contract_name": cycle.contract.name if cycle.contract else "unknown",
                 }
                 self.cieu_store.write_dict(activation_record)

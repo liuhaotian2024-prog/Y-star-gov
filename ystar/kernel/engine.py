@@ -397,33 +397,55 @@ def check(
     # ["./projects/"] because the string literally starts with that prefix.
     # Note: both sides resolve relative to the process CWD — see module docstring.
     # FIX-C2/C3: also classify by value shape when name-based classification fails.
+    # GAP-1 (meta-agent): recognize "module:" prefix for module scope constraints
     if contract.only_paths:
-        for p_name, p_value in params.items():
-            # 明示的な非パスパラメータは除外
-            if p_name.lower() in _NON_PATH_PARAM_NAMES:
-                continue
-            is_path = _is_path_param(p_name)
-            if not is_path and isinstance(p_value, str):
-                is_path = _classify_by_value(p_value) == "path"
-            if not is_path:
-                continue
-            v_str = str(p_value)
-            allowed = False
-            for allowed_path in contract.only_paths:
-                norm_path    = os.path.normpath(os.path.abspath(v_str))
-                norm_allowed = os.path.normpath(os.path.abspath(allowed_path))
-                if norm_path == norm_allowed or norm_path.startswith(norm_allowed + os.sep):
-                    allowed = True
-                    break
-            if not allowed:
-                violations.append(Violation(
-                    dimension  = "only_paths",
-                    field      = p_name,
-                    message    = f"Path '{p_value}' is not in allowed paths {contract.only_paths}",
-                    actual     = p_value,
-                    constraint = f"only_paths={contract.only_paths}",
-                    severity   = 0.9,
-                ))
+        # Separate module constraints from filesystem path constraints
+        module_constraints = [p[7:] for p in contract.only_paths if p.startswith("module:")]
+        path_constraints = [p for p in contract.only_paths if not p.startswith("module:")]
+
+        # Check module scope if module_id/source_id/target_id present
+        if module_constraints:
+            for param_name in ["module_id", "source_id", "target_id"]:
+                if param_name in params:
+                    param_value = str(params[param_name])
+                    if param_value not in module_constraints:
+                        violations.append(Violation(
+                            dimension  = "only_paths",
+                            field      = param_name,
+                            message    = f"Module '{param_value}' is not in allowed modules {module_constraints}",
+                            actual     = param_value,
+                            constraint = f"only_paths=[module:{', module:'.join(module_constraints)}]",
+                            severity   = 0.9,
+                        ))
+
+        # Check filesystem paths as before
+        if path_constraints:
+            for p_name, p_value in params.items():
+                # 明示的な非パスパラメータは除外
+                if p_name.lower() in _NON_PATH_PARAM_NAMES:
+                    continue
+                is_path = _is_path_param(p_name)
+                if not is_path and isinstance(p_value, str):
+                    is_path = _classify_by_value(p_value) == "path"
+                if not is_path:
+                    continue
+                v_str = str(p_value)
+                allowed = False
+                for allowed_path in path_constraints:
+                    norm_path    = os.path.normpath(os.path.abspath(v_str))
+                    norm_allowed = os.path.normpath(os.path.abspath(allowed_path))
+                    if norm_path == norm_allowed or norm_path.startswith(norm_allowed + os.sep):
+                        allowed = True
+                        break
+                if not allowed:
+                    violations.append(Violation(
+                        dimension  = "only_paths",
+                        field      = p_name,
+                        message    = f"Path '{p_value}' is not in allowed paths {path_constraints}",
+                        actual     = p_value,
+                        constraint = f"only_paths={path_constraints}",
+                        severity   = 0.9,
+                    ))
 
     # ── 3. deny_commands: command params must not start with these ────────────
     for cmd_pattern in contract.deny_commands:

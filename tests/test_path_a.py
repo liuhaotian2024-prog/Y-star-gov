@@ -593,3 +593,117 @@ def test_inconclusive_tracking():
 
     # On 3rd INCONCLUSIVE, should write human review request to CIEU
     # (This happens in run_one_cycle when _inconclusive_count >= 3)
+
+
+# ── Test 16: Kernel module: prefix recognition (Gap 1 fix) ─────────────────
+def test_kernel_module_prefix_allow():
+    """Test that check() recognizes module: prefix and allows matching module_id."""
+    from ystar.kernel.engine import check
+
+    contract = IntentContract(
+        name="test_module_scope",
+        only_paths=["module:ModuleA", "module:ModuleB"],
+    )
+
+    # Params with module_id matching allowed module
+    params = {
+        "action": "wire_modules",
+        "module_id": "ModuleA",
+    }
+
+    result = check(params, {}, contract)
+    assert result.passed, f"Should PASS: module_id=ModuleA is in allowed modules. Violations: {result.violations}"
+
+
+def test_kernel_module_prefix_deny():
+    """Test that check() denies module_id not in allowed modules."""
+    from ystar.kernel.engine import check
+
+    contract = IntentContract(
+        name="test_module_scope",
+        only_paths=["module:ModuleA", "module:ModuleB"],
+    )
+
+    # Params with module_id NOT in allowed modules
+    params = {
+        "action": "wire_modules",
+        "module_id": "ModuleC",
+    }
+
+    result = check(params, {}, contract)
+    assert not result.passed, "Should DENY: module_id=ModuleC is not in allowed modules"
+    assert any("ModuleC" in v.message for v in result.violations)
+    assert any("module_id" in v.field for v in result.violations)
+
+
+def test_kernel_module_prefix_source_target():
+    """Test that check() validates source_id and target_id against module scope."""
+    from ystar.kernel.engine import check
+
+    contract = IntentContract(
+        name="test_module_scope",
+        only_paths=["module:A", "module:B"],
+    )
+
+    # Valid: both source and target in allowed modules
+    params_valid = {
+        "source_id": "A",
+        "target_id": "B",
+    }
+    result_valid = check(params_valid, {}, contract)
+    assert result_valid.passed, "Should PASS: both modules in scope"
+
+    # Invalid: source not in allowed modules
+    params_invalid = {
+        "source_id": "C",
+        "target_id": "B",
+    }
+    result_invalid = check(params_invalid, {}, contract)
+    assert not result_invalid.passed, "Should DENY: source_id=C not in scope"
+    assert any("C" in v.message for v in result_invalid.violations)
+
+
+def test_kernel_mixed_module_and_path_scope():
+    """Test that check() handles both module: and filesystem path constraints."""
+    from ystar.kernel.engine import check
+    import tempfile
+    import os
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        contract = IntentContract(
+            name="test_mixed_scope",
+            only_paths=[
+                "module:ModuleA",
+                "module:ModuleB",
+                tmpdir,  # Filesystem path
+            ],
+        )
+
+        # Valid: module in scope
+        params_module = {
+            "module_id": "ModuleA",
+        }
+        result_module = check(params_module, {}, contract)
+        assert result_module.passed, "Should PASS: module_id in scope"
+
+        # Valid: file path in allowed directory
+        test_file = os.path.join(tmpdir, "test.txt")
+        params_path = {
+            "file_path": test_file,
+        }
+        result_path = check(params_path, {}, contract)
+        assert result_path.passed, "Should PASS: file_path in allowed dir"
+
+        # Invalid: module not in scope
+        params_bad_module = {
+            "module_id": "ModuleC",
+        }
+        result_bad_module = check(params_bad_module, {}, contract)
+        assert not result_bad_module.passed, "Should DENY: module_id not in scope"
+
+        # Invalid: file path outside allowed directory
+        params_bad_path = {
+            "file_path": "/etc/passwd",
+        }
+        result_bad_path = check(params_bad_path, {}, contract)
+        assert not result_bad_path.passed, "Should DENY: file_path outside scope"
