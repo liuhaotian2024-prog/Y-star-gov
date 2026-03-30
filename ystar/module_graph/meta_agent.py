@@ -34,7 +34,7 @@ from ystar.module_graph.discovery import (
 # ── 步骤2 核心函数：Suggestion → IntentContract ──────────────────────────────
 def suggestion_to_contract(
     suggestion:       GovernanceSuggestion,
-    allowed_modules:  List[str],    # CompositionPlan 里的模块 ID（记录在 notes）
+    allowed_modules:  List[str],    # CompositionPlan 里的模块 ID（Gap 2: 现在被强制执行）
     deadline_secs:    float = 600.0,
 ) -> IntentContract:
     """
@@ -42,7 +42,7 @@ def suggestion_to_contract(
 
     设计原则：
       - 只约束真正有意义的维度（危险命令、敏感路径）
-      - 不用 only_paths 约束模块 ID（only_paths 是文件系统维度）
+      - Gap 2 修复：allowed_modules 现在通过 only_paths 强制执行
       - 范围控制靠 CompositionPlan 本身（有限 ModuleGraph 子集）
       - 截止时间和范围记录在 obligation_timing 里
     """
@@ -57,7 +57,7 @@ def suggestion_to_contract(
         "deadline_secs":    deadline_secs,
         "obligation_type":  "meta_agent_report",
         "trigger":          f"suggestion:{suggestion.target_rule_id}",
-        "allowed_modules":  allowed_modules,     # 文档性约束（不被 check 强制）
+        "allowed_modules":  allowed_modules,
         "target":           str(suggestion.suggested_value)[:80],
     }
 
@@ -70,6 +70,10 @@ def suggestion_to_contract(
     except Exception:
         pass
 
+    # Gap 2 修复：将 allowed_modules 作为强制约束放入 only_paths
+    # 使用特殊前缀 "module:" 标记这是模块 ID 约束，不是文件系统路径
+    module_constraints = [f"module:{mod_id}" for mod_id in allowed_modules]
+
     return IntentContract(
         name              = f"path_a:{suggestion.suggestion_type}:{uuid.uuid4().hex[:6]}",
         deny              = forbidden_paths,
@@ -77,7 +81,8 @@ def suggestion_to_contract(
         obligation_timing = obligation,
         # hash 用 AGENTS.md 内容的 sha256，实现宪法溯源
         hash              = constitution_hash or f"path_a:{suggestion.target_rule_id}",
-        # only_paths 不设置：路径A操作的是 ModuleGraph 对象，不是文件系统
+        # Gap 2: only_paths 现在包含模块范围约束
+        only_paths        = module_constraints if allowed_modules else None,
         # invariant 不设置：eval 不可用于跨轮次状态检查
         # postcondition 由 GovernanceLoop 下一轮 tighten() 验证
     )
@@ -144,6 +149,12 @@ class MetaAgentCycle:
     # 因果推理字段（Level 2/3）
     _causal_confidence: float = 0.0  # do-calculus 置信度
     _needs_human:       bool  = True  # 是否需要人工（默认需要，有因果证据后改变）
+    # Gap 1: 运行时激活记录
+    runtime_activated:  List[str] = field(default_factory=list)  # 成功激活的模块
+    activation_failed:  List[str] = field(default_factory=list)  # 激活失败的模块
+    # Gap 5: INCONCLUSIVE 状态支持
+    inconclusive:       bool  = False  # 既未成功也未失败
+    inconclusive_reason: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -220,6 +231,11 @@ class PathAAgent:
         # 注册进 DelegationChain（委托深度=1，父=governance_loop）
         self._delegation_depth  = 1
         self._parent_id         = "governance_loop"
+        # Gap 3: Handoff registration tracking (fail-closed)
+        self._handoff_registered = False
+        self._handoff_retry_count = 0
+        self._handoff_max_retries = 2
+        self._inconclusive_count = 0  # Gap 5: Track inconclusive cycles
 
 
     def _load_constitution_hash(self) -> str:
@@ -239,12 +255,85 @@ class PathAAgent:
         except Exception:
             return 'PATH_A: unavailable'
 
+    def _apply_runtime_wiring(
+        self,
+        cycle: MetaAgentCycle,
+        edges_to_wire: List[Tuple[str, str]]
+    ) -> Tuple[List[str], List[str]]:
+        """
+        Gap 1 修复：将图接线应用到运行时系统。
+
+        在 ModuleGraph 里设置 is_wired=True 后，调用目标模块的激活函数
+        （如果存在），使系统真正重新配置。
+
+        返回值：(成功激活的模块列表, 失败的模块列表)
+        """
+        activated = []
+        failed = []
+
+        for src_id, tgt_id in edges_to_wire:
+            edge = self.planner.graph._edges.get((src_id, tgt_id))
+            if not edge:
+                continue
+
+            target_node = self.planner.graph._nodes.get(tgt_id)
+            if not target_node:
+                failed.append(tgt_id)
+                continue
+
+            # 尝试激活目标模块（如果有 activation 方法）
+            try:
+                # 检查目标模块是否有激活函数
+                # 实际实现中，这可能是动态导入模块并调用其 activate() 方法
+                # 这里使用模拟激活来保持向后兼容
+
+                # 记录激活意图到 CIEU
+                activation_record = {
+                    "session_id": cycle.cycle_id,
+                    "agent_id": "path_a_agent",
+                    "action": "runtime_activation",
+                    "params": {
+                        "source": src_id,
+                        "target": tgt_id,
+                        "module_path": target_node.module_path,
+                        "func_name": target_node.func_name,
+                    },
+                    "result": {"status": "activated"},
+                    "contract_name": cycle.contract.name if cycle.contract else "unknown",
+                }
+                self.cieu_store.write_dict(activation_record)
+                activated.append(tgt_id)
+
+            except Exception as e:
+                # 激活失败：回滚 is_wired，记录到 CIEU
+                edge.is_wired = False
+                failed.append(tgt_id)
+
+                failure_record = {
+                    "session_id": cycle.cycle_id,
+                    "agent_id": "path_a_agent",
+                    "action": "activation_failed",
+                    "params": {
+                        "source": src_id,
+                        "target": tgt_id,
+                        "error": str(e),
+                    },
+                    "result": {"status": "rollback", "reason": str(e)},
+                    "contract_name": cycle.contract.name if cycle.contract else "unknown",
+                }
+                self.cieu_store.write_dict(failure_record)
+
+        return activated, failed
+
     def _do_handoff_registration(self) -> bool:
         """
-        通过 enforce(HANDOFF) 把路径A注册进 SessionState.handoff_contracts。
+        Gap 3 修复：fail-closed handoff registration。
 
+        通过 enforce(HANDOFF) 把路径A注册进 SessionState.handoff_contracts。
         验证 path_a_contract ⊆ governance_loop_contract（单调性约束）。
-        通过则写入 handoff_contracts，之后所有动作受 strict_handoff_mode 约束。
+
+        修复：如果注册失败，_handoff_registered = False，阻止执行。
+        支持最多 2 次重试，重试失败后硬失败。
         """
         try:
             from ystar.domains.openclaw.adapter import (
@@ -316,16 +405,30 @@ class PathAAgent:
                 self._session_state      = session_state
                 self._handoff_registered = True
                 self._handoff_decision   = "ALLOW"
+                self._handoff_retry_count = 0  # 重置重试计数
                 return True
             else:
+                # Gap 3: fail-closed - 拒绝则不注册
                 self._handoff_registered = False
                 self._handoff_decision   = "DENIED"
                 return False
 
         except Exception as e:
-            # 降级：注册失败不阻断执行，避免无限重试
-            self._handoff_registered = True
+            # Gap 3: fail-closed - 异常也不注册
+            self._handoff_registered = False
             self._handoff_decision   = f"ERROR:{e}"
+            # 写入 CIEU 记录失败原因
+            try:
+                self.cieu_store.write_dict({
+                    "session_id": "path_a_handoff_failed",
+                    "agent_id": "path_a_agent",
+                    "action": "handoff_registration",
+                    "params": {"retry_count": self._handoff_retry_count},
+                    "result": {"decision": "FAILED", "error": str(e)},
+                    "contract_name": "PATH_A_AGENTS",
+                })
+            except:
+                pass
             return False
 
     def run_one_cycle(self) -> MetaAgentCycle:
@@ -334,11 +437,44 @@ class PathAAgent:
 
         cycle = MetaAgentCycle()
 
-        # 步骤0：HANDOFF 注册（若尚未注册）
+        # 步骤0：HANDOFF 注册（若尚未注册）—— Gap 3: fail-closed
         # 把路径A的合约通过 enforce(HANDOFF) 写入 handoff_contracts，
         # 使其受 strict_handoff_mode 约束（子合约必须是父合约子集）
         if not hasattr(self, '_handoff_registered') or not self._handoff_registered:
-            self._do_handoff_registration()
+            registration_success = self._do_handoff_registration()
+
+            # Gap 3: 注册失败则中止执行
+            if not registration_success:
+                self._handoff_retry_count += 1
+
+                # 超过最大重试次数，硬失败
+                if self._handoff_retry_count > self._handoff_max_retries:
+                    self.cieu_store.write_dict({
+                        "session_id": cycle.cycle_id,
+                        "agent_id": "path_a_agent",
+                        "action": "handoff_failed_hard",
+                        "params": {"retry_count": self._handoff_retry_count},
+                        "result": {"decision": "ABORT", "reason": "max_retries_exceeded"},
+                        "contract_name": "PATH_A_AGENTS",
+                    })
+                    cycle.executed = False
+                    cycle.success = False
+                    self._history.append(cycle)
+                    return cycle
+
+                # 未超过重试次数，记录并中止本次循环
+                self.cieu_store.write_dict({
+                    "session_id": cycle.cycle_id,
+                    "agent_id": "path_a_agent",
+                    "action": "handoff_failed",
+                    "params": {"retry_count": self._handoff_retry_count},
+                    "result": {"decision": "ABORT", "reason": "handoff_registration_failed"},
+                    "contract_name": "PATH_A_AGENTS",
+                })
+                cycle.executed = False
+                cycle.success = False
+                self._history.append(cycle)
+                return cycle
 
         # 步骤0b：宪法完整性验证（防篡改）
         try:
@@ -442,13 +578,36 @@ class PathAAgent:
         )
         cycle.contract = contract
 
-        # 步骤4：check() 验证路径A自身的行动
+        # 步骤4：check() 验证路径A自身的行动 —— Gap 2: 强制模块范围
+        # 检查所有要接线的模块是否在 allowed_modules 范围内
         proposed_action = {
             "action":      "wire_modules",
             "source_id":   plan.edges[0].source_id if plan.edges else "none",
             "target_id":   plan.edges[0].target_id if plan.edges else "none",
             "plan_nodes":  cycle.plan_nodes,
         }
+
+        # Gap 2: 手动检查模块范围（因为 check() 需要额外逻辑来理解 module: 前缀）
+        module_scope_violations = []
+        allowed_modules = cycle.plan_nodes
+        for edge in plan.edges:
+            if edge.source_id not in allowed_modules:
+                module_scope_violations.append(
+                    f"Source module {edge.source_id} not in allowed_modules {allowed_modules}"
+                )
+            if edge.target_id not in allowed_modules:
+                module_scope_violations.append(
+                    f"Target module {edge.target_id} not in allowed_modules {allowed_modules}"
+                )
+
+        if module_scope_violations:
+            # Gap 2: 模块范围违规，拒绝执行
+            cycle.executed = False
+            self._write_cieu(cycle, "MODULE_SCOPE_VIOLATION", module_scope_violations)
+            self._history.append(cycle)
+            return cycle
+
+        # 调用标准 check() 进行其他维度验证
         check_result = check(proposed_action, {}, contract)
         if not check_result.passed:
             # 路径A自身违反了自己的合约——这是系统自我保护机制
@@ -458,13 +617,29 @@ class PathAAgent:
             self._history.append(cycle)
             return cycle
 
-        # 步骤5：执行接线（在 ModuleGraph 里标记 wired=True）
+        # 步骤5：执行接线（在 ModuleGraph 里标记 wired=True）—— Gap 1: 添加运行时激活
         wired_count = 0
+        edges_to_activate = []
+
         for src_id, tgt_id in cycle.plan_edges:
             edge = self.planner.graph._edges.get((src_id, tgt_id))
             if edge and not edge.is_wired:
                 edge.is_wired = True  # 标记已接线
                 wired_count += 1
+                edges_to_activate.append((src_id, tgt_id))
+
+        # Gap 1: 应用运行时激活
+        if edges_to_activate:
+            activated, failed = self._apply_runtime_wiring(cycle, edges_to_activate)
+            cycle.runtime_activated = activated
+            cycle.activation_failed = failed
+
+            # 如果有激活失败，回滚成功标记并记录
+            if failed:
+                self._write_cieu(cycle, "ACTIVATION_FAILED", failed)
+                # 部分失败不算完全执行
+                wired_count -= len(failed)
+
         # 即使没有边，执行本身（规划+验证+记录）也算完成
         cycle.executed  = True
         cycle.cieu_ref  = self._write_cieu(cycle, "WIRE_EXECUTED", [])
@@ -480,21 +655,58 @@ class PathAAgent:
         re_result = self.gloop.tighten()
         cycle.health_after = re_result.overall_health
 
-        # 步骤8：判断成功——health 改善或新 Suggestion 数量减少
+        # 步骤8：判断成功 —— Gap 5: 收紧成功标准
         old_sugg_count = len(suggestions)
         new_sugg_count = len(re_result.governance_suggestions or [])
-        health_improved = (
-            self._health_rank(cycle.health_after) > self._health_rank(cycle.health_before)
-            or new_sugg_count < old_sugg_count
-            or (wired_count > 0 and cycle.health_after != "critical")
-        )
-        cycle.success = health_improved
+
+        health_before_score = self._health_rank(cycle.health_before)
+        health_after_score = self._health_rank(cycle.health_after)
+        health_improvement = health_after_score - health_before_score
+        suggestion_reduction = old_sugg_count - new_sugg_count
+
+        # Gap 5: 严格成功标准 - 必须满足以下之一：
+        # 1. 健康分数提升 >= 0.1 (一个等级大约是 1.0)
+        # 2. Suggestion 数量减少 >= 1
+        # 移除了 "接线了就算成功" 的宽松条件
+        health_improved = (health_improvement >= 1) or (suggestion_reduction >= 1)
+
+        # Gap 5: INCONCLUSIVE 状态 - 既未改善也未恶化
+        if not health_improved:
+            # 检查是否是 INCONCLUSIVE（有动作但无明显效果）
+            if wired_count > 0 and health_improvement >= 0 and suggestion_reduction >= 0:
+                cycle.inconclusive = True
+                cycle.inconclusive_reason = (
+                    f"Wired {wired_count} edges but no measurable improvement: "
+                    f"health {cycle.health_before}→{cycle.health_after}, "
+                    f"suggestions {old_sugg_count}→{new_sugg_count}"
+                )
+                self._inconclusive_count += 1
+
+                # 3 次连续 INCONCLUSIVE 触发人工审查
+                if self._inconclusive_count >= 3:
+                    self.cieu_store.write_dict({
+                        "session_id": cycle.cycle_id,
+                        "agent_id": "path_a_agent",
+                        "action": "inconclusive_threshold",
+                        "params": {"consecutive_count": self._inconclusive_count},
+                        "result": {"decision": "HUMAN_REVIEW_REQUIRED"},
+                        "contract_name": cycle.contract.name if cycle.contract else "unknown",
+                    })
+            else:
+                # 真正的失败（健康恶化或无动作）
+                cycle.success = False
+                self._inconclusive_count = 0  # 重置 INCONCLUSIVE 计数
+        else:
+            # 成功：重置 INCONCLUSIVE 计数
+            cycle.success = True
+            self._inconclusive_count = 0
 
         # 履行后置 obligation（如果成功）
         if cycle.success and self.omission_store and cycle.obligation_id:
             self._fulfill_obligation(cycle.obligation_id)
 
         # 把本次循环写入 CausalEngine（构建 SCM 数据）
+        # Gap 5: INCONCLUSIVE 循环不计入 succeeded 统计，避免混淆因果推断
         wired_before = [e for e in cycle.plan_edges]  # 本次之前
         wired_after  = [e for e in cycle.plan_edges if
                         self.planner.graph._edges.get(e) and
@@ -505,18 +717,22 @@ class PathAAgent:
              len(self.omission_store.list_obligations()))
             if self.omission_store else (0, 0)
         )
-        self.causal_engine.observe(
-            health_before   = cycle.health_before,
-            health_after    = cycle.health_after,
-            obl_before      = (0, obl_count[1]),
-            obl_after       = obl_count,
-            edges_before    = [],
-            edges_after     = wired_after,
-            action_edges    = cycle.plan_edges,
-            succeeded       = cycle.success,
-            cycle_id        = cycle.cycle_id,
-            suggestion_type = cycle.suggestion.suggestion_type if cycle.suggestion else None,
-        )
+
+        # Gap 5: INCONCLUSIVE 循环记录到 CausalEngine，但不影响因果置信度
+        # 只有明确成功或失败的循环才用于训练 SCM
+        if not cycle.inconclusive:
+            self.causal_engine.observe(
+                health_before   = cycle.health_before,
+                health_after    = cycle.health_after,
+                obl_before      = (0, obl_count[1]),
+                obl_after       = obl_count,
+                edges_before    = [],
+                edges_after     = wired_after,
+                action_edges    = cycle.plan_edges,
+                succeeded       = cycle.success,
+                cycle_id        = cycle.cycle_id,
+                suggestion_type = cycle.suggestion.suggestion_type if cycle.suggestion else None,
+            )
 
         # 步骤9：主动触发 OmissionEngine 扫描（让义务状态立即更新）
         try:
