@@ -29,6 +29,7 @@ _PATH_A_AGENTS_MD = os.path.join(
 from ystar.module_graph.discovery import (
     GapDetector, TypeBasedPlanner, CombinatorialExplorer
 )
+from ystar.governance.omission_engine import OmissionEngine
 
 
 # ── 步骤2 核心函数：Suggestion → IntentContract ──────────────────────────────
@@ -220,6 +221,8 @@ class PathAAgent:
         self.gap_detector  = GapDetector(planner.graph)
         self.type_planner  = TypeBasedPlanner(planner.graph)
         self.explorer      = CombinatorialExplorer(planner.graph, self.causal_engine)
+        # BUG 2 FIX: Initialize omission_engine from omission_store
+        self.omission_engine = OmissionEngine(store=self.omission_store, cieu_store=self.cieu_store) if self.omission_store else None
         # 加载路径A宪法文本
         self._constitution_path = _PATH_A_AGENTS_MD
         try:
@@ -283,7 +286,11 @@ class PathAAgent:
 
             # 尝试激活目标模块（如果有 activation 方法）
             try:
-                # Gap 2: 真实激活 - 尝试动态导入并调用 activate()
+                # BUG 3 FIX: Unified activation protocol
+                # 1. Try activate() method (REAL activation)
+                # 2. Try on_wired(source_id, target_id) hook (hook-style activation)
+                # 3. If module is a Python path, import and check for either
+                # 4. If none available, graph_only (log clearly)
                 activation_status = "graph_only"  # 默认：仅图接线
 
                 # 尝试真实激活
@@ -292,20 +299,25 @@ class PathAAgent:
                         import importlib
                         module = importlib.import_module(target_node.module_path)
 
-                        # 查找 activate() 可调用对象
+                        # Protocol 1: Check for activate() method
                         if hasattr(module, 'activate') and callable(getattr(module, 'activate')):
                             activate_fn = getattr(module, 'activate')
                             activate_fn()  # 调用真实激活
-                            activation_status = "real_activated"
+                            activation_status = "real_activated_via_activate"
+                        # Protocol 2: Check for on_wired() hook
+                        elif hasattr(module, 'on_wired') and callable(getattr(module, 'on_wired')):
+                            on_wired_fn = getattr(module, 'on_wired')
+                            on_wired_fn(src_id, tgt_id)  # 调用 hook-style 激活
+                            activation_status = "real_activated_via_on_wired"
                         else:
-                            # 模块存在但没有 activate()，这是正常情况
-                            activation_status = "graph_only_no_activate"
+                            # 模块存在但没有 activate() 或 on_wired()，这是正常情况
+                            activation_status = "graph_only_no_activation_protocol"
                     except ImportError as ie:
                         # 模块不可导入（可能是虚拟节点），图接线仍然有效
                         activation_status = f"graph_only_import_failed:{str(ie)[:50]}"
                     except Exception as act_err:
-                        # activate() 调用失败 - 这是真正的错误
-                        raise Exception(f"activate() failed: {act_err}")
+                        # activate() 或 on_wired() 调用失败 - 这是真正的错误
+                        raise Exception(f"activation protocol failed: {act_err}")
 
                 # 记录激活意图到 CIEU
                 activation_record = {
@@ -584,9 +596,8 @@ class PathAAgent:
                     # 记录是否需要人工确认（自主模式下跳过）
                     cycle._causal_confidence = best_do.confidence
                     cycle._needs_human = needs_human
+        # BUG 1 FIX: Use the causal-selected best_plan, not plans[0]
         plan = best_plan
-
-        plan = plans[0]
         cycle.plan_nodes = [n.id for n in plan.nodes]
         cycle.plan_edges = [(e.source_id, e.target_id) for e in plan.edges]
 
@@ -755,10 +766,12 @@ class PathAAgent:
             )
 
         # 步骤9：主动触发 OmissionEngine 扫描（让义务状态立即更新）
-        try:
-            self.omission_engine.scan()
-        except Exception:
-            pass  # scan 失败不阻断循环
+        # BUG 2 FIX: Check if omission_engine exists before calling scan()
+        if self.omission_engine:
+            try:
+                self.omission_engine.scan()
+            except Exception:
+                pass  # scan 失败不阻断循环
 
         self._history.append(cycle)
         return cycle
