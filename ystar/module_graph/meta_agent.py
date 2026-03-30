@@ -84,8 +84,11 @@ def suggestion_to_contract(
         hash              = constitution_hash or f"path_a:{suggestion.target_rule_id}",
         # Gap 2: only_paths 现在包含模块范围约束
         only_paths        = module_constraints if allowed_modules else None,
-        # invariant 不设置：eval 不可用于跨轮次状态检查
-        # postcondition 由 GovernanceLoop 下一轮 tighten() 验证
+        # Note: postcondition left empty. Health improvement is enforced
+        # post-execution at step 8 (strict success criteria) and via
+        # create_postcondition_obligation(). Including it here would cause
+        # check() to evaluate it pre-execution with empty output, always failing.
+        postcondition     = [],
     )
 
 
@@ -239,6 +242,8 @@ class PathAAgent:
         self._handoff_retry_count = 0
         self._handoff_max_retries = 2
         self._inconclusive_count = 0  # Gap 5: Track inconclusive cycles
+        # Fix 6.2: human review gate — blocks execution until acknowledged
+        self._human_review_required = False
 
 
     def _load_constitution_hash(self) -> str:
@@ -319,20 +324,20 @@ class PathAAgent:
                         # activate() 或 on_wired() 调用失败 - 这是真正的错误
                         raise Exception(f"activation protocol failed: {act_err}")
 
-                # 记录激活意图到 CIEU
-                activation_record = {
-                    "session_id": cycle.cycle_id,
-                    "agent_id": "path_a_agent",
-                    "action": "runtime_activation",
-                    "params": {
+                # 记录激活意图到 CIEU (Fix 5.1: use helper)
+                activation_record = self._make_cieu_record(
+                    event_type="runtime_activation",
+                    action="runtime_activation",
+                    decision="allow",
+                    params={
                         "source": src_id,
                         "target": tgt_id,
                         "module_path": target_node.module_path,
                         "func_name": target_node.func_name,
                     },
-                    "result": {"status": activation_status},
-                    "contract_name": cycle.contract.name if cycle.contract else "unknown",
-                }
+                    result={"status": activation_status},
+                    cycle=cycle,
+                )
                 self.cieu_store.write_dict(activation_record)
                 activated.append(tgt_id)
 
@@ -341,18 +346,18 @@ class PathAAgent:
                 edge.is_wired = False
                 failed.append(tgt_id)
 
-                failure_record = {
-                    "session_id": cycle.cycle_id,
-                    "agent_id": "path_a_agent",
-                    "action": "activation_failed",
-                    "params": {
+                failure_record = self._make_cieu_record(
+                    event_type="activation_failed",
+                    action="activation_failed",
+                    decision="deny",
+                    params={
                         "source": src_id,
                         "target": tgt_id,
                         "error": str(e),
                     },
-                    "result": {"status": "rollback", "reason": str(e)},
-                    "contract_name": cycle.contract.name if cycle.contract else "unknown",
-                }
+                    result={"status": "rollback", "reason": str(e)},
+                    cycle=cycle,
+                )
                 self.cieu_store.write_dict(failure_record)
 
         return activated, failed
@@ -392,13 +397,16 @@ class PathAAgent:
 
             # DelegationChain: ystar_system → governance_loop → path_a_agent
             delegation_chain = DelegationChain()
-            # 父链：action_scope 必须是子链的超集
-            _path_a_scope = ["module_graph.wire", "cieu.write", "obligation.create"]
+            # Fix 4.1: child action_scope is STRICT SUBSET of parent
+            _parent_scope = ["module_graph.wire", "cieu.write",
+                             "obligation.create", "governance_loop.observe"]
+            _child_scope  = ["module_graph.wire", "cieu.write",
+                             "obligation.create"]  # no governance_loop.observe
             delegation_chain.append(DelegationContract(
                 principal        = "ystar_system",
                 actor            = "governance_loop",
                 contract         = parent_contract,
-                action_scope     = _path_a_scope,  # 与子链相同，满足 ⊇ 关系
+                action_scope     = _parent_scope,
                 delegation_depth = 1,
                 allow_redelegate = True,
             ))
@@ -406,7 +414,7 @@ class PathAAgent:
                 principal        = "governance_loop",
                 actor            = "path_a_agent",
                 contract         = child_contract,
-                action_scope     = _path_a_scope,
+                action_scope     = _child_scope,
                 delegation_depth = 0,
                 allow_redelegate = False,
             ))
@@ -451,14 +459,16 @@ class PathAAgent:
             self._handoff_decision   = f"ERROR:{e}"
             # 写入 CIEU 记录失败原因
             try:
-                self.cieu_store.write_dict({
-                    "session_id": "path_a_handoff_failed",
-                    "agent_id": "path_a_agent",
-                    "action": "handoff_registration",
-                    "params": {"retry_count": self._handoff_retry_count},
-                    "result": {"decision": "FAILED", "error": str(e)},
-                    "contract_name": "PATH_A_AGENTS",
-                })
+                # Use a minimal cycle placeholder for pre-cycle CIEU writes
+                _stub = MetaAgentCycle()
+                self.cieu_store.write_dict(self._make_cieu_record(
+                    event_type="handoff_registration",
+                    action="handoff_registration",
+                    decision="deny",
+                    params={"retry_count": self._handoff_retry_count},
+                    result={"decision": "FAILED", "error": str(e)},
+                    cycle=_stub,
+                ))
             except:
                 pass
             return False
@@ -468,6 +478,18 @@ class PathAAgent:
         from ystar import check
 
         cycle = MetaAgentCycle()
+
+        # Fix 6.2: refuse to execute if human review is pending
+        if self._human_review_required:
+            cycle.executed = False
+            cycle.success = False
+            cycle.inconclusive = True
+            cycle.inconclusive_reason = (
+                "BLOCKED: human review required. "
+                "Call acknowledge_human_review() to resume."
+            )
+            self._history.append(cycle)
+            return cycle
 
         # 步骤0：HANDOFF 注册（若尚未注册）—— Gap 3: fail-closed
         # 把路径A的合约通过 enforce(HANDOFF) 写入 handoff_contracts，
@@ -481,28 +503,28 @@ class PathAAgent:
 
                 # 超过最大重试次数，硬失败
                 if self._handoff_retry_count > self._handoff_max_retries:
-                    self.cieu_store.write_dict({
-                        "session_id": cycle.cycle_id,
-                        "agent_id": "path_a_agent",
-                        "action": "handoff_failed_hard",
-                        "params": {"retry_count": self._handoff_retry_count},
-                        "result": {"decision": "ABORT", "reason": "max_retries_exceeded"},
-                        "contract_name": "PATH_A_AGENTS",
-                    })
+                    self.cieu_store.write_dict(self._make_cieu_record(
+                        event_type="handoff_failed",
+                        action="handoff_failed_hard",
+                        decision="deny",
+                        params={"retry_count": self._handoff_retry_count},
+                        result={"decision": "ABORT", "reason": "max_retries_exceeded"},
+                        cycle=cycle,
+                    ))
                     cycle.executed = False
                     cycle.success = False
                     self._history.append(cycle)
                     return cycle
 
                 # 未超过重试次数，记录并中止本次循环
-                self.cieu_store.write_dict({
-                    "session_id": cycle.cycle_id,
-                    "agent_id": "path_a_agent",
-                    "action": "handoff_failed",
-                    "params": {"retry_count": self._handoff_retry_count},
-                    "result": {"decision": "ABORT", "reason": "handoff_registration_failed"},
-                    "contract_name": "PATH_A_AGENTS",
-                })
+                self.cieu_store.write_dict(self._make_cieu_record(
+                    event_type="handoff_failed",
+                    action="handoff_failed",
+                    decision="deny",
+                    params={"retry_count": self._handoff_retry_count},
+                    result={"decision": "ABORT", "reason": "handoff_registration_failed"},
+                    cycle=cycle,
+                ))
                 cycle.executed = False
                 cycle.success = False
                 self._history.append(cycle)
@@ -515,16 +537,16 @@ class PathAAgent:
                 current_hash = "sha256:" + _hl.sha256(_cf.read()).hexdigest()[:16]
             if current_hash != self._constitution_hash:
                 # 宪法被篡改：写 CIEU 记录，跳过本次循环
-                self.cieu_store.write_dict({
-                    "session_id": "path_a_constitution_check",
-                    "agent_id":   "path_a_agent",
-                    "action":     "constitution_integrity_check",
-                    "params":     {"expected": self._constitution_hash,
-                                   "found":    current_hash},
-                    "result":     {"decision": "skip_cycle",
-                                   "reason":   "constitution_hash_mismatch"},
-                    "contract_name": "PATH_A_AGENTS",
-                })
+                self.cieu_store.write_dict(self._make_cieu_record(
+                    event_type="constitution_integrity_check",
+                    action="constitution_integrity_check",
+                    decision="deny",
+                    params={"expected": self._constitution_hash,
+                            "found":    current_hash},
+                    result={"decision": "skip_cycle",
+                            "reason":   "constitution_hash_mismatch"},
+                    cycle=cycle,
+                ))
                 cycle.executed = False
                 return cycle
         except FileNotFoundError:
@@ -610,33 +632,25 @@ class PathAAgent:
         cycle.contract = contract
 
         # 步骤4：check() 验证路径A自身的行动 —— Gap 2: 强制模块范围
-        # 检查所有要接线的模块是否在 allowed_modules 范围内
+        # Early return if plan has no edges — nothing to wire
+        if not plan.edges:
+            cycle.executed = False
+            self._write_cieu(cycle, "NO_EDGES_TO_WIRE", [
+                "Plan has no edges; nothing to wire"
+            ])
+            self._history.append(cycle)
+            return cycle
+
         proposed_action = {
             "action":      "wire_modules",
-            "source_id":   plan.edges[0].source_id if plan.edges else "none",
-            "target_id":   plan.edges[0].target_id if plan.edges else "none",
+            "source_id":   plan.edges[0].source_id,
+            "target_id":   plan.edges[0].target_id,
             "plan_nodes":  cycle.plan_nodes,
         }
 
-        # Gap 2: 手动检查模块范围（因为 check() 需要额外逻辑来理解 module: 前缀）
-        module_scope_violations = []
-        allowed_modules = cycle.plan_nodes
-        for edge in plan.edges:
-            if edge.source_id not in allowed_modules:
-                module_scope_violations.append(
-                    f"Source module {edge.source_id} not in allowed_modules {allowed_modules}"
-                )
-            if edge.target_id not in allowed_modules:
-                module_scope_violations.append(
-                    f"Target module {edge.target_id} not in allowed_modules {allowed_modules}"
-                )
-
-        if module_scope_violations:
-            # Gap 2: 模块范围违规，拒绝执行
-            cycle.executed = False
-            self._write_cieu(cycle, "MODULE_SCOPE_VIOLATION", module_scope_violations)
-            self._history.append(cycle)
-            return cycle
+        # Module scope validation consolidated into check() via module: prefix
+        # in only_paths (see engine.py). No manual loop needed here — check()
+        # is the single source of truth for module scope enforcement.
 
         # 调用标准 check() 进行其他维度验证
         check_result = check(proposed_action, {}, contract)
@@ -675,6 +689,18 @@ class PathAAgent:
         cycle.executed  = True
         cycle.cieu_ref  = self._write_cieu(cycle, "WIRE_EXECUTED", [])
 
+        # Fix 5.2: CIEU record for wiring_success when all edges wired
+        if edges_to_activate and not cycle.activation_failed:
+            self.cieu_store.write_dict(self._make_cieu_record(
+                event_type="wiring_success",
+                action="wiring_success",
+                decision="allow",
+                params={"wired_count": wired_count,
+                        "edges": [(s, t) for s, t in edges_to_activate]},
+                result={"activated": cycle.runtime_activated},
+                cycle=cycle,
+            ))
+
         # 步骤6：创建后置 obligation
         if self.omission_store:
             cycle.obligation_id = create_postcondition_obligation(
@@ -696,45 +722,74 @@ class PathAAgent:
         suggestion_reduction = old_sugg_count - new_sugg_count
 
         # Gap 5: 严格成功标准 - 必须满足以下之一：
-        # 1. 健康分数提升 >= 0.1 (一个等级大约是 1.0)
+        # 1. 健康分数提升 >= 1 (one rank level)
         # 2. Suggestion 数量减少 >= 1
-        # 移除了 "接线了就算成功" 的宽松条件
         health_improved = (health_improvement >= 1) or (suggestion_reduction >= 1)
 
-        # Gap 5: INCONCLUSIVE 状态 - 既未改善也未恶化
+        # Fix 6.1: Clarify wiring + no improvement = FAILURE not INCONCLUSIVE
+        # Per constitution: "Structural actions alone do NOT constitute success."
+        # INCONCLUSIVE is reserved for cases where no wiring was attempted
+        # (e.g., planner found paths but check() denied them).
         if not health_improved:
-            # 检查是否是 INCONCLUSIVE（有动作但无明显效果）
-            if wired_count > 0 and health_improvement >= 0 and suggestion_reduction >= 0:
+            if wired_count == 0 and health_improvement >= 0 and suggestion_reduction >= 0:
+                # No wiring attempted but also no degradation → INCONCLUSIVE
                 cycle.inconclusive = True
                 cycle.inconclusive_reason = (
-                    f"Wired {wired_count} edges but no measurable improvement: "
+                    f"No wiring attempted, no measurable change: "
                     f"health {cycle.health_before}→{cycle.health_after}, "
                     f"suggestions {old_sugg_count}→{new_sugg_count}"
                 )
                 self._inconclusive_count += 1
 
-                # 3 次连续 INCONCLUSIVE 触发人工审查
+                # 3 次连续 INCONCLUSIVE 触发人工审查 (Fix 6.2)
                 if self._inconclusive_count >= 3:
-                    self.cieu_store.write_dict({
-                        "session_id": cycle.cycle_id,
-                        "agent_id": "path_a_agent",
-                        "action": "inconclusive_threshold",
-                        "params": {"consecutive_count": self._inconclusive_count},
-                        "result": {"decision": "HUMAN_REVIEW_REQUIRED"},
-                        "contract_name": cycle.contract.name if cycle.contract else "unknown",
-                    })
+                    self.cieu_store.write_dict(self._make_cieu_record(
+                        event_type="inconclusive_threshold",
+                        action="inconclusive_threshold",
+                        decision="escalate",
+                        params={"consecutive_count": self._inconclusive_count},
+                        result={"decision": "HUMAN_REVIEW_REQUIRED"},
+                        cycle=cycle,
+                    ))
+                    # Fix 6.2: enforce the threshold — block further execution
+                    self._human_review_required = True
             else:
-                # 真正的失败（健康恶化或无动作）
+                # Wiring happened but no improvement → FAILURE (Fix 6.1)
                 cycle.success = False
-                self._inconclusive_count = 0  # 重置 INCONCLUSIVE 计数
+                cycle.inconclusive = False
+                self._inconclusive_count = 0
+                # Fix 6.3: explicitly fail obligation on cycle failure
+                if self.omission_store and cycle.obligation_id:
+                    self._fail_obligation(cycle.obligation_id)
         else:
-            # 成功：重置 INCONCLUSIVE 计数
+            # 成功：重置计数, clear inconclusive to prevent state leakage
             cycle.success = True
+            cycle.inconclusive = False
             self._inconclusive_count = 0
+            # Fix 5.2: CIEU record for health_improved
+            self.cieu_store.write_dict(self._make_cieu_record(
+                event_type="health_improved",
+                action="health_improved",
+                decision="allow",
+                params={"health_before": cycle.health_before,
+                        "health_after": cycle.health_after,
+                        "suggestion_reduction": suggestion_reduction},
+                result={"improvement": health_improvement},
+                cycle=cycle,
+            ))
 
         # 履行后置 obligation（如果成功）
         if cycle.success and self.omission_store and cycle.obligation_id:
             self._fulfill_obligation(cycle.obligation_id)
+            # Fix 5.2: CIEU record for obligation_fulfilled
+            self.cieu_store.write_dict(self._make_cieu_record(
+                event_type="obligation_fulfilled",
+                action="obligation_fulfilled",
+                decision="allow",
+                params={"obligation_id": cycle.obligation_id},
+                result={"status": "fulfilled"},
+                cycle=cycle,
+            ))
 
         # 把本次循环写入 CausalEngine（构建 SCM 数据）
         # Gap 5: INCONCLUSIVE 循环不计入 succeeded 统计，避免混淆因果推断
@@ -773,6 +828,11 @@ class PathAAgent:
             except Exception:
                 pass  # scan 失败不阻断循环
 
+        # Fix 4.3: Reset handoff retry state after cycle completes
+        # (success or failure), so the next cycle starts fresh.
+        # Sticky count is only for consecutive handoff failures within run_one_cycle.
+        self._handoff_retry_count = 0
+
         self._history.append(cycle)
         return cycle
 
@@ -800,16 +860,48 @@ class PathAAgent:
     def _health_rank(health: str) -> int:
         return {"healthy": 4, "stable": 3, "degraded": 2, "critical": 1}.get(health, 0)
 
+    # ── Fix 5.1: Standardized CIEU record helper ──────────────────────────────
+    def _make_cieu_record(
+        self,
+        event_type: str,
+        action: str,
+        decision: str,
+        params: dict,
+        result: dict,
+        cycle: MetaAgentCycle,
+    ) -> dict:
+        """
+        Produce a consistent CIEU record with all required fields.
+        Fix 5.1 + 5.3: every record has session_id, agent_id, event_type,
+        action, decision, passed, params, result, contract_name.
+        """
+        passed = decision in ("allow", "inconclusive")
+        return {
+            "session_id":    cycle.cycle_id,
+            "agent_id":      "path_a_agent",
+            "event_type":    event_type,
+            "action":        action,
+            "decision":      decision,
+            "passed":        passed,
+            "params":        params,
+            "result":        result,
+            "contract_name": (cycle.contract.name
+                              if cycle.contract else "unknown"),
+        }
+
     def _write_cieu(self, cycle: MetaAgentCycle, event: str, violations) -> Optional[str]:
         try:
-            record = {
-                "func_name":  f"path_a.{event.lower()}",
-                "params":     cycle.to_dict(),
-                "violations": [v.message if hasattr(v, 'message') else str(v)
-                               for v in violations],
-                "source":     "path_a_agent",
-                "is_meta_agent": True,
-            }
+            viol_list = [v.message if hasattr(v, 'message') else str(v)
+                         for v in violations]
+            decision = "deny" if viol_list else "allow"
+            record = self._make_cieu_record(
+                event_type=f"path_a.{event.lower()}",
+                action=event.lower(),
+                decision=decision,
+                params=cycle.to_dict(),
+                result={"violations": viol_list},
+                cycle=cycle,
+            )
             return self.cieu_store.write_dict(record) and cycle.cycle_id
         except Exception:
             return None
@@ -866,12 +958,29 @@ class PathAAgent:
             cycle._discovered_novel = value
         except:
             pass
+    def acknowledge_human_review(self) -> None:
+        """Fix 6.2: Reset the human review gate so execution can resume."""
+        self._human_review_required = False
+        self._inconclusive_count = 0
+
     def _fulfill_obligation(self, obligation_id: str) -> None:
         try:
             from ystar.governance.omission_engine import ObligationStatus
             ob = self.omission_store.get_obligation(obligation_id)
             if ob:
                 ob.status = ObligationStatus.FULFILLED
+                ob.updated_at = time.time()
+                self.omission_store.update_obligation(ob)
+        except Exception:
+            pass
+
+    def _fail_obligation(self, obligation_id: str) -> None:
+        """Fix 6.3: Explicitly mark obligation as FAILED on cycle failure."""
+        try:
+            from ystar.governance.omission_engine import ObligationStatus
+            ob = self.omission_store.get_obligation(obligation_id)
+            if ob:
+                ob.status = ObligationStatus.FAILED
                 ob.updated_at = time.time()
                 self.omission_store.update_obligation(ob)
         except Exception:

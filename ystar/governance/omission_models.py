@@ -48,6 +48,7 @@ class ObligationStatus(str, Enum):
     EXPIRED       = "expired"        # 最终超时（历史兼容，等同 hard_overdue）
     ESCALATED     = "escalated"      # 已升级
     CANCELLED     = "cancelled"      # 已取消（义务本身被撤销）
+    FAILED        = "failed"         # Fix 6.3: 明确失败（cycle failure 触发）
 
     @property
     def is_open(self) -> bool:

@@ -405,15 +405,31 @@ def check(
 
         # Check module scope if module_id/source_id/target_id present
         if module_constraints:
-            for param_name in ["module_id", "source_id", "target_id"]:
-                if param_name in params:
-                    param_value = str(params[param_name])
-                    if param_value not in module_constraints:
+            for param_name in ["module_id", "source_id", "target_id", "plan_nodes"]:
+                if param_name not in params:
+                    continue
+                param_value = params[param_name]
+                # 3.1: plan_nodes is a list — check each element
+                if isinstance(param_value, list):
+                    for item in param_value:
+                        item_str = str(item)
+                        if item_str not in module_constraints:
+                            violations.append(Violation(
+                                dimension  = "module_scope",
+                                field      = param_name,
+                                message    = f"Module scope violation: '{item_str}' not in allowed modules {module_constraints}",
+                                actual     = item_str,
+                                constraint = f"only_paths=[module:{', module:'.join(module_constraints)}]",
+                                severity   = 0.9,
+                            ))
+                else:
+                    param_str = str(param_value)
+                    if param_str not in module_constraints:
                         violations.append(Violation(
-                            dimension  = "only_paths",
+                            dimension  = "module_scope",
                             field      = param_name,
-                            message    = f"Module '{param_value}' is not in allowed modules {module_constraints}",
-                            actual     = param_value,
+                            message    = f"Module scope violation: '{param_str}' not in allowed modules {module_constraints}",
+                            actual     = param_str,
                             constraint = f"only_paths=[module:{', module:'.join(module_constraints)}]",
                             severity   = 0.9,
                         ))

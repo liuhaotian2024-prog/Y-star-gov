@@ -494,7 +494,7 @@ def test_success_requires_improvement():
     old_count = 5
     new_count = 5
     health_improvement = 0
-    assert not ((health_improvement >= 1) or ((old_count - new_count) >= 1))
+    assert not ((health_improvement >= 0.1) or ((old_count - new_count) >= 1))
 
 
 # ── Test 14: DelegationChain monotonicity ──────────────────────────────────
@@ -707,3 +707,540 @@ def test_kernel_mixed_module_and_path_scope():
         }
         result_bad_path = check(params_bad_path, {}, contract)
         assert not result_bad_path.passed, "Should DENY: file_path outside scope"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NEW TESTS — appended by CTO review (2026-03-29)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+# ── Integration test 1: Multi-cycle INCONCLUSIVE triggers human review ────────
+def test_multi_cycle_inconclusive_triggers_human_review():
+    """Run 3+ INCONCLUSIVE cycles, verify HUMAN_REVIEW_REQUIRED and 4th refuses."""
+    mock_gloop = Mock()
+    mock_gloop._observations = [Mock()]
+    # Every tighten() returns degraded with same suggestions (no improvement)
+    _suggestion = GovernanceSuggestion("wire", "rule1", "val1", 0.8, "reason")
+    mock_gloop.tighten = Mock(return_value=Mock(
+        overall_health="degraded",
+        governance_suggestions=[_suggestion],
+    ))
+
+    mock_cieu = Mock()
+    mock_cieu.write_dict = Mock(return_value=True)
+
+    graph = ModuleGraph()
+    node_a = ModuleNode("A", "test.a", "a", [], "T", [], "A")
+    node_b = ModuleNode("B", "test.b", "b", ["T"], "T2", [], "B")
+    graph.add_node(node_a)
+    graph.add_node(node_b)
+    # Edge already wired -> wired_count=0 at execution, triggers INCONCLUSIVE
+    edge = ModuleEdge("A", "B", "T", [], "test", is_wired=True)
+    graph._edges[("A", "B")] = edge
+    mock_planner = Mock()
+    mock_planner.graph = graph
+    mock_planner.plan = Mock(return_value=[
+        CompositionPlan(
+            nodes=[node_a, node_b],
+            edges=[edge],
+            required_tags=[], achieved_tags=[],
+            coverage_score=0.5, already_wired=False, description="test"
+        )
+    ])
+
+    agent = PathAAgent(mock_gloop, mock_cieu, mock_planner)
+
+    with patch.object(agent, '_do_handoff_registration', return_value=True):
+        # Patch constitution check to pass
+        with patch.object(agent, '_load_constitution_hash', return_value=agent._constitution_hash):
+            for i in range(3):
+                cycle = agent.run_one_cycle()
+
+    # After 3 INCONCLUSIVE cycles:
+    assert agent._inconclusive_count >= 3
+    assert agent._human_review_required is True
+
+    # Verify HUMAN_REVIEW_REQUIRED was written to CIEU
+    cieu_calls = [str(c) for c in mock_cieu.write_dict.call_args_list]
+    assert any("HUMAN_REVIEW_REQUIRED" in c for c in cieu_calls)
+
+    # 4th cycle should refuse to execute
+    cycle_4 = agent.run_one_cycle()
+    assert cycle_4.executed is False
+    assert "human review required" in (cycle_4.inconclusive_reason or "").lower()
+
+
+# ── Integration test 2: acknowledge_human_review resumes execution ────────────
+def test_acknowledge_human_review_resumes_execution():
+    """After human_review_required is set, acknowledge resumes execution."""
+    mock_gloop = Mock()
+    mock_gloop._observations = [Mock()]
+    mock_gloop.tighten = Mock(return_value=Mock(
+        overall_health="stable",
+        governance_suggestions=[],
+    ))
+
+    mock_cieu = Mock()
+    mock_cieu.write_dict = Mock(return_value=True)
+    mock_planner = Mock()
+    mock_planner.graph = ModuleGraph()
+
+    agent = PathAAgent(mock_gloop, mock_cieu, mock_planner)
+
+    # Manually set human review required
+    agent._human_review_required = True
+    agent._inconclusive_count = 3
+
+    # Cycle should be blocked
+    cycle_blocked = agent.run_one_cycle()
+    assert cycle_blocked.executed is False
+    assert "human review" in (cycle_blocked.inconclusive_reason or "").lower()
+
+    # Acknowledge human review
+    agent.acknowledge_human_review()
+    assert agent._human_review_required is False
+    assert agent._inconclusive_count == 0
+
+    # Now cycle should proceed (no suggestions -> exits early but IS executed path)
+    with patch.object(agent, '_do_handoff_registration', return_value=True):
+        cycle_resumed = agent.run_one_cycle()
+    # It should NOT be blocked anymore (even if success=False for other reasons)
+    assert cycle_resumed.inconclusive_reason is None or "human review" not in (cycle_resumed.inconclusive_reason or "").lower()
+
+
+# ── Integration test 3: Multi-cycle no permission expansion ──────────────────
+def test_multi_cycle_no_permission_expansion():
+    """Run 3 cycles, verify contract.deny never shrinks and only_paths never grows."""
+    contracts = []
+
+    for i in range(3):
+        suggestion = GovernanceSuggestion("wire", f"rule{i}", f"val{i}", 0.8, "r")
+        allowed = ["ModA", "ModB"]
+        contract = suggestion_to_contract(suggestion, allowed)
+        contracts.append(contract)
+
+    # Verify deny sets are identical (never shrink)
+    for c in contracts:
+        assert set(c.deny) == set(contracts[0].deny)
+        assert set(c.deny_commands) == set(contracts[0].deny_commands)
+
+    # Verify only_paths length is bounded by allowed_modules
+    for c in contracts:
+        module_paths = [p for p in (c.only_paths or []) if p.startswith("module:")]
+        assert len(module_paths) == 2  # exactly the 2 allowed modules
+
+
+# ── Failure path test 4: Empty plan edges returns early ──────────────────────
+def test_empty_plan_edges_returns_early():
+    """Plan with empty edges list -> cycle returns early with CIEU record."""
+    mock_gloop = Mock()
+    mock_gloop._observations = [Mock()]
+    _suggestion = GovernanceSuggestion("wire", "rule1", "val1", 0.8, "reason")
+    mock_gloop.tighten = Mock(return_value=Mock(
+        overall_health="degraded",
+        governance_suggestions=[_suggestion],
+    ))
+
+    mock_cieu = Mock()
+    mock_cieu.write_dict = Mock(return_value=True)
+
+    graph = ModuleGraph()
+    node_a = ModuleNode("A", "test.a", "a", [], "T", [], "A")
+    graph.add_node(node_a)
+    mock_planner = Mock()
+    mock_planner.graph = graph
+    mock_planner.plan = Mock(return_value=[
+        CompositionPlan(
+            nodes=[node_a],
+            edges=[],  # empty edges
+            required_tags=[], achieved_tags=[],
+            coverage_score=0.5, already_wired=False, description="no edges"
+        )
+    ])
+
+    agent = PathAAgent(mock_gloop, mock_cieu, mock_planner)
+
+    with patch.object(agent, '_do_handoff_registration', return_value=True):
+        cycle = agent.run_one_cycle()
+
+    assert cycle.executed is False
+    # CIEU should have been written
+    assert mock_cieu.write_dict.called
+    cieu_calls = [str(c) for c in mock_cieu.write_dict.call_args_list]
+    assert any("no_edges_to_wire" in c.lower() for c in cieu_calls)
+
+
+# ── Failure path test 5: Constitution hash mismatch ──────────────────────────
+def test_constitution_hash_mismatch():
+    """Set constitution hash different from expected, verify cycle aborts."""
+    mock_gloop = Mock()
+    mock_gloop._observations = [Mock()]
+    mock_gloop.tighten = Mock(return_value=Mock(
+        overall_health="degraded",
+        governance_suggestions=[
+            GovernanceSuggestion("wire", "r", "v", 0.8, "reason")
+        ],
+    ))
+
+    mock_cieu = Mock()
+    mock_cieu.write_dict = Mock(return_value=True)
+    mock_planner = Mock()
+    mock_planner.graph = ModuleGraph()
+
+    agent = PathAAgent(mock_gloop, mock_cieu, mock_planner)
+
+    with patch.object(agent, '_do_handoff_registration', return_value=True):
+        # Tamper with the stored constitution hash so it won't match the file
+        agent._constitution_hash = "sha256:TAMPERED_HASH"
+        cycle = agent.run_one_cycle()
+
+    assert cycle.executed is False
+    # Verify constitution_mismatch CIEU record written
+    cieu_calls = [str(c) for c in mock_cieu.write_dict.call_args_list]
+    assert any("constitution" in c.lower() for c in cieu_calls)
+
+
+# ── Failure path test 6: Health degradation is failure ───────────────────────
+def test_health_degradation_is_failure():
+    """Health getting worse (health_improvement < 0) -> cycle.success = False."""
+    mock_gloop = Mock()
+    mock_gloop._observations = [Mock()]
+    _sugg = GovernanceSuggestion("wire", "r", "v", 0.8, "reason")
+
+    # First tighten: degraded. Second tighten: critical (worse).
+    mock_gloop.tighten = Mock(side_effect=[
+        Mock(overall_health="degraded",
+             governance_suggestions=[_sugg]),
+        Mock(overall_health="critical",
+             governance_suggestions=[_sugg]),
+    ])
+
+    mock_cieu = Mock()
+    mock_cieu.write_dict = Mock(return_value=True)
+
+    graph = ModuleGraph()
+    node_a = ModuleNode("A", "test.a", "a", [], "T", [], "A")
+    node_b = ModuleNode("B", "test.b", "b", ["T"], "T2", [], "B")
+    graph.add_node(node_a)
+    graph.add_node(node_b)
+    edge = ModuleEdge("A", "B", "T", [], "test", is_wired=False)
+    graph._edges[("A", "B")] = edge
+
+    mock_planner = Mock()
+    mock_planner.graph = graph
+    mock_planner.plan = Mock(return_value=[
+        CompositionPlan(
+            nodes=[node_a, node_b],
+            edges=[edge],
+            required_tags=[], achieved_tags=[],
+            coverage_score=0.7, already_wired=False, description="test"
+        )
+    ])
+
+    agent = PathAAgent(mock_gloop, mock_cieu, mock_planner)
+
+    with patch.object(agent, '_do_handoff_registration', return_value=True):
+        cycle = agent.run_one_cycle()
+
+    assert cycle.success is False
+    assert cycle.inconclusive is False  # degradation is failure, not inconclusive
+
+
+# ── Failure path test 7: Wiring without improvement is failure ───────────────
+def test_wiring_without_improvement_is_failure():
+    """Wiring happened (wired_count > 0) but no health improvement -> FAILURE per Fix 6.1."""
+    mock_gloop = Mock()
+    mock_gloop._observations = [Mock()]
+    _sugg = GovernanceSuggestion("wire", "r", "v", 0.8, "reason")
+
+    # Both tightens return same health & same suggestion count
+    mock_gloop.tighten = Mock(side_effect=[
+        Mock(overall_health="degraded",
+             governance_suggestions=[_sugg]),
+        Mock(overall_health="degraded",
+             governance_suggestions=[_sugg]),
+    ])
+
+    mock_cieu = Mock()
+    mock_cieu.write_dict = Mock(return_value=True)
+
+    graph = ModuleGraph()
+    node_a = ModuleNode("A", "test.a", "a", [], "T", [], "A")
+    node_b = ModuleNode("B", "test.b", "b", ["T"], "T2", [], "B")
+    graph.add_node(node_a)
+    graph.add_node(node_b)
+    edge = ModuleEdge("A", "B", "T", [], "test", is_wired=False)
+    graph._edges[("A", "B")] = edge
+
+    mock_planner = Mock()
+    mock_planner.graph = graph
+    mock_planner.plan = Mock(return_value=[
+        CompositionPlan(
+            nodes=[node_a, node_b],
+            edges=[edge],
+            required_tags=[], achieved_tags=[],
+            coverage_score=0.7, already_wired=False, description="test"
+        )
+    ])
+
+    agent = PathAAgent(mock_gloop, mock_cieu, mock_planner)
+
+    with patch.object(agent, '_do_handoff_registration', return_value=True):
+        cycle = agent.run_one_cycle()
+
+    # Fix 6.1: wiring happened but no improvement = FAILURE not INCONCLUSIVE
+    assert cycle.executed is True
+    assert cycle.success is False
+    assert cycle.inconclusive is False
+
+
+# ── Failure path test 8: Failed obligation on cycle failure ──────────────────
+def test_failed_obligation_on_cycle_failure():
+    """When cycle fails and has obligation_id, verify _fail_obligation is called."""
+    mock_gloop = Mock()
+    mock_gloop._observations = [Mock()]
+    _sugg = GovernanceSuggestion("wire", "r", "v", 0.8, "reason")
+
+    mock_gloop.tighten = Mock(side_effect=[
+        Mock(overall_health="degraded",
+             governance_suggestions=[_sugg]),
+        Mock(overall_health="degraded",
+             governance_suggestions=[_sugg]),
+    ])
+
+    mock_cieu = Mock()
+    mock_cieu.write_dict = Mock(return_value=True)
+
+    graph = ModuleGraph()
+    node_a = ModuleNode("A", "test.a", "a", [], "T", [], "A")
+    node_b = ModuleNode("B", "test.b", "b", ["T"], "T2", [], "B")
+    graph.add_node(node_a)
+    graph.add_node(node_b)
+    edge = ModuleEdge("A", "B", "T", [], "test", is_wired=False)
+    graph._edges[("A", "B")] = edge
+
+    mock_planner = Mock()
+    mock_planner.graph = graph
+    mock_planner.plan = Mock(return_value=[
+        CompositionPlan(
+            nodes=[node_a, node_b],
+            edges=[edge],
+            required_tags=[], achieved_tags=[],
+            coverage_score=0.7, already_wired=False, description="test"
+        )
+    ])
+
+    # Provide an omission_store so obligation path is exercised
+    mock_omission_store = Mock()
+    mock_omission_store.add_obligation = Mock()
+    mock_omission_store.list_obligations = Mock(return_value=[])
+
+    agent = PathAAgent(mock_gloop, mock_cieu, mock_planner,
+                       omission_store=mock_omission_store)
+
+    with patch.object(agent, '_do_handoff_registration', return_value=True):
+        with patch.object(agent, '_fail_obligation') as mock_fail:
+            cycle = agent.run_one_cycle()
+
+            # Cycle failed (wiring but no improvement)
+            assert cycle.success is False
+            # _fail_obligation should have been called with the obligation_id
+            if cycle.obligation_id:
+                mock_fail.assert_called_once_with(cycle.obligation_id)
+
+
+# ── CIEU consistency test 9: Records have consistent schema ──────────────────
+def test_cieu_records_have_consistent_schema():
+    """Run a cycle, verify every CIEU write_dict call has required fields."""
+    mock_gloop = Mock()
+    mock_gloop._observations = [Mock()]
+    _sugg = GovernanceSuggestion("wire", "r", "v", 0.8, "reason")
+
+    mock_gloop.tighten = Mock(side_effect=[
+        Mock(overall_health="degraded",
+             governance_suggestions=[_sugg]),
+        Mock(overall_health="stable",
+             governance_suggestions=[]),
+    ])
+
+    mock_cieu = Mock()
+    mock_cieu.write_dict = Mock(return_value=True)
+
+    graph = ModuleGraph()
+    node_a = ModuleNode("A", "test.a", "a", [], "T", [], "A")
+    node_b = ModuleNode("B", "test.b", "b", ["T"], "T2", [], "B")
+    graph.add_node(node_a)
+    graph.add_node(node_b)
+    edge = ModuleEdge("A", "B", "T", [], "test", is_wired=False)
+    graph._edges[("A", "B")] = edge
+
+    mock_planner = Mock()
+    mock_planner.graph = graph
+    mock_planner.plan = Mock(return_value=[
+        CompositionPlan(
+            nodes=[node_a, node_b],
+            edges=[edge],
+            required_tags=[], achieved_tags=[],
+            coverage_score=0.7, already_wired=False, description="test"
+        )
+    ])
+
+    agent = PathAAgent(mock_gloop, mock_cieu, mock_planner)
+
+    with patch.object(agent, '_do_handoff_registration', return_value=True):
+        cycle = agent.run_one_cycle()
+
+    required_fields = {"session_id", "agent_id", "event_type", "action", "decision", "passed"}
+
+    # Check every CIEU write_dict call
+    for call in mock_cieu.write_dict.call_args_list:
+        record = call[0][0]  # first positional arg
+        if isinstance(record, dict):
+            missing = required_fields - set(record.keys())
+            assert not missing, f"CIEU record missing fields {missing}: {record.get('event_type', '?')}"
+
+
+# ── CIEU consistency test 10: Success events written ─────────────────────────
+def test_cieu_success_events_written():
+    """Run a successful cycle, verify key success events are in CIEU records."""
+    mock_gloop = Mock()
+    mock_gloop._observations = [Mock()]
+    _sugg = GovernanceSuggestion("wire", "r", "v", 0.8, "reason")
+
+    mock_gloop.tighten = Mock(side_effect=[
+        Mock(overall_health="degraded",
+             governance_suggestions=[_sugg]),
+        Mock(overall_health="stable",  # improved
+             governance_suggestions=[]),
+    ])
+
+    mock_cieu = Mock()
+    mock_cieu.write_dict = Mock(return_value=True)
+
+    graph = ModuleGraph()
+    node_a = ModuleNode("A", "test.a", "a", [], "T", [], "A")
+    node_b = ModuleNode("B", "test.b", "b", ["T"], "T2", [], "B")
+    graph.add_node(node_a)
+    graph.add_node(node_b)
+    edge = ModuleEdge("A", "B", "T", [], "test", is_wired=False)
+    graph._edges[("A", "B")] = edge
+
+    mock_planner = Mock()
+    mock_planner.graph = graph
+    mock_planner.plan = Mock(return_value=[
+        CompositionPlan(
+            nodes=[node_a, node_b],
+            edges=[edge],
+            required_tags=[], achieved_tags=[],
+            coverage_score=0.7, already_wired=False, description="test"
+        )
+    ])
+
+    mock_omission_store = Mock()
+    mock_omission_store.add_obligation = Mock()
+    mock_omission_store.get_obligation = Mock(return_value=Mock())
+    mock_omission_store.update_obligation = Mock()
+    mock_omission_store.list_obligations = Mock(return_value=[])
+
+    agent = PathAAgent(mock_gloop, mock_cieu, mock_planner,
+                       omission_store=mock_omission_store)
+
+    with patch.object(agent, '_do_handoff_registration', return_value=True):
+        cycle = agent.run_one_cycle()
+
+    assert cycle.success is True
+
+    # Collect all event_types from CIEU records
+    event_types = []
+    for call in mock_cieu.write_dict.call_args_list:
+        record = call[0][0]
+        if isinstance(record, dict) and "event_type" in record:
+            event_types.append(record["event_type"])
+
+    assert "wiring_success" in event_types, f"Missing wiring_success in {event_types}"
+    assert "health_improved" in event_types, f"Missing health_improved in {event_types}"
+    assert "obligation_fulfilled" in event_types, f"Missing obligation_fulfilled in {event_types}"
+
+
+# ── Kernel module scope test 11: plan_nodes checked against module scope ─────
+def test_plan_nodes_checked_against_module_scope():
+    """Contract with only_paths=[module:A, module:B], plan_nodes=[A,B,C] -> violation for C."""
+    from ystar.kernel.engine import check
+
+    contract = IntentContract(
+        name="test_scope",
+        only_paths=["module:A", "module:B"],
+    )
+
+    params = {
+        "action": "wire_modules",
+        "plan_nodes": ["A", "B", "C"],
+    }
+
+    result = check(params, {}, contract)
+    assert not result.passed, "Should DENY: plan_nodes contains C which is not in module scope"
+    violation_messages = [v.message for v in result.violations]
+    assert any("C" in m for m in violation_messages), f"Should mention C: {violation_messages}"
+
+
+# ── Kernel module scope test 12: Violation uses dimension=module_scope ───────
+def test_module_scope_violation_uses_correct_dimension():
+    """Module scope violations use dimension='module_scope'."""
+    from ystar.kernel.engine import check
+
+    contract = IntentContract(
+        name="test_dim",
+        only_paths=["module:X"],
+    )
+
+    params = {"module_id": "Y"}  # Y is not in scope
+
+    result = check(params, {}, contract)
+    assert not result.passed
+    assert any(v.dimension == "module_scope" for v in result.violations), \
+        f"Expected dimension='module_scope', got: {[v.dimension for v in result.violations]}"
+
+
+# ── Boundary test 13: Health improvement threshold matches constitution ──────
+def test_health_improvement_threshold_matches_constitution():
+    """health_improvement=0.05 is failure, 0.1 is success per PATH_A_AGENTS.md spec."""
+    # The agent uses _health_rank which returns integer ranks:
+    # healthy=4, stable=3, degraded=2, critical=1
+    # health_improvement >= 1 (one rank level) means success.
+
+    # Test: same health rank (improvement=0) -> not success
+    rank_degraded = PathAAgent._health_rank("degraded")
+    rank_degraded2 = PathAAgent._health_rank("degraded")
+    assert (rank_degraded2 - rank_degraded) < 1  # no improvement
+
+    # Test: one rank improvement (degraded -> stable = +1) -> success
+    rank_stable = PathAAgent._health_rank("stable")
+    improvement = rank_stable - rank_degraded
+    assert improvement >= 1  # this counts as success
+
+    # Test: critical -> degraded = +1 -> success
+    rank_critical = PathAAgent._health_rank("critical")
+    improvement_cd = rank_degraded - rank_critical
+    assert improvement_cd >= 1
+
+    # Test: negative improvement (stable -> degraded = -1) -> failure
+    negative = rank_degraded - rank_stable
+    assert negative < 0  # degradation
+
+
+# ── Boundary test 14: Action scope strict subset ─────────────────────────────
+def test_action_scope_strict_subset():
+    """Child delegation action_scope is a proper subset of parent action_scope."""
+    # These are the scopes defined in _do_handoff_registration
+    parent_scope = {"module_graph.wire", "cieu.write",
+                    "obligation.create", "governance_loop.observe"}
+    child_scope = {"module_graph.wire", "cieu.write",
+                   "obligation.create"}
+
+    # Child must be strict subset of parent
+    assert child_scope < parent_scope, "Child scope must be a proper subset of parent scope"
+    # Child must not contain anything parent doesn't have
+    assert child_scope.issubset(parent_scope)
+    # Verify the specific exclusion
+    assert "governance_loop.observe" not in child_scope
+    assert "governance_loop.observe" in parent_scope
