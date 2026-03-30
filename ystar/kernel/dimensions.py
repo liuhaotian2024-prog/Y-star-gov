@@ -35,8 +35,32 @@ from __future__ import annotations
 import re
 import json
 import hashlib
+import time
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
+
+
+# ── Contract Legitimacy Lifecycle (v0.42.0) ──────────────────────────────────
+
+class ContractStatus(str, Enum):
+    """
+    Contract lifecycle status.
+
+    DRAFT      - Translated from natural language, not yet confirmed by human
+    CONFIRMED  - Human confirmed, active and enforceable
+    STALE      - Review trigger fired, awaiting reconfirmation
+    SUSPENDED  - Governance loop suspended it due to policy violation
+    EXPIRED    - Past valid_until timestamp
+    SUPERSEDED - Replaced by newer version
+    """
+    DRAFT = "draft"
+    CONFIRMED = "confirmed"
+    STALE = "stale"
+    SUSPENDED = "suspended"
+    EXPIRED = "expired"
+    SUPERSEDED = "superseded"
+
 
 # ── Snapshot checker registry (P1d) ─────────────────────────────────────────
 _SNAPSHOT_CHECKERS: List[Any] = []
@@ -210,6 +234,20 @@ class IntentContract:
     # 无此字段 → 由 domain pack 配置，或使用规则默认值
     obligation_timing: Dict[str, float]  = field(default_factory=dict)
 
+    # ── Contract Legitimacy Lifecycle (v0.42.0) ──────────────────────────────
+    # Tracks the lifecycle state and decay of contract legitimacy.
+    # Unconfirmed contracts (status=draft) are denied by check().
+    # Confirmed contracts decay over time and may become stale.
+    confirmed_by:      str                = ""           # who confirmed (e.g. "alice@example.com")
+    confirmed_at:      float              = 0.0          # Unix timestamp
+    valid_until:       float              = 0.0          # 0 = never expires
+    review_triggers:   List[str]          = field(default_factory=list)  # ["personnel_change", "regulatory_update"]
+    status:            str                = ""           # Use str for JSON compat (empty = legacy confirmed)
+    superseded_by:     str                = ""           # contract hash that replaces this one
+    version:           int                = 1
+    legitimacy_decay:  Dict[str, float]   = field(default_factory=dict)
+    # Keys: half_life_days, personnel_weight, regulatory_weight, minimum_score
+
     name:          str                   = ""
     hash:          str                   = ""
 
@@ -220,6 +258,84 @@ class IntentContract:
     def _compute_hash(self) -> str:
         canonical = json.dumps(self.to_dict(), sort_keys=True, ensure_ascii=True)
         return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+
+    def legitimacy_score(self, now: float = None) -> float:
+        """
+        Compute current legitimacy based on time decay and triggers.
+
+        Returns a score from 0.0 to 1.0:
+          1.0 = fully legitimate (recently confirmed, no triggers)
+          0.0 = no legitimacy (never confirmed)
+
+        Decay factors:
+          - Time: exponential decay with half_life_days
+          - Triggers: each fired trigger reduces score by its weight
+        """
+        if now is None:
+            now = time.time()
+        if not self.confirmed_at or self.confirmed_at == 0:
+            return 0.0  # Never confirmed = no legitimacy
+
+        # Base: time decay (half-life)
+        half_life = self.legitimacy_decay.get("half_life_days", 0)
+        if half_life > 0:
+            days_elapsed = (now - self.confirmed_at) / 86400
+            time_score = 0.5 ** (days_elapsed / half_life)
+        else:
+            time_score = 1.0
+
+        # Deductions from triggers
+        # Triggers reduce score when fired (marked as "fired:<trigger_name>")
+        trigger_deduction = 0.0
+        for trigger in self.review_triggers:
+            if trigger.startswith("fired:"):
+                weight_key = trigger.split(":")[1] + "_weight"
+                trigger_deduction += self.legitimacy_decay.get(weight_key, 0.1)
+
+        score = max(time_score - trigger_deduction,
+                    self.legitimacy_decay.get("minimum_score", 0.0))
+        return round(score, 4)
+
+    def effective_status(self, now: float = None) -> str:
+        """
+        Compute effective status considering expiration and legitimacy decay.
+
+        Status priority (highest to lowest):
+          SUPERSEDED → SUSPENDED → EXPIRED → STALE → status field
+
+        Returns ContractStatus value as string.
+        """
+        if now is None:
+            now = time.time()
+
+        # Superseded and suspended take precedence
+        if self.status == "superseded":
+            return "superseded"
+        if self.status == "suspended":
+            return "suspended"
+
+        # Check expiration
+        if self.valid_until > 0 and now > self.valid_until:
+            return "expired"
+
+        # BACKWARD COMPAT: legacy contracts (no status field) are treated as confirmed
+        if not self.status:
+            if not self.confirmed_by:
+                # Empty status AND empty confirmed_by → legacy confirmed contract
+                return "confirmed"
+            else:
+                # Has confirmed_by but no status → treat as confirmed
+                return "confirmed"
+
+        # Check legitimacy score for confirmed contracts
+        if self.status == "confirmed":
+            score = self.legitimacy_score(now)
+            min_score = self.legitimacy_decay.get("minimum_score", 0.3)
+            # Stale when score has decayed to the minimum floor
+            if score <= min_score:
+                return "stale"
+
+        return self.status
 
     def to_dict(self) -> dict:
         """Serialize to JSON-compatible dict (excludes name and hash)."""
@@ -234,6 +350,17 @@ class IntentContract:
         if self.field_deny:    d["field_deny"]    = self.field_deny
         if self.value_range:   d["value_range"]   = self.value_range
         if self.obligation_timing: d["obligation_timing"] = self.obligation_timing
+
+        # v0.42.0: Contract legitimacy lifecycle fields
+        if self.confirmed_by:     d["confirmed_by"]     = self.confirmed_by
+        if self.confirmed_at:     d["confirmed_at"]     = self.confirmed_at
+        if self.valid_until:      d["valid_until"]      = self.valid_until
+        if self.review_triggers:  d["review_triggers"]  = self.review_triggers
+        if self.status:           d["status"]           = self.status
+        if self.superseded_by:    d["superseded_by"]    = self.superseded_by
+        if self.version != 1:     d["version"]          = self.version
+        if self.legitimacy_decay: d["legitimacy_decay"] = self.legitimacy_decay
+
         return d
 
     def diff(self, other: "IntentContract") -> dict:
@@ -329,6 +456,15 @@ class IntentContract:
             field_deny    = d.get("field_deny", {}),
             value_range   = d.get("value_range", {}),
             obligation_timing = d.get("obligation_timing", {}),
+            # v0.42.0: Contract legitimacy lifecycle
+            confirmed_by      = d.get("confirmed_by", ""),
+            confirmed_at      = d.get("confirmed_at", 0.0),
+            valid_until       = d.get("valid_until", 0.0),
+            review_triggers   = d.get("review_triggers", []),
+            status            = d.get("status", ""),
+            superseded_by     = d.get("superseded_by", ""),
+            version           = d.get("version", 1),
+            legitimacy_decay  = d.get("legitimacy_decay", {}),
             name          = name,
         )
 

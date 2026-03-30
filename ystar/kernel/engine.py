@@ -328,8 +328,40 @@ def check(
         FIX-2: invariant/postcondition use AST-whitelisted _safe_eval() (blocks RCE)
         FIX-3: only_domains uses _domain_is_allowed() (blocks multi-part subdomain spoof)
         FIX-4: non-primitive params produce type_safety violations
+
+    v0.42.0 contract legitimacy lifecycle:
+        Checks contract effective_status() before enforcing constraints.
+        Draft contracts are denied. Expired/stale contracts proceed with audit.
     """
     violations: List[Violation] = []
+
+    # ── Contract legitimacy check (v0.42.0) ──────────────────────────────────
+    eff_status = contract.effective_status()
+    if eff_status == "draft":
+        # Unconfirmed contracts deny everything
+        return CheckResult(passed=False, violations=[
+            Violation(
+                dimension="legitimacy",
+                field="contract",
+                message="Contract not confirmed (status=draft)",
+                actual="draft",
+                constraint="confirmed contract required",
+                severity=1.0,
+            )
+        ])
+    if eff_status == "suspended":
+        return CheckResult(passed=False, violations=[
+            Violation(
+                dimension="legitimacy",
+                field="contract",
+                message="Contract suspended by governance",
+                actual="suspended",
+                constraint="active contract required",
+                severity=1.0,
+            )
+        ])
+    # Expired and stale: let normal check proceed, CIEU will record status
+    # These are audit modes, not blocking modes
 
     # ── FIX-4: type safety pre-check ─────────────────────────────────────────
     for k in _validate_param_types(params):
