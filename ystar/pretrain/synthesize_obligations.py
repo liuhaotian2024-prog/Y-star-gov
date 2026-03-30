@@ -112,8 +112,10 @@ def build_pretrain_governance(cieu_store=None):
 if __name__ == "__main__":
     # 测试
     import os
-    OUT = "/home/claude/ystar_fix/ystar_pkg/pretrain/outputs"
-    cieu_db = f"{OUT}/pretrain_cieu.db"
+    from pathlib import Path
+    OUT = Path(__file__).parent / "outputs"
+    OUT.mkdir(exist_ok=True)
+    cieu_db = str(OUT / "pretrain_cieu.db")
     cieu = CIEUStore(db_path=cieu_db) if os.path.exists(cieu_db) else None
 
     store, re_engine, gloop = build_pretrain_governance(cieu_store=cieu)
@@ -124,7 +126,7 @@ if __name__ == "__main__":
     print(f"  kpis = {list(report.kpis.keys())[:4]}")
 
     # 喂历史数据
-    pretrain_jsonl = f"{OUT}/pretrain_all_records.jsonl"
+    pretrain_jsonl = str(OUT / "pretrain_all_records.jsonl")
     n = gloop.bootstrap_from_jsonl(pretrain_jsonl)
     print(f"\nbootstrap: {n} 条")
     obs = gloop.observe_from_report_engine()

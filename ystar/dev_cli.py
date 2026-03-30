@@ -125,7 +125,8 @@ def cmd_release():
         try:
             with open(_ROOT/".ystar_release_log.jsonl","a") as f: f.write(json.dumps(entry)+"\n")
             print(f"\n  {c(BLUE,'CIEU')} release record written → .ystar_release_log.jsonl")
-        except: pass
+        except Exception as e:
+            print(f"  Warning: Could not write release log: {e}")
         return 0
     else:
         print(f"  {c(RED,BOLD+'✗ RELEASE BLOCKED')}  修复上述问题后重试")
@@ -176,7 +177,8 @@ def cmd_status():
         log=get_cieu_log(); deny_n=sum(1 for r in log if r.decision==EnforceDecision.DENY)
         print(f"\n  {c(BOLD,'CIEU Log (session)')}")
         print(f"    {len(log)} records  ({deny_n} DENY)")
-    except: pass
+    except Exception as e:
+        print(f"  Warning: Could not load CIEU log: {e}")
     domains_dir = _THIS_DIR/"domains"
     if domains_dir.exists():
         domains=[d.name for d in domains_dir.iterdir() if d.is_dir() and not d.name.startswith("_")]
@@ -368,7 +370,8 @@ def cmd_query(args):
     records=[]
     for line in log_path.read_text().splitlines():
         try: records.append(json.loads(line))
-        except: pass
+        except Exception as e:
+            print(f"  Warning: Could not parse CIEU record: {e}")
     if stats_mode:
         from collections import Counter
         by_dec=Counter(r.get("decision") for r in records)

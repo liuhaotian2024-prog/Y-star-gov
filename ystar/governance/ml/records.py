@@ -236,5 +236,4 @@ class MetalearnResult:
 #
 # The prior coefficients are set by hand — of the same nature as max_fp_rate=0.05.
 # "Internal derivation" refers to the derivation mechanism, not the origin of the coefficients themselves.
-
-@dataclass
+# TODO: Implementation pending

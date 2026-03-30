@@ -286,5 +286,4 @@ def learn_from_jsonl(
 # ══════════════════════════════════════════════════════════════════════════════
 # v0.13.0  ParameterDiscovery — automatic discovery of unknown parameters and threshold inference
 # ══════════════════════════════════════════════════════════════════════════════
-
-@dataclass
+# TODO: Implementation pending
