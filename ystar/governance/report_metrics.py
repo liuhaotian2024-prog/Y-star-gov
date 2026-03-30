@@ -33,10 +33,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
-from ystar.omission_models import (
+from ystar.governance.omission_models import (
     ObligationStatus, OmissionType, EntityStatus, Severity,
 )
-from ystar.omission_store import InMemoryOmissionStore, OmissionStore
+from ystar.governance.omission_store import InMemoryOmissionStore, OmissionStore
 
 AnyStore = Union[InMemoryOmissionStore, OmissionStore]
 

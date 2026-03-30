@@ -39,7 +39,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from ystar.dimensions import (
+from ystar.kernel.dimensions import (
     IntentContract,
     ConstitutionalContract,
     DelegationContract,
@@ -478,7 +478,7 @@ def make_policy(agents: dict, allowed_paths: list = None) -> "Policy":  # noqa: 
         result = policy.check_event(some_openclaw_event)
     """
     from ystar.session import Policy as _Policy
-    from ystar.dimensions import IntentContract as _IC
+    from ystar.kernel.dimensions import IntentContract as _IC
 
     class OpenClawPolicy(_Policy):
         """Policy with an OpenClaw session underneath for full enforcement."""

@@ -51,7 +51,7 @@ from ystar.governance.metalearning import (
 )
 
 # GovernanceLoop (bridges A + B + C + omission/intervention)
-from ystar.governance_loop import (
+from ystar.governance.governance_loop import (
     GovernanceLoop,
     GovernanceObservation,
     GovernanceSuggestion,
@@ -59,7 +59,7 @@ from ystar.governance_loop import (
     report_to_observation,
 )
 
-from ystar.dimensions import (
+from ystar.kernel.dimensions import (
     ConstitutionalContract,
     DelegationChain,
 )

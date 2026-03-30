@@ -293,7 +293,7 @@ def cmd_cieu(args):
 
 # ── serve ──────────────────────────────────────────────────────────────
 def cmd_serve(args):
-    try: from ystar.connector import create_connector
+    try: from ystar.adapters.connector import create_connector
     except ImportError as e: print(f"  {c(RED,'Error')}: {e}"); return 1
     port=7777; strict=False; paths=["./src","./tests"]; domains=[]; webhook=None
     i=0
@@ -311,7 +311,7 @@ def cmd_serve(args):
 
 # ── approve ────────────────────────────────────────────────────────────
 def cmd_approve(args):
-    try: from ystar.connector import get_approval_queue
+    try: from ystar.adapters.connector import get_approval_queue
     except ImportError as e: print(f"  {c(RED,'Error')}: {e}"); return 1
     queue=get_approval_queue(); subcmd=args[0] if args else "list"
     if subcmd=="list" or not args:
@@ -345,7 +345,7 @@ def cmd_simulate(args):
         elif args[i]=="--verbose": verbose=True; i+=1
         else: i+=1
     try:
-        from ystar.simulation import WorkloadSimulator
+        from ystar.integrations.simulation import WorkloadSimulator
     except ImportError as e: print(f"  {c(RED,'Error')}: {e}"); return 1
     print(f"\n{c(BOLD,'Y* Workload Evidence Simulation')}")
     print(f"  {sessions} sessions x {events} events/session")
@@ -417,13 +417,13 @@ def cmd_omission(args):
       rules                 有効ルール一覧と時限設定
       status <entity_id>    単一エンティティの義務ステータス
     """
-    from ystar.omission_store import OmissionStore
-    from ystar.omission_summary import (
+    from ystar.governance.omission_store import OmissionStore
+    from ystar.governance.omission_summary import (
         omission_summary, entity_timeline, replay,
         print_summary, print_replay,
     )
-    from ystar.omission_engine import OmissionEngine
-    from ystar.omission_rules import get_registry
+    from ystar.governance.omission_engine import OmissionEngine
+    from ystar.governance.omission_rules import get_registry
 
     db_path = ".ystar_omission.db"
     subcmd  = args[0] if args else "summary"
@@ -575,7 +575,7 @@ def cmd_omission(args):
         print()
 
     elif subcmd == "heatmap":
-        from ystar.omission_summary import obligation_heatmap, actor_reliability_report
+        from ystar.governance.omission_summary import obligation_heatmap, actor_reliability_report
         hm = obligation_heatmap(store)
         ar = actor_reliability_report(store)
         print(f"\n{c(BOLD,'─'*60)}")
@@ -604,7 +604,7 @@ def cmd_omission(args):
         print()
 
     elif subcmd == "chain":
-        from ystar.omission_summary import chain_breakpoint_analysis
+        from ystar.governance.omission_summary import chain_breakpoint_analysis
         ca = chain_breakpoint_analysis(store)
         print(f"\n{c(BOLD,'─'*60)}")
         print(f"{c(BOLD,'  CHAIN BREAKPOINT ANALYSIS')}")
@@ -660,7 +660,7 @@ def cmd_omission(args):
 
     elif subcmd == "operator":
         # C3: Operator/principal summary view
-        from ystar.omission_summary import (
+        from ystar.governance.omission_summary import (
             omission_summary, chain_breakpoint_analysis, actor_reliability_report
         )
         s  = omission_summary(store)
@@ -712,7 +712,7 @@ def cmd_experiment(args):
         manager_no_dispatch   worker_no_ack
         active_then_silent    false_completion   healthy_closure
     """
-    from ystar.omission_experiment import (
+    from ystar.products.omission_experiment import (
         run_ab_experiment, run_full_battery,
         print_ab_report, print_battery_report,
         _SCENARIO_FNS,
@@ -772,8 +772,8 @@ def cmd_report(args):
     対応フォーマット：
         --format markdown (デフォルト) / json
     """
-    from ystar.reporting import ReportEngine, Report
-    from ystar.omission_store import OmissionStore
+    from ystar.governance.reporting import ReportEngine, Report
+    from ystar.governance.omission_store import OmissionStore
     import os
 
     subcmd = args[0] if args else "baseline"
@@ -813,7 +813,7 @@ def cmd_report(args):
     cieu = None
     if os.path.exists(cieu_db):
         try:
-            from ystar.cieu_store import CIEUStore
+            from ystar.governance.cieu_store import CIEUStore
             cieu = CIEUStore(db_path=cieu_db)
         except Exception:
             pass

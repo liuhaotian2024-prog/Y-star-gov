@@ -22,7 +22,7 @@ v0.41.0
   8. false_positive_rate     误伤率             ← 越低越好
 
 使用方式：
-    from ystar.omission_experiment import run_ab_experiment, print_ab_report
+    from ystar.products.omission_experiment import run_ab_experiment, print_ab_report
 
     results = run_ab_experiment(
         scenario="manager_no_dispatch",

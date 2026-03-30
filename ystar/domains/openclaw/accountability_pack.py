@@ -26,8 +26,8 @@ from __future__ import annotations
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ystar.omission_rules import RuleRegistry
-    from ystar.intervention_engine import GatingPolicy
+    from ystar.governance.omission_rules import RuleRegistry
+    from ystar.governance.intervention_engine import GatingPolicy
 
 
 # ── OpenClaw GatingPolicy（从 adapter 层分离到此处）────────────────────────────
@@ -44,7 +44,7 @@ def make_openclaw_gating_policy() -> "GatingPolicy":
     调用方（如 configure_intervention_engine）应从此处获取策略，
     而不是在 adapter 层重新定义。
     """
-    from ystar.intervention_engine import DEFAULT_GATING_POLICY
+    from ystar.governance.intervention_engine import DEFAULT_GATING_POLICY
     return DEFAULT_GATING_POLICY.extend(
         # OpenClaw 义务履行类动作（永远 ALLOW，无论 actor 有无 overdue）
         fulfillment={

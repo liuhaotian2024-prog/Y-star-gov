@@ -563,10 +563,10 @@ class GovernanceLoop:
         # actions so the intervention engine stays in sync with governance loop.
         if self._intervention_engine is not None:
             try:
-                from ystar.omission_models import ObligationStatus
+                from ystar.governance.omission_models import ObligationStatus
                 pending_obs = self.report_engine.omission_store.list_obligations()
                 # Build synthetic violations from hard/soft overdue obligations
-                from ystar.omission_models import OmissionViolation, OmissionType, Severity
+                from ystar.governance.omission_models import OmissionViolation, OmissionType, Severity
                 import time as _time
                 violations = []
                 for ob in pending_obs:
@@ -1010,7 +1010,7 @@ class GovernanceLoop:
                 len(self._ystar_loop.history) < 3:
             return None
         try:
-            from ystar.engine import check as _chk
+            from ystar.kernel.engine import check as _chk
             history  = self._ystar_loop.history
             contract = self._ystar_loop.base_contract
             if contract is None:

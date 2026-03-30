@@ -20,10 +20,10 @@ reporting.py 分层（P2）：
     from ystar.governance.metrics import ObligationMetrics, ReportEngine
 
     # 需要完整报告（含渲染）
-    from ystar.reporting import Report  # 仍从 reporting.py 使用
+    from ystar.governance.reporting import Report  # 仍从 reporting.py 使用
 """
 # Re-export from reporting.py (single source of truth, no duplication)
-from ystar.reporting import (
+from ystar.governance.reporting import (
     ArtifactIntegrity,
     ObligationMetrics,
     OmissionMetrics,

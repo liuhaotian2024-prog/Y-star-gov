@@ -243,7 +243,7 @@ class TradingCalendar:
         """
         Convert the trading calendar into a ScheduledWindow for direct use in HigherOrderContract.
         """
-        from ystar.dimensions import ScheduledWindow
+        from ystar.kernel.dimensions import ScheduledWindow
         _date = date_str or datetime.date.today().isoformat()
         _tz   = timezone or self.timezone
         close = self.get_close_time(_date)

@@ -44,7 +44,7 @@ Usage:
     print(result.contract_additions)
 """
 
-from .dimensions import (
+from .kernel.dimensions import (
     TemporalContext,
     ScheduledWindow,
     ExternalContext,
@@ -64,7 +64,7 @@ from .dimensions import (
     DIMENSION_HINTS,
     PolicySourceTrust,
 )
-from .engine import (
+from .kernel.engine import (
     check,
     CheckResult,
     Violation,
@@ -78,8 +78,8 @@ from .template import from_template, TemplateResult
 from .session import Policy, PolicyResult
 from .adapters.hook import check_hook   # 轻量 hook 适配层（1-D）
 from .templates import get_template, get_template_dict, TEMPLATES
-from .prefill import prefill, PrefillResult
-from .metalearning import (
+from .kernel.prefill import prefill, PrefillResult
+from .governance.metalearning import (
     DimensionDiscovery,
     learn,
     learn_from_jsonl,
@@ -126,20 +126,20 @@ __license__ = "MIT"
 # ── Omission Governance Layer (v0.31+) ────────────────────────────────────────
 # commission violations → engine.py (checks what was done)
 # omission  violations → omission_*.py (checks what was NOT done)
-from .omission_models import (
+from .governance.omission_models import (
     EntityStatus, ObligationStatus, OmissionType, Severity,
     EscalationPolicy, EscalationAction,
     TrackedEntity, ObligationRecord, GovernanceEvent,
     OmissionViolation, GEventType,
 )
-from .omission_store import InMemoryOmissionStore, OmissionStore
-from .omission_rules import (
+from .governance.omission_store import InMemoryOmissionStore, OmissionStore
+from .governance.omission_rules import (
     OmissionRule, RuleRegistry, BUILTIN_RULES,
     get_registry, reset_registry,
 )
-from .omission_engine import OmissionEngine, EngineResult
-from .omission_adapter import OmissionAdapter, create_adapter
-from .omission_summary import (
+from .governance.omission_engine import OmissionEngine, EngineResult
+from .adapters.omission_adapter import OmissionAdapter, create_adapter
+from .governance.omission_summary import (
     omission_summary,
     entity_timeline,
     replay              as omission_replay,
@@ -149,14 +149,14 @@ from .omission_summary import (
     obligation_heatmap,
     actor_reliability_report,
 )
-from .omission_scanner import (
+from .governance.omission_scanner import (
     OmissionScanner,
     ScanReport,
     start_global_scanner,
     stop_global_scanner,
 )
 # ── v0.33: Active Intervention Layer ─────────────────────────────────────────
-from .intervention_models import (
+from .governance.intervention_models import (
     InterventionLevel,
     InterventionActionType,
     InterventionStatus,
@@ -166,9 +166,9 @@ from .intervention_models import (
     GateCheckResult,
     InterventionResult,
 )
-from .intervention_engine import InterventionEngine, PulseStore, GatingPolicy, DEFAULT_GATING_POLICY
+from .governance.intervention_engine import InterventionEngine, PulseStore, GatingPolicy, DEFAULT_GATING_POLICY
 # ── v0.36: Governance Loop (P1 meta-learning bridge) ─────────────────────────
-from .governance_loop import (
+from .governance.governance_loop import (
     GovernanceLoop,
     GovernanceObservation,
     GovernanceSuggestion,
@@ -177,7 +177,7 @@ from .governance_loop import (
 )
 # ── v0.34: A/B Experiment Framework ──────────────────────────────────────────
 # ── v0.35: Reporting Engine ──────────────────────────────────────────────────
-from .reporting import (
+from .governance.reporting import (
     ReportEngine,
     Report,
     ArtifactIntegrity,
@@ -187,7 +187,7 @@ from .reporting import (
     ChainClosureMetrics,
     CIEUMetrics,
 )
-from .omission_experiment import (
+from .products.omission_experiment import (
     run_ab_experiment,
     run_full_battery,
     print_ab_report,
@@ -196,7 +196,7 @@ from .omission_experiment import (
     GroupMetrics,
     TrialResult,
 )
-from .omission_domain_packs import (
+from .domains.omission_domain_packs import (
     apply_domain_pack,
     apply_finance_pack,
     apply_healthcare_pack,

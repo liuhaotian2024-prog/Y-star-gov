@@ -15,7 +15,7 @@ ystar.omission_engine  —  Deterministic Omission Governance Engine
   - CIEU 兼容：violation 可选写入 CIEUStore
 
 使用方式：
-    from ystar.omission_engine import OmissionEngine
+    from ystar.governance.omission_engine import OmissionEngine
     from ystar.governance.omission_store import InMemoryOmissionStore
     from ystar.governance.omission_rules import get_registry
 

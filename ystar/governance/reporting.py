@@ -18,7 +18,7 @@ v0.41.0
     InterventionEngine（可选）              → intervention 指标
 
 使用：
-    from ystar.reporting import ReportEngine
+    from ystar.governance.reporting import ReportEngine
 
     engine = ReportEngine(
         omission_store    = adapter.engine.store,
@@ -1084,7 +1084,7 @@ class ReportEngine:
                 from ystar.governance.metalearning import (
                     CallRecord, DimensionDiscovery,
                 )
-                from ystar.dimensions import IntentContract
+                from ystar.kernel.dimensions import IntentContract
                 from ystar.kernel.engine import check as _check
                 import json as _json
 

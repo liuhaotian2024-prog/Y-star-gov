@@ -299,7 +299,7 @@ class RetroBaselineStore:
         调用方需要了解这是追溯数据。
         """
         from ystar.governance.metalearning import CallRecord
-        from ystar.dimensions import IntentContract
+        from ystar.kernel.dimensions import IntentContract
 
         empty_contract = IntentContract()
         call_records   = []

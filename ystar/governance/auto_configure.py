@@ -28,7 +28,7 @@ from typing import Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ystar.governance.governance_loop import GovernanceLoop
-    from ystar.omission_rules import RuleRegistry
+    from ystar.governance.omission_rules import RuleRegistry
 
 
 # 宪法守卫：auto-configure 不得把时限压低到此值以下

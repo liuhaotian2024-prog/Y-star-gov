@@ -12,7 +12,7 @@ ystar.omission_domain_packs  —  Domain-Specific Omission Rule Configurations
     research   — 研究场景：宽松时限，重结果发布
 
 使用方式：
-    from ystar.omission_domain_packs import apply_finance_pack
+    from ystar.domains.omission_domain_packs import apply_finance_pack
     from ystar.governance.omission_rules import get_registry
 
     registry = get_registry()

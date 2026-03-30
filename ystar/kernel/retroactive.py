@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ystar.dimensions import IntentContract
+    from ystar.kernel.dimensions import IntentContract
 
 # ── 适配层 → 核心层的数据契约 ─────────────────────────────────────────────
 # ToolCallRecord 定义在核心层，是所有 scanner adapter 必须实现的输出格式。

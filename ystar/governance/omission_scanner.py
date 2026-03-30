@@ -16,7 +16,7 @@ ystar.omission_scanner  —  Periodic Omission Governance Scanner
                       └─ reminders    → on_reminder(ob)
 
 使用方式：
-    from ystar.omission_scanner import OmissionScanner
+    from ystar.governance.omission_scanner import OmissionScanner
 
     scanner = OmissionScanner(
         engine           = adapter.engine,

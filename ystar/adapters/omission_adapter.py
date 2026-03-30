@@ -275,7 +275,7 @@ class OmissionAdapter:
         Returns an error string if monotonicity is violated, None if clean.
         """
         try:
-            from ystar.dimensions import DelegationChain, DelegationContract, IntentContract
+            from ystar.kernel.dimensions import DelegationChain, DelegationContract, IntentContract
             parent = raw.get("parent_agent_id") or raw.get("agent_id", "")
             child  = raw.get("child_agent_id", "")
             if not parent or not child:

@@ -308,7 +308,7 @@ def append_suggestions_to_agents_md(
     for s in accepted_suggestions:
         if s.rule_value is not None:
             # 有具体值的建议，用标准句式
-            from ystar.dimensions import IntentContract
+            from ystar.kernel.dimensions import IntentContract
             tmp = {}
             if s.dimension == "deny":
                 tmp["deny"] = [str(s.rule_value)]
@@ -323,7 +323,7 @@ def append_suggestions_to_agents_md(
                 tmp["value_range"] = _parse_rule_to_value_range(str(s.rule_value))
 
             try:
-                from ystar.dimensions import normalize_aliases
+                from ystar.kernel.dimensions import normalize_aliases
                 partial = normalize_aliases(**tmp)
                 rule_lines = contract_to_agents_md_lines(partial)
                 lines.extend(rule_lines)

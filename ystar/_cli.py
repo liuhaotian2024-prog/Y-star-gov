@@ -193,7 +193,7 @@ def _run_retroactive_baseline(contract_dict: dict, skip_prompt: bool = False) ->
     from ystar.kernel.history_scanner import scan_history, available_sources
     from ystar.kernel.retroactive import assess_batch, summarize
     from ystar.governance.retro_store import RetroBaselineStore
-    from ystar.dimensions import IntentContract, normalize_aliases
+    from ystar.kernel.dimensions import IntentContract, normalize_aliases
 
     # ① 探测可用来源
     sources = available_sources()
@@ -733,7 +733,7 @@ def _cmd_simulate(args: list) -> None:
     try:
         import warnings
         warnings.filterwarnings("ignore")
-        from ystar.simulation import WorkloadSimulator
+        from ystar.integrations.simulation import WorkloadSimulator
 
         sim = WorkloadSimulator(sessions=sessions, seed=42)
         report = sim.run()
@@ -809,7 +809,7 @@ def _cmd_quality(args: list) -> None:
 
     # ── 1. 加载合约 ───────────────────────────────────────────────────────
     from ystar.kernel.nl_to_contract import load_and_translate
-    from ystar.dimensions import IntentContract, normalize_aliases
+    from ystar.kernel.dimensions import IntentContract, normalize_aliases
 
     contract_dict, src = load_and_translate(path=agents_md_path, confirm=False)
     if not contract_dict:

@@ -718,7 +718,7 @@ def create_connector(
     開箱即用のコネクター作成。
 
     最小使用例：
-        from ystar.connector import create_connector
+        from ystar.adapters.connector import create_connector
         connector = create_connector(allowed_paths=["./src"])
         connector.run()   # localhost:7777 で待ち受け
 

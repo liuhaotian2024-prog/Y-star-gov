@@ -30,7 +30,7 @@ import json
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ystar.reporting import Report
+    from ystar.governance.reporting import Report
 
 
 def render_markdown(report: "Report") -> str:

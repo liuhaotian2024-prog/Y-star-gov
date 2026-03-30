@@ -35,7 +35,7 @@ Y* Self-Hosting Domain Pack  v1.0.0
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
-from ystar.dimensions import (
+from ystar.kernel.dimensions import (
     IntentContract,
     ConstitutionalContract,
 )
@@ -222,7 +222,7 @@ class YStarDevDomainPack(DomainPack):
             return YSTAR_CONSTITUTION
 
         # 附加约束：在 YSTAR_CONSTITUTION 基础上叠加，不替换
-        from ystar.dimensions import ConstitutionalContract
+        from ystar.kernel.dimensions import ConstitutionalContract
         return ConstitutionalContract(
             deny          = list(dict.fromkeys(YSTAR_CONSTITUTION.deny + extra_deny)),
             deny_commands = list(dict.fromkeys(YSTAR_CONSTITUTION.deny_commands + extra_cmds)),
@@ -631,7 +631,7 @@ def nl_to_contract_delta(
 
     # prefill の確定的テキスト解析も試みる（補完）
     try:
-        from ystar.prefill import _extract_constraints_from_text
+        from ystar.kernel.prefill import _extract_constraints_from_text
         extracted_prefill = _extract_constraints_from_text(nl_text)
         # マージ（重複排除）
         for d in extracted_prefill.get("deny", []):

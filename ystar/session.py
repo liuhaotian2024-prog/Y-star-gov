@@ -26,8 +26,8 @@ Usage::
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-from .dimensions import IntentContract
-from .engine import check as _check
+from .kernel.dimensions import IntentContract
+from .kernel.engine import check as _check
 
 # Verb → canonical field name for check()
 # Users say "write", "fetch", "execute" — we map to what check() understands.
@@ -203,7 +203,7 @@ class Policy:
             policy = Policy.from_agents_md("./config/AGENTS.md")
         """
         from .kernel.nl_to_contract import load_and_translate
-        from .dimensions import IntentContract, normalize_aliases
+        from .kernel.dimensions import IntentContract, normalize_aliases
 
         contract_dict, source_path = load_and_translate(
             path=path,

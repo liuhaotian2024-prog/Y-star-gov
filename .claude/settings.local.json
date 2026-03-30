@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/ -q)",
+      "Bash(python -m pytest tests/test_path_a.py -q)",
+      "Bash(python -c \":*)"
+    ]
+  }
+}

@@ -32,7 +32,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
 from ystar import check, CallRecord
-from ystar.dimensions import (
+from ystar.kernel.dimensions import (
     IntentContract,
     DelegationContract,
     DelegationChain,
@@ -502,9 +502,9 @@ def configure_omission_governance(
         if adapter is not None:
             _omission_adapter = adapter
             return
-        from ystar.omission_adapter import create_adapter
+        from ystar.adapters.omission_adapter import create_adapter
         if db_path is not None:
-            from ystar.omission_store import OmissionStore
+            from ystar.governance.omission_store import OmissionStore
             store = OmissionStore(db_path=db_path)
             _omission_adapter = create_adapter(store=store)
         else:
@@ -556,7 +556,7 @@ def _make_openclaw_gating_policy() -> "Any":
         return get_openclaw_gating_policy()
     except ImportError:
         try:
-            from ystar.intervention_engine import DEFAULT_GATING_POLICY
+            from ystar.governance.intervention_engine import DEFAULT_GATING_POLICY
             return DEFAULT_GATING_POLICY
         except ImportError:
             return None
@@ -582,7 +582,7 @@ def configure_intervention_engine(engine: Optional["Any"] = None) -> None:
         _intervention_engine = engine
         return
     try:
-        from ystar.intervention_engine import InterventionEngine
+        from ystar.governance.intervention_engine import InterventionEngine
         omission_adapter = get_omission_adapter()
         openclaw_policy  = _make_openclaw_gating_policy()
         if omission_adapter:
@@ -625,7 +625,7 @@ def configure_auto_persist(db_path: str = ".ystar_cieu.db") -> None:
     """
     global _auto_persist_store
     try:
-        from ystar.cieu_store import CIEUStore
+        from ystar.governance.cieu_store import CIEUStore
         _auto_persist_store = CIEUStore(db_path)
     except ImportError:
         pass   # cieu_store が使えない場合は静かに無視
@@ -693,7 +693,7 @@ def enforce(
     # ── v0.33 Intervention Gate: obligation-first gating ─────────
     _gate = _run_gate_check(event)
     if _gate is not None:
-        from ystar.intervention_models import GateDecision
+        from ystar.governance.intervention_models import GateDecision
         if _gate.decision == GateDecision.DENY:
             _gate_detail = (
                 f"intervention_gate: actor '{event.agent_id}' has hard_overdue "
@@ -718,7 +718,7 @@ def enforce(
             if _omission_adapter is not None:
                 try:
                     import time as _t, uuid as _u
-                    from ystar.omission_models import GovernanceEvent as _GE, GEventType as _GET
+                    from ystar.governance.omission_models import GovernanceEvent as _GE, GEventType as _GET
                     _ge = _GE(
                         event_type  = _GET.OBLIGATION_GATE_DENY,
                         entity_id   = event.session_id or event.agent_id,
