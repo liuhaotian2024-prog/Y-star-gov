@@ -650,6 +650,9 @@ MIT. Free for commercial use, internal deployment, academic research, OEM embedd
 **Haotian Liu · Y* Bridge Labs**
 liuhaotian2024@gmail.com
 
+📡 **Live operations:** https://t.me/YstarBridgeLabs
+🏢 **Company repo:** https://github.com/liuhaotian2024-prog/ystar-bridge-labs
+
 Enterprise licensing · Domain pack development · Research collaboration
 
 ---
