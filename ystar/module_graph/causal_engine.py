@@ -1311,7 +1311,8 @@ class CausalEngine:
     # ── PC Algorithm: Causal Structure Discovery ─────────────────────────
 
     def discover_structure(
-        self, data: List[Dict[str, float]], alpha: float = 0.05
+        self, data: List[Dict[str, float]], alpha: float = 0.05,
+        temporal_order: Optional[List[str]] = None,
     ) -> CausalGraph:
         """
         Discover causal structure from data using the PC algorithm.
@@ -1321,12 +1322,13 @@ class CausalEngine:
         Args:
             data: List of observations, each mapping variable names to float values.
             alpha: Significance level for conditional independence tests.
+            temporal_order: Optional list of variables in causal time order.
 
         Returns:
             A CausalGraph inferred from the data.
         """
         discovery = CausalDiscovery(alpha=alpha)
-        return discovery.run(data)
+        return discovery.run(data, temporal_order=temporal_order)
 
     def cieu_to_scm_data(self, cieu_records: List[dict]) -> List[Dict[str, float]]:
         """
@@ -1531,7 +1533,11 @@ class CausalEngine:
             return None
 
         # Run PC algorithm on accumulated cycle-level data
-        discovered = self.discover_structure(self._scm_data, alpha=alpha)
+        # Use temporal ordering from governance cycle architecture: S→W→O→H
+        discovered = self.discover_structure(
+            self._scm_data, alpha=alpha,
+            temporal_order=['S', 'W', 'O', 'H'],
+        )
 
         # Compare discovered vs hand-specified DAG
         comparison = self.validate_discovered_vs_specified(
@@ -1635,13 +1641,23 @@ class CausalDiscovery:
 
     # ── Public API ────────────────────────────────────────────────────────
 
-    def run(self, data: List[Dict[str, float]]) -> CausalGraph:
+    def run(
+        self,
+        data: List[Dict[str, float]],
+        temporal_order: Optional[List[str]] = None,
+    ) -> CausalGraph:
         """
         Run the full PC algorithm on observational data.
 
         Args:
             data: List of observations [{var: value, ...}, ...].
                   All dicts must have the same keys.
+            temporal_order: Optional list of variable names in causal time order.
+                  e.g. ['S', 'W', 'O', 'H'] means S happens before W, W before O, etc.
+                  When provided, any edge whose direction cannot be determined by
+                  v-structures or Meek rules is oriented according to this ordering.
+                  This is NOT a statistical assumption — it encodes architectural
+                  background knowledge about the system's execution sequence.
 
         Returns:
             A CausalGraph (directed) representing the discovered DAG.
@@ -1663,12 +1679,74 @@ class CausalDiscovery:
         # Step 3: Meek rules — orient remaining edges
         oriented = self._apply_meek_rules(oriented, variables)
 
+        # Step 3.5: Temporal ordering — resolve Markov equivalence class ambiguity
+        # For linear Gaussian SCMs, PC can only identify the equivalence class.
+        # Temporal ordering from system architecture breaks the symmetry.
+        if temporal_order:
+            oriented = self._apply_temporal_ordering(oriented, temporal_order, variables)
+
         # Convert oriented adjacency to CausalGraph edge dict
         edge_dict: Dict[str, List[str]] = {}
         for (a, b) in oriented:
             edge_dict.setdefault(a, []).append(b)
 
         return CausalGraph(edge_dict)
+
+    def _apply_temporal_ordering(
+        self,
+        oriented: Set[Tuple[str, str]],
+        temporal_order: List[str],
+        variables: List[str],
+    ) -> Set[Tuple[str, str]]:
+        """
+        Apply temporal background knowledge to orient remaining undirected edges.
+
+        Within each governance cycle, variables follow a natural temporal ordering:
+          S (suggestion) → W (wiring) → O (obligation) → H (health)
+
+        For any edge where both directions (A→B and B→A) are in the oriented set
+        (meaning it's still undirected), or where the direction contradicts temporal
+        order, re-orient according to the temporal ordering.
+
+        This is architecturally guaranteed: suggestions are produced before wiring
+        decisions; health is measured after obligations are assessed. This is not
+        a statistical assumption — it is a structural property of the governance
+        cycle itself.
+
+        Pearl (2009), Section 2.3: "Background knowledge can be incorporated
+        to select among observationally equivalent DAGs."
+        """
+        order_map = {v: i for i, v in enumerate(temporal_order)}
+        final = set()
+
+        # Collect all edges as undirected pairs first
+        edge_pairs = {}  # frozenset → list of directed versions
+        for (a, b) in oriented:
+            key = frozenset([a, b])
+            edge_pairs.setdefault(key, []).append((a, b))
+
+        for key, directions in edge_pairs.items():
+            nodes = list(key)
+            if len(nodes) != 2:
+                for d in directions:
+                    final.add(d)
+                continue
+
+            a, b = nodes[0], nodes[1]
+
+            # Check if both nodes are in temporal order
+            if a in order_map and b in order_map:
+                # Orient from earlier to later in temporal order
+                if order_map[a] < order_map[b]:
+                    final.add((a, b))
+                else:
+                    final.add((b, a))
+            else:
+                # No temporal info — keep whatever PC decided
+                for d in directions:
+                    final.add(d)
+
+        return final
 
     # ── Step 1: Skeleton Discovery ────────────────────────────────────────
 
