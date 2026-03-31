@@ -171,3 +171,50 @@ Constitution amendments do not belong to Path A or Path B. They are a root-level
 [ ] Added to Module Attribution Table above
 [ ] Tests pass: python -m pytest tests/ -q
 ```
+
+---
+
+## Section 5: 100% Maintenance
+
+> Added: 2026-03-29 (Framework Validation v1)
+
+### Scenario Battery
+
+The scenario battery (`tests/test_scenarios.py`) **must run on every release**.
+It covers 8 integration scenarios that exercise the full governance framework
+end-to-end. A failing scenario blocks the release.
+
+```
+python -m pytest tests/test_scenarios.py -v
+```
+
+### Architecture Drift Check
+
+`tests/test_architecture.py` **must pass before any merge to main**.
+It enforces:
+- Path A does not import Path B (and vice versa)
+- Bridge does not import PathAAgent
+- GovernanceLoop does not import PathBAgent or ExternalGovernanceLoop
+- Intent Compilation does not import Path A or Path B
+
+```
+python -m pytest tests/test_architecture.py -v
+```
+
+### New Module Admission
+
+All new modules must follow the rules in `CONTRIBUTING_ARCHITECTURE.md`:
+1. Declare layer in module docstring header
+2. Import only from same layer or lower layers
+3. No cross-imports between Path A and Path B
+4. Added to Module Attribution Table (Section 3 above)
+5. Full test suite passes after addition
+
+### Board Approval for Structural Changes
+
+The following changes require explicit Chairman/Board approval:
+- Adding a new layer
+- Changing call direction rules (Section 2)
+- Modifying the DelegationChain structure
+- Constitution amendments (PATH_A_AGENTS.md, PATH_B_AGENTS.md)
+- Removing or merging existing modules listed in Section 3

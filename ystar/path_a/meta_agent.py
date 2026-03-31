@@ -949,12 +949,15 @@ class PathAAgent:
         wired_after  = [e for e in cycle.plan_edges if
                         self.planner.graph._edges.get(e) and
                         self.planner.graph._edges[e].is_wired]
-        obl_count = (
-            (len([o for o in self.omission_store.list_obligations()
-                  if hasattr(o,'status') and str(o.status) in ('FULFILLED','fulfilled')]),
-             len(self.omission_store.list_obligations()))
-            if self.omission_store else (0, 0)
-        )
+        try:
+            obl_count = (
+                (len([o for o in self.omission_store.list_obligations()
+                      if hasattr(o,'status') and str(o.status) in ('FULFILLED','fulfilled')]),
+                 len(self.omission_store.list_obligations()))
+                if self.omission_store else (0, 0)
+            )
+        except Exception:
+            obl_count = (0, 0)
 
         # Gap 5: INCONCLUSIVE 循环记录到 CausalEngine，但不影响因果置信度
         # 只有明确成功或失败的循环才用于训练 SCM
