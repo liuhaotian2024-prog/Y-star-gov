@@ -4,13 +4,59 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ystar"
-version = "0.42.0"
-description = "Runtime Governance Framework for AI Agents"
+version = "0.42.1"
+description = "Runtime Governance Framework for Multi-Agent AI Systems — deterministic enforcement, Pearl Level 2-3 causal reasoning, tamper-evident audit chain"
 authors = [{name = "Haotian Liu", email = "liuhaotian2024@gmail.com"}]
+maintainers = [{name = "Y* Bridge Labs", email = "liuhaotian2024@gmail.com"}]
 license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
+
+keywords = [
+    "ai-governance",
+    "agent-safety",
+    "multi-agent",
+    "runtime-enforcement",
+    "audit-trail",
+    "cieu",
+    "delegation-chain",
+    "obligation-tracking",
+    "pearl-causal",
+    "do-calculus",
+    "counterfactual",
+    "compliance",
+    "deterministic",
+    "llm-governance",
+    "claude-code",
+    "openclaw",
+]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/liuhaotian2024-prog/Y-star-gov"
+Repository = "https://github.com/liuhaotian2024-prog/Y-star-gov"
+Issues = "https://github.com/liuhaotian2024-prog/Y-star-gov/issues"
+"Company" = "https://github.com/liuhaotian2024-prog/ystar-bridge-labs"
+"Live Operations" = "https://t.me/YstarBridgeLabs"
+"PyPI" = "https://pypi.org/project/ystar/"
 
 [project.scripts]
 ystar = "ystar._cli:main"
