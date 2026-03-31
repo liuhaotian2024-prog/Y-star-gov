@@ -304,8 +304,8 @@ def _check_hook_full(
     _EVENT_MAP = {
         "Write": EventType.FILE_WRITE,    "Edit": EventType.FILE_WRITE,
         "MultiEdit": EventType.FILE_WRITE,"Read": EventType.FILE_READ,
-        "Bash": EventType.SHELL_EXEC,     "WebFetch": EventType.WEB_FETCH,
-        "WebSearch": EventType.WEB_FETCH, "Task": EventType.SHELL_EXEC,
+        "Bash": EventType.CMD_EXEC,     "WebFetch": EventType.WEB_FETCH,
+        "WebSearch": EventType.WEB_FETCH, "Task": EventType.CMD_EXEC,
         "Glob": EventType.FILE_READ,      "Grep": EventType.FILE_READ,
         "LS":   EventType.FILE_READ,
         # 委托类事件：触发 enforce() 里的单调性验证
