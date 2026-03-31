@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ystar"
-version = "0.41.1"
+version = "0.42.0"
 description = "Runtime Governance Framework for AI Agents"
 authors = [{name = "Haotian Liu", email = "liuhaotian2024@gmail.com"}]
 license = {text = "MIT"}

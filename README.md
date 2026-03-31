@@ -110,7 +110,15 @@ All 7 checks passed
 **Install:**
 
 ```bash
-pip install ystar
+pip install git+https://github.com/liuhaotian2024-prog/Y-star-gov.git
+```
+
+Or clone and install locally:
+
+```bash
+git clone https://github.com/liuhaotian2024-prog/Y-star-gov.git
+cd Y-star-gov
+pip install -e .
 ```
 
 **Requirements:** Python >= 3.11
