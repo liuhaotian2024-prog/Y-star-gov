@@ -401,12 +401,18 @@ def check(
     # FIX-C2/C3: also classify by value shape when name-based classification fails.
     # GAP-1 (meta-agent): recognize "module:" prefix for module scope constraints
     if contract.only_paths:
-        # Separate module, external, and filesystem path constraints
+        # Separate module, external, external_domain, and filesystem path constraints
         module_constraints = [p[7:] for p in contract.only_paths if p.startswith("module:")]
         external_constraints = [p[9:] for p in contract.only_paths if p.startswith("external:")]
+        # T17: external_domain prefix for domain-specific external governance
+        external_domain_constraints = [
+            p[16:] for p in contract.only_paths if p.startswith("external_domain:")
+        ]
         path_constraints = [
             p for p in contract.only_paths
-            if not p.startswith("module:") and not p.startswith("external:")
+            if not p.startswith("module:")
+            and not p.startswith("external:")
+            and not p.startswith("external_domain:")
         ]
 
         # Item 5: Check external agent scope (same pattern as module: prefix)
@@ -419,6 +425,21 @@ def check(
                     message    = f"External agent scope violation: '{ext_agent_id}' not in allowed agents {external_constraints}",
                     actual     = ext_agent_id,
                     constraint = f"only_paths=[external:{', external:'.join(external_constraints)}]",
+                    severity   = 0.9,
+                ))
+
+        # T17: Check external_domain scope (same pattern as module: and external:)
+        # Allows Y*gov to enforce domain-specific external governance at kernel level.
+        # Usage: only_paths=["external_domain:finance"] validates the external_domain param.
+        if external_domain_constraints:
+            ext_domain = params.get("external_domain", "")
+            if ext_domain and ext_domain not in external_domain_constraints:
+                violations.append(Violation(
+                    dimension  = "external_domain_scope",
+                    field      = "external_domain",
+                    message    = f"External domain scope violation: '{ext_domain}' not in allowed domains {external_domain_constraints}",
+                    actual     = ext_domain,
+                    constraint = f"only_paths=[external_domain:{', external_domain:'.join(external_domain_constraints)}]",
                     severity   = 0.9,
                 ))
 

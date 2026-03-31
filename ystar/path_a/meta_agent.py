@@ -16,7 +16,8 @@ ystar.path_a.meta_agent — 路径A：元治理智能体 (Layer 2 — Path A)
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Optional, List, Tuple, Any, Callable
+from enum import Enum
+from typing import Optional, List, Tuple, Any, Callable, Dict
 import time, uuid, os
 
 from ystar.kernel.dimensions import IntentContract
@@ -36,6 +37,17 @@ from ystar.module_graph.discovery import (
     GapDetector, TypeBasedPlanner, CombinatorialExplorer
 )
 from ystar.governance.omission_engine import OmissionEngine
+
+
+# ── T16: Activation Protocol ABI ─────────────────────────────────────────────
+# Explicit activation modes for module wiring.  Every activation writes to CIEU
+# with the protocol used, so auditors can distinguish full runtime activation
+# from graph-only bookkeeping.
+class ActivationProtocol(Enum):
+    """Which activation path was taken when wiring a module edge."""
+    FULL_ACTIVATE = "full_activate"   # module.activate() succeeded
+    ON_WIRED      = "on_wired"        # module.on_wired(src, tgt) succeeded
+    GRAPH_ONLY    = "graph_only"      # no activation function found; wiring is structural only
 
 
 @dataclass
@@ -368,8 +380,15 @@ class PathAAgent:
                         # activate() 或 on_wired() 调用失败 - 这是真正的错误
                         raise Exception(f"activation protocol failed: {act_err}")
 
-                # Determine if module has activation protocol
-                has_activation_protocol = activation_status.startswith("real_activated")
+                # T16: Map activation_status to ActivationProtocol enum
+                if activation_status.startswith("real_activated_via_activate"):
+                    protocol_used = ActivationProtocol.FULL_ACTIVATE
+                elif activation_status.startswith("real_activated_via_on_wired"):
+                    protocol_used = ActivationProtocol.ON_WIRED
+                else:
+                    protocol_used = ActivationProtocol.GRAPH_ONLY
+
+                has_activation_protocol = protocol_used != ActivationProtocol.GRAPH_ONLY
 
                 # Single-track distinction: graph_only → PARTIAL_ACTIVATION
                 # Modules without activate() or on_wired() are graph-wired but
@@ -380,8 +399,16 @@ class PathAAgent:
                     else "PARTIAL_ACTIVATION"
                 )
 
+                # T16: GRAPH_ONLY produces partial_activation_warning, not
+                # normal success event — auditors see this clearly in CIEU.
+                cieu_event_type = (
+                    "partial_activation_warning"
+                    if protocol_used == ActivationProtocol.GRAPH_ONLY
+                    else "runtime_activation"
+                )
+
                 activation_record = self._make_cieu_record(
-                    event_type="runtime_activation",
+                    event_type=cieu_event_type,
                     action="runtime_activation",
                     decision="allow",
                     params={
@@ -390,10 +417,12 @@ class PathAAgent:
                         "module_path": target_node.module_path,
                         "func_name": target_node.func_name,
                         "has_activation_protocol": has_activation_protocol,
+                        "activation_protocol": protocol_used.value,  # T16: log protocol
                     },
                     result={
                         "status": activation_status,
                         "activation_level": activation_level,
+                        "activation_protocol": protocol_used.value,  # T16
                     },
                     cycle=cycle,
                 )
@@ -674,12 +703,15 @@ class PathAAgent:
             # 没有方案 = 当前缺口已超出 ModuleGraph 范围，跳过
             self._history.append(cycle)
             return cycle
-        # do-calculus 增强：对候选方案做 Level 2 因果查询
+        # ── T5: Causal Governance — plan selection is fully driven by
+        # do_wire_query scores.  The combined_score formula weights causal
+        # confidence at 0.6 vs coverage at 0.4, so the causal ranking is
+        # the dominant factor in best_plan selection.
         best_plan = sorted_plans[0]
+        _causal_evidence: Dict[str, Any] = {}  # T5: structured evidence for CIEU
         if len(sorted_plans[0].edges) > 0:
-            # 对每个候选方案计算 do-calculus 预测
             plan_scores = []
-            for candidate in sorted_plans[:3]:  # 最多评估3个候选
+            for candidate in sorted_plans[:3]:  # evaluate top-3 candidates
                 if candidate.edges:
                     e = candidate.edges[0]
                     do_result = self.causal_engine.do_wire_query(
@@ -687,7 +719,7 @@ class PathAAgent:
                     )
                     combined_score = (
                         candidate.coverage_score * 0.4 +
-                        do_result.confidence * 0.6  # 因果置信度权重更高
+                        do_result.confidence * 0.6  # causal confidence dominates
                     )
                     plan_scores.append((combined_score, candidate, do_result))
                 else:
@@ -700,9 +732,32 @@ class PathAAgent:
                     needs_human, reason = self.causal_engine.needs_human_approval(
                         best_do, action_is_irreversible=False
                     )
-                    # 记录是否需要人工确认（自主模式下跳过）
                     cycle._causal_confidence = best_do.confidence
                     cycle._needs_human = needs_human
+
+                    # ── T5: Structured causal evidence dict ──────────────
+                    # Written into CIEU so auditors can trace exactly WHY a
+                    # plan was selected and whether causal evidence was
+                    # sufficient to bypass the human gate.
+                    _causal_evidence = {
+                        "do_query": best_do.query,
+                        "predicted_health": best_do.predicted_health,
+                        "confidence": best_do.confidence,
+                        "evidence_count": best_do.evidence_count,
+                        "counterfactual_gain": best_do.counterfactual_gain,
+                        "causal_chain": best_do.causal_chain,
+                        "needs_human": needs_human,
+                        "human_reason": reason,
+                    }
+
+                    # ── T5: causal_confidence → human_gate linkage ───────
+                    # When causal_confidence >= auto_confidence_threshold the
+                    # human gate is bypassed (needs_human=False).  When it is
+                    # below the threshold, needs_human=True and the cycle
+                    # will NOT auto-execute irreversible actions.
+                    # This linkage is the core trust mechanism: only
+                    # sufficient causal evidence earns autonomy.
+
         # BUG 1 FIX: Use the causal-selected best_plan, not plans[0]
         plan = best_plan
         cycle.plan_nodes = [n.id for n in plan.nodes]
@@ -773,6 +828,18 @@ class PathAAgent:
         # 即使没有边，执行本身（规划+验证+记录）也算完成
         cycle.executed  = True
         cycle.cieu_ref  = self._write_cieu(cycle, "WIRE_EXECUTED", [])
+
+        # T5: Write structured causal evidence to CIEU alongside the wiring record
+        if _causal_evidence:
+            self.cieu_store.write_dict(self._make_cieu_record(
+                event_type="causal_evidence",
+                action="causal_plan_selection",
+                decision="allow",
+                params={"plan_nodes": cycle.plan_nodes,
+                        "plan_edges": cycle.plan_edges},
+                result={"causal_evidence": _causal_evidence},
+                cycle=cycle,
+            ))
 
         # Fix 5.2: CIEU record for wiring_success when all edges wired
         if edges_to_activate and not cycle.activation_failed:

@@ -18,6 +18,7 @@ The symmetry is the proof — if Path A can't escape its bounds, neither can ext
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Optional, List, Tuple, Any, Dict, Callable
 import hashlib, time, uuid, os
 
@@ -54,6 +55,63 @@ class DisconnectResult:
     actions_taken:  List[str] = field(default_factory=list)
     frozen:         bool = False
     contract_downgraded: bool = False
+
+
+# ── T6: External Authority Scope ─────────────────────────────────────────────
+@dataclass
+class ExternalAuthorityScope:
+    """
+    Defines what Path B is allowed to constrain for a given external agent.
+
+    Path B's constraint authority is derived from observations, not self-defined.
+    This dataclass formalizes the boundary: Path B can only constrain dimensions
+    that were actually observed in violations, using tools that are pre-approved,
+    within domains that have been delegated to it.
+    """
+    allowed_dimensions:         List[str] = field(default_factory=list)
+    allowed_tools:              List[str] = field(default_factory=list)
+    allowed_domains:            List[str] = field(default_factory=list)
+    derived_from_observations:  List[str] = field(default_factory=list)  # observation_ids
+
+    def contains_dimension(self, dimension: str) -> bool:
+        if not self.allowed_dimensions:
+            return True  # cold start — no restrictions yet
+        return dimension in self.allowed_dimensions
+
+    def contains_domain(self, domain: str) -> bool:
+        if not self.allowed_domains:
+            return True
+        return domain in self.allowed_domains
+
+
+# ── T8: External Governance Action enum ──────────────────────────────────────
+class ExternalGovernanceAction(Enum):
+    """All action types Path B can take against an external agent."""
+    APPLY_CONSTRAINT    = "apply_constraint"
+    VERIFY_COMPLIANCE   = "verify_compliance"
+    DOWNGRADE_CONTRACT  = "downgrade_contract"
+    FREEZE_SESSION      = "freeze_session"
+    DISCONNECT_AGENT    = "disconnect_agent"
+    REQUIRE_HUMAN_REVIEW = "require_human_review"
+
+
+# ── T7: External Governance Result ───────────────────────────────────────────
+@dataclass
+class ExternalGovernanceResult:
+    """
+    Outcome of a Path B governance action.
+
+    States:
+      success      — constraint applied and agent complied
+      failure      — constraint applied but agent violated again
+      ineffective  — constraint applied but no measurable change
+      disconnected — agent was disconnected
+    """
+    status:     str = "success"   # success / failure / ineffective / disconnected
+    agent_id:   str = ""
+    action:     ExternalGovernanceAction = ExternalGovernanceAction.APPLY_CONSTRAINT
+    details:    str = ""
+    cycle_id:   str = ""
 
 
 # ── External Observation: What an external agent did ──────────────────────────
@@ -138,6 +196,8 @@ class ConstraintBudget:
     history:         List[Tuple[float, str]] = field(default_factory=list)  # (delta, reason)
     # Item 4: Authority Boundary — only constrain dimensions actually observed in violations
     allowed_dimensions: List[str] = field(default_factory=list)
+    # T6: Authority scope — formal reference to the scope object
+    authority_scope: Optional["ExternalAuthorityScope"] = None
 
     def can_tighten(self, cost: float = 0.1) -> bool:
         """Check if Path B has enough budget to apply a constraint."""
@@ -171,8 +231,11 @@ class ConstraintBudget:
 
         Path B can only constrain dimensions that were actually violated.
         This prevents Path B from inventing new constraint dimensions.
+
+        T6: Also updates the ExternalAuthorityScope with observation references.
         """
         dims: set = set()
+        obs_ids: List[str] = []
         for obs in observations:
             if obs.agent_id != self.agent_id:
                 continue
@@ -180,7 +243,19 @@ class ConstraintBudget:
                 dim = getattr(v, "dimension", "")
                 if dim:
                     dims.add(dim)
+                    obs_ids.append(obs.observation_id)
         self.allowed_dimensions = sorted(dims)
+
+        # T6: Sync authority scope from observed dimensions
+        if self.authority_scope is not None:
+            self.authority_scope.allowed_dimensions = self.allowed_dimensions
+            self.authority_scope.derived_from_observations = list(set(obs_ids))
+
+    def populate_from_authority_scope(self, scope: "ExternalAuthorityScope") -> None:
+        """T6: Populate allowed_dimensions from an ExternalAuthorityScope."""
+        self.authority_scope = scope
+        if scope.allowed_dimensions:
+            self.allowed_dimensions = list(scope.allowed_dimensions)
 
     def is_dimension_allowed(self, dimension: str) -> bool:
         """Check if a constraint dimension is within the authority boundary."""
@@ -261,8 +336,18 @@ def observation_to_constraint(
     if not budget.can_tighten(constraint_cost):
         return None  # Insufficient budget
 
-    # Item 4: Authority Boundary — filter violations to allowed dimensions
-    if budget.allowed_dimensions:
+    # Item 4 + T6: Authority Boundary — filter violations to allowed dimensions
+    # T6: If an ExternalAuthorityScope is attached, validate constraint is
+    # within scope.  This enforces constraint ⊆ authority_scope.
+    if budget.authority_scope is not None:
+        scope = budget.authority_scope
+        allowed_violations = [
+            v for v in observation.violations
+            if scope.contains_dimension(getattr(v, "dimension", ""))
+        ]
+        if not allowed_violations:
+            return None  # No violations within authority scope
+    elif budget.allowed_dimensions:
         allowed_violations = [
             v for v in observation.violations
             if getattr(v, "dimension", "") in budget.allowed_dimensions
@@ -415,6 +500,10 @@ class PathBAgent:
         self._human_review_required: bool = False
         # Item 6: Frozen sessions
         self._frozen_sessions: Dict[str, bool] = {}   # agent_id -> frozen
+        # T7: Consecutive ineffective constraint counter (per agent)
+        self._consecutive_ineffective: Dict[str, int] = {}
+        # T6: Authority scopes (per agent)
+        self._authority_scopes: Dict[str, ExternalAuthorityScope] = {}
 
         # GAP 1 FIX: Initialize OmissionEngine from omission_store (same pattern as PathAAgent)
         self.omission_engine = (
@@ -782,3 +871,123 @@ class PathBAgent:
                 for agent_id, budget in self._budgets.items()
             },
         }
+
+    # ── T7: Intermediate actions before disconnect ───────────────────────────
+    # Escalation ladder: warn → downgrade → freeze → disconnect
+    # Each step writes to CIEU.  3 consecutive ineffective → human review.
+
+    def record_constraint_result(
+        self,
+        agent_id: str,
+        effective: bool,
+    ) -> ExternalGovernanceResult:
+        """
+        Record whether the last constraint was effective.
+
+        T7: Tracks _consecutive_ineffective counter (like Path A's inconclusive).
+        3 consecutive ineffective constraints → human review required.
+        """
+        if effective:
+            self._consecutive_ineffective[agent_id] = 0
+            return ExternalGovernanceResult(
+                status="success", agent_id=agent_id,
+                action=ExternalGovernanceAction.VERIFY_COMPLIANCE,
+            )
+
+        count = self._consecutive_ineffective.get(agent_id, 0) + 1
+        self._consecutive_ineffective[agent_id] = count
+
+        if count >= 3:
+            self._human_review_required = True
+            self._write_cieu(
+                ExternalGovernanceCycle(
+                    observation=ExternalObservation(agent_id=agent_id)
+                ),
+                "HUMAN_REVIEW_REQUIRED",
+                [],
+                reason=f"{count} consecutive ineffective constraints",
+            )
+            return ExternalGovernanceResult(
+                status="ineffective", agent_id=agent_id,
+                action=ExternalGovernanceAction.REQUIRE_HUMAN_REVIEW,
+                details=f"{count} consecutive ineffective",
+            )
+
+        return ExternalGovernanceResult(
+            status="ineffective", agent_id=agent_id,
+            action=ExternalGovernanceAction.APPLY_CONSTRAINT,
+            details=f"ineffective_count={count}",
+        )
+
+    def escalate_disconnect(self, agent_id: str, reason: str = "non_compliance") -> ExternalGovernanceResult:
+        """
+        T7: Intermediate actions before full disconnect.
+
+        Escalation ladder:
+          1. warn           — CIEU record, no enforcement change
+          2. downgrade      — contract permissions reduced
+          3. freeze         — session frozen
+          4. disconnect     — full disconnect
+
+        Returns ExternalGovernanceResult with the action taken.
+        """
+        actions_taken: List[str] = []
+
+        # Step 1: warn
+        self.execute_action(ExternalGovernanceAction.APPLY_CONSTRAINT, agent_id,
+                            {"reason": f"warn:{reason}"})
+        actions_taken.append("warned")
+
+        # Step 2: downgrade contract
+        existing = self._active_constraints.get(agent_id)
+        if existing:
+            downgraded = IntentContract(
+                name=f"path_b:downgraded:{agent_id[:8]}",
+                deny=existing.deny or [],
+                deny_commands=existing.deny_commands or [],
+                only_paths=[], only_domains=[],
+            )
+            self._active_constraints[agent_id] = downgraded
+            self.execute_action(ExternalGovernanceAction.DOWNGRADE_CONTRACT, agent_id,
+                                {"reason": reason})
+            actions_taken.append("downgraded")
+
+        # Step 3: freeze session
+        self._frozen_sessions[agent_id] = True
+        self.execute_action(ExternalGovernanceAction.FREEZE_SESSION, agent_id,
+                            {"reason": reason})
+        actions_taken.append("frozen")
+
+        # Step 4: disconnect
+        result = self.disconnect_external_agent(agent_id, reason=reason)
+        actions_taken.append("disconnected")
+
+        return ExternalGovernanceResult(
+            status="disconnected", agent_id=agent_id,
+            action=ExternalGovernanceAction.DISCONNECT_AGENT,
+            details=f"escalation_steps={actions_taken}",
+        )
+
+    # ── T8: Unified action execution ─────────────────────────────────────────
+
+    def execute_action(
+        self,
+        action: ExternalGovernanceAction,
+        target_agent: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        T8: Execute a governance action and write to CIEU with the action type.
+
+        Every action is recorded in CIEU with the ExternalGovernanceAction enum
+        value, providing a complete audit trail of all governance decisions.
+        """
+        params = params or {}
+        self._write_cieu(
+            ExternalGovernanceCycle(
+                observation=ExternalObservation(agent_id=target_agent)
+            ),
+            f"ACTION_{action.value.upper()}",
+            [],
+            reason=params.get("reason", ""),
+        )
