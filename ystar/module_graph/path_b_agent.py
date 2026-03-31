@@ -181,7 +181,18 @@ def observation_to_constraint(
     evidence_count = len(similar_violations) + 1  # +1 for current observation
     confidence = min(0.95, 0.3 + (evidence_count * 0.1))  # More evidence = higher confidence
 
-    if confidence < confidence_threshold:
+    # Cold-start bypass: if there are REAL violations in the current observation
+    # but zero historical observations for this agent (new user), generate
+    # constraint directly instead of requiring confidence buildup.
+    # Requires severity >= 0.5 to avoid cold-start on trivial violations.
+    total_history_for_agent = sum(
+        1 for obs in violation_history
+        if obs.agent_id == observation.agent_id
+    )
+    cold_start = (total_history_for_agent == 0
+                  and observation.severity_score() >= 0.5)
+
+    if not cold_start and confidence < confidence_threshold:
         return None  # Not confident enough to constrain
 
     # Calculate constraint cost based on severity

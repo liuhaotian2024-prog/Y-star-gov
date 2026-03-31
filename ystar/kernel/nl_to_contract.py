@@ -291,6 +291,7 @@ def translate_to_contract(
         return llm_result, "llm", 0.90
 
     # 降级：正则解析器
+    print("  [Y*] Regex mode has limited coverage. For better results, set YSTAR_LLM_PROVIDER=anthropic or openai", file=sys.stderr)
     regex_result = _try_regex_translation(text)
     return regex_result, "regex", 0.50
 

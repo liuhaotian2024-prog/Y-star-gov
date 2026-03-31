@@ -107,7 +107,7 @@ from .governance.metalearning import (
     DomainContext,
 )
 
-__version__ = "0.41.0"
+__version__ = "0.41.1"
 
 # ── Canonical layer paths (v0.37.1) ──────────────────────────────────────────
 # New code should prefer these import paths:

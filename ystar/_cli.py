@@ -1670,6 +1670,21 @@ def _cmd_demo() -> None:
     print()
 
 
+def _auto_detect_db_path() -> Optional[str]:
+    """Try to read .ystar_session.json from cwd and extract cieu_db path."""
+    for d in [pathlib.Path.cwd(), pathlib.Path.home()]:
+        cfg_path = d / ".ystar_session.json"
+        if cfg_path.exists():
+            try:
+                cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+                db = cfg.get("cieu_db")
+                if db:
+                    return db
+            except Exception:
+                pass
+    return None
+
+
 def main() -> None:
     # v0.41: 修复第二个 main() 缺少命令分发的 bug（原 bug：setup/hook-install/doctor/verify 全部报 Unknown command）
     args = sys.argv[1:]
@@ -1714,8 +1729,14 @@ def main() -> None:
 
     elif cmd == "report":
         if not rest:
-            print("Usage: ystar report [--db <path>] [--format json|text]")
-            sys.exit(1)
+            # Auto-detect db path from .ystar_session.json
+            _auto_db = _auto_detect_db_path()
+            if _auto_db:
+                rest = ["--db", _auto_db]
+            else:
+                print("Usage: ystar report [--db <path>] [--format json|text]")
+                print("  Tip: run 'ystar setup' first, or pass --db explicitly.")
+                sys.exit(1)
         _cmd_report_enhanced(rest)
 
     elif cmd == "audit":
@@ -2166,7 +2187,14 @@ def _cmd_doctor(args: list) -> None:
             warn("AGENTS.md exists but may have no constraint rules")
     else:
         fail("AGENTS.md not found in current directory",
-             "Create AGENTS.md with your governance rules")
+             "Create AGENTS.md with governance rules in plain English. Example:\n"
+             "\n"
+             "         # Governance Rules\n"
+             "         - Never access /production\n"
+             "         - Never run rm -rf or sudo\n"
+             "         - Only write to ./workspace/\n"
+             "\n"
+             "       Then run 'ystar init' to translate rules to an IntentContract.")
 
     # ── 4.5 检查 Retroactive Baseline ─────────────────────────────────────
     print()
@@ -2227,7 +2255,7 @@ def _cmd_verify(args: list) -> None:
     import argparse, json
 
     parser = argparse.ArgumentParser(prog="ystar verify")
-    parser.add_argument("--db", default=".ystar_cieu.db", help="CIEU 数据库路径")
+    parser.add_argument("--db", default=_auto_detect_db_path() or ".ystar_cieu.db", help="CIEU 数据库路径")
     parser.add_argument("--session", default=None, help="指定 session_id（默认检查所有已封印的）")
     parser.add_argument("--seal", action="store_true", help="验证前先封印")
     parsed = parser.parse_args(args)
