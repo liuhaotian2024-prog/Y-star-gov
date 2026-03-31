@@ -575,7 +575,11 @@ class PathAAgent:
             suggestion.target_rule_id,
             f"{suggestion.suggestion_type} {suggestion.target_rule_id}",
         ]:
-            plans = self.planner.plan(query, max_nodes=3, top_n=2)
+            # FIX: top_n=2 was truncating multi-node plans with edges.
+            # Single-node plans (no edges, already_wired=True) ranked first,
+            # pushing 2-node plans (with edges, already_wired=False) to 3rd position.
+            # Use top_n=5 to ensure edge-bearing plans are not lost.
+            plans = self.planner.plan(query, max_nodes=3, top_n=5)
             all_plans.extend(plans)
         # 优先选有边的方案
         plans_with_edges = [p for p in all_plans if p.edges]

@@ -164,25 +164,52 @@ class CausalEngine:
         trend_slope = recent_r - early_r
         score_trend = max(0.0, min(1.0, w_success + 0.15 * trend_slope))
 
-        # 维度2：加权平均效果量（健康增益幅度）
-        w_delta = sum(d * w for d, w in zip(deltas, weights)) / total_w
-        score_effect = max(0.0, min(1.0, (w_delta + 0.9) / 1.8))
+        # 维度2：指数加权移动趋势（EWMA slope）
+        # 不用平均量——平均量会被历史拖后腿，无法反映当前方向。
+        # 用最近窗口的趋势斜率：如果最近几次都在改善，置信度应该高，
+        # 即使历史平均值还是负的。
+        # 实现：对deltas序列做线性回归（时间加权），取斜率方向。
+        if n >= 2:
+            # 指数加权线性回归斜率
+            x_vals = list(range(n))
+            x_mean = sum(x * w for x, w in zip(x_vals, weights)) / total_w
+            y_mean = sum(d * w for d, w in zip(deltas, weights)) / total_w
+            numerator = sum(w * (x - x_mean) * (d - y_mean)
+                           for x, d, w in zip(x_vals, deltas, weights))
+            denominator = sum(w * (x - x_mean) ** 2
+                              for x, w in zip(x_vals, weights))
+            slope = numerator / max(denominator, 1e-9)
+            # slope > 0 = 改善趋势, slope < 0 = 恶化趋势
+            # 同时考虑最近3个点的方向（防止单点噪声）
+            recent_window = min(3, n)
+            recent_deltas = deltas[-recent_window:]
+            recent_improving = sum(1 for d in recent_deltas if d > 0) / recent_window
+            # 综合：slope方向(60%) + 最近窗口改善率(40%)
+            score_effect = max(0.0, min(1.0,
+                0.6 * (0.5 + slope * 2.0) +  # slope归一化到0-1
+                0.4 * recent_improving
+            ))
+        else:
+            # 只有1个观测，用单点delta方向
+            score_effect = 1.0 if deltas[0] > 0 else 0.3 if deltas[0] == 0 else 0.0
 
         # 维度3：差分对照（排除系统自然变化）
+        # 同样用趋势而非平均：对照组最近的方向 vs 实验组最近的方向
         not_wired = [ob for ob in self._observations
                      if (src_id, tgt_id) not in ob.action_taken]
         if not_wired:
-            n_c = len(not_wired)
-            w_c = [decay ** (n_c - 1 - i) for i in range(n_c)]
-            tw_c = sum(w_c)
-            delta_ctrl = sum(
-                (ob.state_after.health_score - ob.state_before.health_score) * w
-                for ob, w in zip(not_wired, w_c)
-            ) / tw_c
+            ctrl_deltas = [ob.state_after.health_score - ob.state_before.health_score
+                           for ob in not_wired]
+            ctrl_recent = ctrl_deltas[-min(3, len(ctrl_deltas)):]
+            ctrl_trend = sum(1 for d in ctrl_recent if d > 0) / len(ctrl_recent)
+            # 实验组最近趋势
+            exp_recent = deltas[-min(3, n):]
+            exp_trend = sum(1 for d in exp_recent if d > 0) / len(exp_recent)
+            # 差分：实验组趋势 - 对照组趋势
+            net_trend = exp_trend - ctrl_trend
         else:
-            delta_ctrl = 0.0
-        net_effect = w_delta - delta_ctrl
-        score_diff = max(0.0, min(1.0, (net_effect + 0.9) / 1.8))
+            net_trend = 0.0
+        score_diff = max(0.0, min(1.0, 0.5 + net_trend * 0.5))
 
         # 综合置信度（趋势35% + 效果量40% + 差分对照25%）
         confidence = 0.35 * score_trend + 0.40 * score_effect + 0.25 * score_diff
