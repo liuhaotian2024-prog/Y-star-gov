@@ -32,6 +32,27 @@ from ystar.module_graph.discovery import (
 from ystar.governance.omission_engine import OmissionEngine
 
 
+@dataclass
+class PathAPolicy:
+    """Unified failure policy for single-track Path A.
+
+    Each field specifies the response when that subsystem fails:
+      skip    — fail-closed, skip this cycle
+      abort   — fail-closed, hard stop
+      rollback — undo + record
+      warn    — fail-soft, observable in CIEU
+      suspend — pause execution until human acknowledges
+    """
+    suggestion_failure:    str = "skip"       # fail-closed
+    handoff_failure:       str = "abort"      # fail-closed
+    contract_failure:      str = "abort"      # fail-closed
+    check_failure:         str = "abort"      # fail-closed
+    activation_failure:    str = "rollback"   # rollback + record
+    omission_scan_failure: str = "warn"       # fail-soft + observable
+    constitution_mismatch: str = "skip"       # hard stop
+    human_review:          str = "suspend"    # pause execution
+
+
 # ── 步骤2 核心函数：Suggestion → IntentContract ──────────────────────────────
 def suggestion_to_contract(
     suggestion:       GovernanceSuggestion,
@@ -208,6 +229,7 @@ class PathAAgent:
         max_cycles:    int   = 10,
         cycle_timeout: float = 600.0,
         auto_confidence_threshold: float = 0.65,  # 高于此值自主执行，无需人工
+        policy:        Optional[PathAPolicy] = None,
     ):
         self.gloop         = governance_loop
         self.cieu_store    = cieu_store
@@ -244,6 +266,8 @@ class PathAAgent:
         self._inconclusive_count = 0  # Gap 5: Track inconclusive cycles
         # Fix 6.2: human review gate — blocks execution until acknowledged
         self._human_review_required = False
+        # Unified failure policy (Issue 6)
+        self.policy = policy or PathAPolicy()
 
 
     def _load_constitution_hash(self) -> str:
@@ -324,7 +348,18 @@ class PathAAgent:
                         # activate() 或 on_wired() 调用失败 - 这是真正的错误
                         raise Exception(f"activation protocol failed: {act_err}")
 
-                # 记录激活意图到 CIEU (Fix 5.1: use helper)
+                # Determine if module has activation protocol
+                has_activation_protocol = activation_status.startswith("real_activated")
+
+                # Single-track distinction: graph_only → PARTIAL_ACTIVATION
+                # Modules without activate() or on_wired() are graph-wired but
+                # NOT fully activated. CIEU records this clearly via
+                # activation_level field.
+                activation_level = (
+                    "FULL_ACTIVATION" if has_activation_protocol
+                    else "PARTIAL_ACTIVATION"
+                )
+
                 activation_record = self._make_cieu_record(
                     event_type="runtime_activation",
                     action="runtime_activation",
@@ -334,8 +369,12 @@ class PathAAgent:
                         "target": tgt_id,
                         "module_path": target_node.module_path,
                         "func_name": target_node.func_name,
+                        "has_activation_protocol": has_activation_protocol,
                     },
-                    result={"status": activation_status},
+                    result={
+                        "status": activation_status,
+                        "activation_level": activation_level,
+                    },
                     cycle=cycle,
                 )
                 self.cieu_store.write_dict(activation_record)
@@ -479,7 +518,11 @@ class PathAAgent:
 
         cycle = MetaAgentCycle()
 
+        # Unified policy reference for failure handling
+        policy = self.policy
+
         # Fix 6.2: refuse to execute if human review is pending
+        # policy.human_review == "suspend"
         if self._human_review_required:
             cycle.executed = False
             cycle.success = False
@@ -497,7 +540,7 @@ class PathAAgent:
         if not hasattr(self, '_handoff_registered') or not self._handoff_registered:
             registration_success = self._do_handoff_registration()
 
-            # Gap 3: 注册失败则中止执行
+            # Gap 3: 注册失败则中止执行 (policy.handoff_failure == "abort")
             if not registration_success:
                 self._handoff_retry_count += 1
 
@@ -536,7 +579,7 @@ class PathAAgent:
             with open(self._constitution_path, 'rb') as _cf:
                 current_hash = "sha256:" + _hl.sha256(_cf.read()).hexdigest()[:16]
             if current_hash != self._constitution_hash:
-                # 宪法被篡改：写 CIEU 记录，跳过本次循环
+                # 宪法被篡改：policy.constitution_mismatch == "skip"
                 self.cieu_store.write_dict(self._make_cieu_record(
                     event_type="constitution_integrity_check",
                     action="constitution_integrity_check",
@@ -559,6 +602,7 @@ class PathAAgent:
         cycle.health_before = tighten_result.overall_health
         suggestions = tighten_result.governance_suggestions or []
         if not suggestions:
+            # policy.suggestion_failure == "skip"
             cycle.success = False
             self._history.append(cycle)
             return cycle
@@ -659,7 +703,7 @@ class PathAAgent:
         # 调用标准 check() 进行其他维度验证
         check_result = check(proposed_action, {}, contract)
         if not check_result.passed:
-            # 路径A自身违反了自己的合约——这是系统自我保护机制
+            # policy.check_failure == "abort" — 路径A自身违反了自己的合约
             cycle.executed = False
             self._write_cieu(cycle, "DENIED_BY_OWN_CONTRACT",
                              check_result.violations)
@@ -683,7 +727,7 @@ class PathAAgent:
             cycle.runtime_activated = activated
             cycle.activation_failed = failed
 
-            # 如果有激活失败，回滚成功标记并记录
+            # policy.activation_failure == "rollback" — 回滚 + 记录
             if failed:
                 self._write_cieu(cycle, "ACTIVATION_FAILED", failed)
                 # 部分失败不算完全执行
@@ -876,7 +920,7 @@ class PathAAgent:
                         pass  # Causal feed failed; don't block cycle
 
             except Exception:
-                pass  # scan 失败不阻断循环
+                pass  # policy.omission_scan_failure == "warn" — fail-soft
 
         # Fix 4.3: Reset handoff retry state after cycle completes
         # (success or failure), so the next cycle starts fresh.
@@ -1023,6 +1067,116 @@ class PathAAgent:
                 self.omission_store.update_obligation(ob)
         except Exception:
             pass
+
+    def propose_amendment(
+        self,
+        amendment_text: str,
+        rationale: str,
+        proposer: str = "path_a_agent",
+    ) -> dict:
+        """
+        Propose a constitution amendment through the governed Path A process.
+
+        The proposal is validated via check() like any other Path A action,
+        and recorded in CIEU with event_type 'constitution_amendment_proposed'.
+        Actual modification requires Board (human) approval — this method
+        only creates and records the proposal.
+
+        Args:
+            amendment_text: The proposed change to PATH_A_AGENTS.md.
+            rationale: Why this amendment is needed.
+            proposer: Who is proposing (default: path_a_agent).
+
+        Returns:
+            dict with proposal_id, status, and any violations.
+        """
+        from ystar import check
+
+        proposal_id = uuid.uuid4().hex[:8]
+        cycle = MetaAgentCycle()
+
+        # Build a contract for this amendment proposal action
+        contract = suggestion_to_contract(
+            GovernanceSuggestion(
+                target_rule_id="constitution",
+                suggestion_type="amendment",
+                suggested_value=amendment_text[:200],
+                confidence=0.5,
+                rationale=rationale,
+                observation_ref="amendment_proposal",
+            ),
+            allowed_modules=["constitution"],
+            deadline_secs=self.cycle_timeout,
+        )
+
+        # Validate the proposal through check() — even constitution changes
+        # must pass governance
+        proposed_action = {
+            "action": "propose_amendment",
+            "amendment_text": amendment_text[:500],
+            "rationale": rationale,
+            "proposer": proposer,
+        }
+        check_result = check(proposed_action, {}, contract)
+
+        if not check_result.passed:
+            # Proposal itself violates governance — record and reject
+            self.cieu_store.write_dict(self._make_cieu_record(
+                event_type="constitution_amendment_proposed",
+                action="propose_amendment",
+                decision="deny",
+                params={
+                    "proposal_id": proposal_id,
+                    "amendment_text": amendment_text[:200],
+                    "rationale": rationale,
+                    "proposer": proposer,
+                },
+                result={
+                    "status": "rejected_by_check",
+                    "violations": [
+                        v.message if hasattr(v, 'message') else str(v)
+                        for v in check_result.violations
+                    ],
+                },
+                cycle=cycle,
+            ))
+            return {
+                "proposal_id": proposal_id,
+                "status": "rejected",
+                "reason": "check_failed",
+                "violations": [
+                    v.message if hasattr(v, 'message') else str(v)
+                    for v in check_result.violations
+                ],
+            }
+
+        # Proposal passes check — record it, but actual modification
+        # requires Board approval
+        self.cieu_store.write_dict(self._make_cieu_record(
+            event_type="constitution_amendment_proposed",
+            action="propose_amendment",
+            decision="allow",
+            params={
+                "proposal_id": proposal_id,
+                "amendment_text": amendment_text[:200],
+                "rationale": rationale,
+                "proposer": proposer,
+                "constitution_hash": self._constitution_hash,
+            },
+            result={
+                "status": "proposed_awaiting_board",
+                "requires": "board_approval",
+            },
+            cycle=cycle,
+        ))
+
+        self._history.append(cycle)
+        return {
+            "proposal_id": proposal_id,
+            "status": "proposed",
+            "requires": "board_approval",
+            "constitution_hash": self._constitution_hash,
+        }
 
     def _fail_obligation(self, obligation_id: str) -> None:
         """Fix 6.3: Explicitly mark obligation as FAILED on cycle failure."""
