@@ -167,6 +167,8 @@ class GovernanceTightenResult:
     intervention_snapshot:   Optional[dict] = None
     # Pearl integration: causal reasoning chain from CausalEngine
     causal_chain:            List[str] = field(default_factory=list)
+    # Pearl integration: structure discovery validation result
+    structure_validated:     Optional[dict] = None
 
     def is_action_required(self) -> bool:
         return self.overall_health in ("degraded", "critical") or \
@@ -679,6 +681,23 @@ class GovernanceLoop:
                 )
             except Exception:
                 pass  # CausalEngine feed failed; don't block governance
+
+        # ── Pearl Integration 3: Auto-trigger structure discovery ─────
+        # When enough cycle-level observations have accumulated, validate
+        # the causal DAG against data-discovered structure.
+        if self._causal_engine is not None:
+            try:
+                n_obs = self._causal_engine.count_cycle_observations()
+                if n_obs >= 30:
+                    discovered = self._causal_engine.learn_structure(
+                        min_observations=30,
+                    )
+                    if discovered is not None:
+                        result.structure_validated = getattr(
+                            self._causal_engine, '_structure_validation', None
+                        )
+            except Exception:
+                pass  # Structure discovery failed; don't block governance
 
         # Governance 侧：产出参数建议
         suggestions = self._generate_governance_suggestions(latest)

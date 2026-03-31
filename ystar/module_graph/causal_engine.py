@@ -1330,98 +1330,238 @@ class CausalEngine:
 
     def cieu_to_scm_data(self, cieu_records: List[dict]) -> List[Dict[str, float]]:
         """
-        Convert raw CIEU records to SCM variable space (W, O, H, S).
+        Convert raw CIEU records to CYCLE-LEVEL SCM observations (W, O, H, S).
 
-        Each SCM variable is derived from INDEPENDENT CIEU fields to avoid
-        artificial dependencies that inflate SHD in structure discovery:
+        The PC algorithm needs one data point per governance cycle, not per
+        raw CIEU record.  A cycle is a sequence of events:
+          suggestion → check → wire/deny → health assessment.
 
-          W (wiring quality):       agent_id + event_type → hash-based continuous
-          O (obligation fulfillment): violations field + obligation existence
-          H (health):               temporal trend of decisions (rolling window)
-          S (suggestion quality):   event_type diversity + drift_detected
+        For each cycle this method computes:
+          W: was a wiring action attempted? (0.0/0.5/1.0)
+          O: obligation fulfillment ratio at end of cycle (0–1)
+          H: allow/deny ratio within the cycle's events
+          S: suggestion confidence that triggered the cycle
 
-        No two variables are deterministic functions of the same field.
+        Non-cycle records (doctor self-tests, isolated events) are filtered.
 
         Args:
             cieu_records: Raw audit records from CIEU.
 
         Returns:
-            List of dicts with keys W, O, H, S and float values in [0, 1].
+            List of cycle-level dicts with keys W, O, H, S in [0, 1].
         """
+        # ── Step 1: Group records into cycles ──────────────────────────
+        cycles = self._group_into_cycles(cieu_records)
+
+        # ── Step 2: Convert each cycle to one SCM data point ──────────
         result: List[Dict[str, float]] = []
-
-        # Pre-compute rolling decision history for H (temporal trend)
-        decisions: List[str] = []
-        for rec in cieu_records:
-            decisions.append(str(rec.get("decision", "unknown")))
-
-        # Pre-compute event_type set for S (diversity measure)
-        all_event_types: Set[str] = set()
-        for rec in cieu_records:
-            et = rec.get("event_type", "")
-            if et:
-                all_event_types.add(et)
-        # Max diversity normalizer (at least 1 to avoid div-by-zero)
-        max_diversity = max(len(all_event_types), 1)
-
-        for idx, rec in enumerate(cieu_records):
-            # ── W (wiring quality): hash of agent_id + event_type ──────
-            # Different agents doing different actions = different wiring.
-            # Uses a deterministic hash to produce a continuous [0, 1] value.
-            agent_id = str(rec.get("agent_id", "unknown"))
-            event_type = str(rec.get("event_type", "unknown"))
-            w_hash = hash(agent_id + ":" + event_type) & 0xFFFFFFFF
-            w = (w_hash % 10000) / 10000.0  # continuous in [0, 1)
-
-            # ── O (obligation fulfillment): violations + obligation existence ─
-            # Derives from whether violations exist and obligation fields.
-            violations = rec.get("violations", rec.get("result", {}).get("violations", []))
-            if isinstance(violations, list):
-                has_violations = len(violations) > 0
-            else:
-                has_violations = bool(violations)
-            has_obligation = bool(
-                rec.get("obligation_id")
-                or rec.get("obl_total", 0) > 0
-                or "obligation" in event_type.lower()
-            )
-            # No violations + obligation exists = high fulfillment
-            if has_obligation and not has_violations:
-                o = 0.9
-            elif has_obligation and has_violations:
-                o = 0.2
-            elif not has_obligation and not has_violations:
-                o = 0.5  # neutral — no obligation context
-            else:
-                o = 0.1  # violations without obligation = worst
-
-            # ── H (health): rolling window of recent allow/deny ratio ────
-            # Uses temporal trend of decisions, NOT single-record health field.
-            window_size = 5
-            window_start = max(0, idx - window_size + 1)
-            window = decisions[window_start:idx + 1]
-            if window:
-                allow_count = sum(
-                    1 for d in window if d in ("allow", "inconclusive")
-                )
-                h = allow_count / len(window)
-            else:
-                h = 0.5
-
-            # ── S (suggestion quality): event_type diversity + drift ─────
-            # More diverse event types up to this point = richer governance.
-            # drift_detected amplifies the signal.
-            seen_types: Set[str] = set()
-            for prior_rec in cieu_records[max(0, idx - 9):idx + 1]:
-                et = prior_rec.get("event_type", "")
-                if et:
-                    seen_types.add(et)
-            diversity_ratio = len(seen_types) / max_diversity
-            drift_detected = bool(rec.get("drift_detected", False))
-            s = min(1.0, diversity_ratio * 0.7 + (0.3 if drift_detected else 0.0))
-
-            result.append({"W": w, "O": o, "H": h, "S": s})
+        for cycle in cycles:
+            point = self._cycle_to_scm_point(cycle)
+            if point is not None:
+                result.append(point)
         return result
+
+    # ── Cycle grouping helpers ────────────────────────────────────────
+
+    # Event types that mark the START of a new governance cycle
+    _CYCLE_START_TYPES = frozenset([
+        "suggestion", "governance_suggestion", "suggest",
+        "proposal", "check_start", "scan_start",
+    ])
+    # Event types that mark wiring actions
+    _WIRING_TYPES = frozenset([
+        "wire", "wiring", "activate", "connect",
+        "deny", "reject", "block",
+    ])
+    # Event types belonging to doctor / self-test (not real cycles)
+    _NOISE_TYPES = frozenset([
+        "doctor_check", "self_test", "heartbeat", "ping",
+    ])
+
+    def _group_into_cycles(
+        self, records: List[dict],
+    ) -> List[List[dict]]:
+        """
+        Group CIEU records into governance cycles.
+
+        Heuristic: a new cycle starts when we see a suggestion/check event,
+        or when the cycle_id field changes.  Records with noise event types
+        are dropped entirely.
+        """
+        cycles: List[List[dict]] = []
+        current: List[dict] = []
+
+        prev_cycle_id: Optional[str] = None
+
+        for rec in records:
+            event_type = str(rec.get("event_type", "")).lower()
+
+            # Filter out non-cycle noise records
+            if event_type in self._NOISE_TYPES:
+                continue
+
+            # Detect cycle boundary via explicit cycle_id
+            rec_cycle_id = rec.get("cycle_id") or rec.get("request_id")
+            if rec_cycle_id and rec_cycle_id != prev_cycle_id and current:
+                cycles.append(current)
+                current = []
+            prev_cycle_id = rec_cycle_id
+
+            # Detect cycle boundary via event type (suggestion = new cycle)
+            if event_type in self._CYCLE_START_TYPES and current:
+                cycles.append(current)
+                current = []
+
+            current.append(rec)
+
+        # Flush the last cycle
+        if current:
+            cycles.append(current)
+
+        return cycles
+
+    def _cycle_to_scm_point(
+        self, cycle_records: List[dict],
+    ) -> Optional[Dict[str, float]]:
+        """
+        Convert a single cycle's records into one SCM data point.
+
+        Returns None if the cycle is too thin to be meaningful (< 1 event
+        with a decision).
+        """
+        if not cycle_records:
+            return None
+
+        # ── W: wiring action attempted? ────────────────────────────────
+        wire_attempted = False
+        wire_succeeded = False
+        for rec in cycle_records:
+            et = str(rec.get("event_type", "")).lower()
+            decision = str(rec.get("decision", "")).lower()
+            if et in self._WIRING_TYPES or decision in ("allow", "deny"):
+                wire_attempted = True
+                succeeded = rec.get("succeeded", None)
+                if succeeded is True or decision == "allow":
+                    wire_succeeded = True
+
+        if wire_succeeded:
+            w = 1.0
+        elif wire_attempted:
+            w = 0.5
+        else:
+            w = 0.0
+
+        # ── O: obligation status at end of cycle ──────────────────────
+        obl_fulfilled = 0
+        obl_total = 0
+        for rec in cycle_records:
+            f = rec.get("obl_fulfilled", 0)
+            t = rec.get("obl_total", 0)
+            if t > 0:
+                obl_fulfilled = f
+                obl_total = t
+            # Also check violations as inverse proxy
+            violations = rec.get("violations", rec.get("result", {}).get("violations", []))
+            if isinstance(violations, list) and violations and obl_total == 0:
+                obl_total = max(len(violations), 1)
+                obl_fulfilled = 0
+        o = obl_fulfilled / max(obl_total, 1)
+
+        # ── H: health change during cycle (allow/deny ratio) ──────────
+        allow_count = 0
+        deny_count = 0
+        for rec in cycle_records:
+            decision = str(rec.get("decision", "")).lower()
+            if decision in ("allow", "inconclusive"):
+                allow_count += 1
+            elif decision in ("deny", "block", "reject"):
+                deny_count += 1
+        total_decisions = allow_count + deny_count
+        h = allow_count / max(total_decisions, 1)
+
+        # ── S: suggestion confidence that triggered this cycle ────────
+        s = 0.5  # default if no explicit confidence found
+        for rec in cycle_records:
+            conf = rec.get("confidence", rec.get("suggestion_confidence"))
+            if conf is not None:
+                try:
+                    s = float(conf)
+                except (TypeError, ValueError):
+                    pass
+                break  # Use the first confidence we find
+            # Fallback: drift_detected boosts suggestion signal
+            if rec.get("drift_detected"):
+                s = 0.7
+
+        return {"W": w, "O": o, "H": h, "S": s}
+
+    def count_cycle_observations(self) -> int:
+        """
+        Return the number of real cycle-level SCM observations accumulated.
+
+        This is the effective sample size for the PC algorithm; raw CIEU
+        record counts would overstate it.
+        """
+        return len(self._scm_data)
+
+    def learn_structure(
+        self, min_observations: int = 30, alpha: float = 0.05,
+    ) -> Optional[CausalGraph]:
+        """
+        Auto-trigger causal structure discovery when enough data exists.
+
+        When we have >= min_observations cycle-level SCM data points, run
+        the PC algorithm to discover the causal DAG from data and compare
+        it with the hand-specified DAG.
+
+        If the discovered DAG is close (SHD <= 2): boost confidence and
+        log "structure confirmed".
+        If divergent (SHD > 2): log "structure divergence detected" and
+        flag for human review.
+
+        Args:
+            min_observations: Minimum cycle observations required.
+            alpha: Significance level for conditional independence tests.
+
+        Returns:
+            The discovered CausalGraph, or None if not enough data.
+        """
+        n = len(self._scm_data)
+        if n < min_observations:
+            return None
+
+        # Run PC algorithm on accumulated cycle-level data
+        discovered = self.discover_structure(self._scm_data, alpha=alpha)
+
+        # Compare discovered vs hand-specified DAG
+        comparison = self.validate_discovered_vs_specified(
+            discovered, self._causal_graph,
+        )
+        shd = comparison["shd"]
+
+        if shd <= 2:
+            # Structure confirmed — boost confidence threshold downward
+            # (i.e., we trust the causal model more, so we need less human
+            # oversight). Clamp so threshold never goes below 0.3.
+            self.confidence_threshold = max(
+                0.3, self.confidence_threshold - 0.1,
+            )
+            self._structure_validation = {
+                "status": "confirmed",
+                "shd": shd,
+                "observations": n,
+                "comparison": comparison,
+            }
+        else:
+            # Structure divergence — flag for review
+            self._structure_validation = {
+                "status": "divergence_detected",
+                "shd": shd,
+                "observations": n,
+                "comparison": comparison,
+            }
+
+        return discovered
 
     def validate_discovered_vs_specified(
         self, discovered: CausalGraph, specified: CausalGraph
