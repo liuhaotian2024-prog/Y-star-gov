@@ -18,11 +18,36 @@ The symmetry is the proof — if Path A can't escape its bounds, neither can ext
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional, List, Tuple, Any, Dict
-import time, uuid, os
+import hashlib, time, uuid, os
 
 from ystar.kernel.dimensions import IntentContract
 from ystar.kernel.engine import check, CheckResult
 from ystar.governance.omission_engine import OmissionEngine
+
+
+# ── Constitution hash — computed once at import time ─────────────────────────
+_CONSTITUTION_PATH = os.path.join(os.path.dirname(__file__), "PATH_B_AGENTS.md")
+
+def _compute_constitution_hash() -> str:
+    """Compute SHA-256 hash of PATH_B_AGENTS.md. Returns empty string if file missing."""
+    try:
+        with open(_CONSTITUTION_PATH, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except (OSError, IOError):
+        return ""
+
+_CONSTITUTION_HASH: str = _compute_constitution_hash()
+
+
+# ── Disconnect result (Item 6) ───────────────────────────────────────────────
+@dataclass
+class DisconnectResult:
+    """Result of a real disconnect execution."""
+    agent_id:       str = ""
+    status:         str = "disconnected"  # "disconnected" / "already_disconnected" / "error"
+    actions_taken:  List[str] = field(default_factory=list)
+    frozen:         bool = False
+    contract_downgraded: bool = False
 
 
 # ── External Observation: What an external agent did ──────────────────────────
@@ -105,6 +130,8 @@ class ConstraintBudget:
     replenished_total: float = 0.0
     last_update:     float = field(default_factory=time.time)
     history:         List[Tuple[float, str]] = field(default_factory=list)  # (delta, reason)
+    # Item 4: Authority Boundary — only constrain dimensions actually observed in violations
+    allowed_dimensions: List[str] = field(default_factory=list)
 
     def can_tighten(self, cost: float = 0.1) -> bool:
         """Check if Path B has enough budget to apply a constraint."""
@@ -132,11 +159,35 @@ class ConstraintBudget:
         self.history.append((actual_gain, reason))
         self.last_update = time.time()
 
+    def update_allowed_dimensions(self, observations: List["ExternalObservation"]) -> None:
+        """
+        Item 4: Derive allowed_dimensions from actually observed violations.
+
+        Path B can only constrain dimensions that were actually violated.
+        This prevents Path B from inventing new constraint dimensions.
+        """
+        dims: set = set()
+        for obs in observations:
+            if obs.agent_id != self.agent_id:
+                continue
+            for v in obs.violations:
+                dim = getattr(v, "dimension", "")
+                if dim:
+                    dims.add(dim)
+        self.allowed_dimensions = sorted(dims)
+
+    def is_dimension_allowed(self, dimension: str) -> bool:
+        """Check if a constraint dimension is within the authority boundary."""
+        if not self.allowed_dimensions:
+            return True  # No restrictions yet (cold start)
+        return dimension in self.allowed_dimensions
+
     def summary(self) -> str:
         return (f"ConstraintBudget(agent={self.agent_id}, "
                 f"current={self.current_budget:.2f}, "
                 f"consumed={self.consumed_total:.2f}, "
-                f"replenished={self.replenished_total:.2f})")
+                f"replenished={self.replenished_total:.2f}, "
+                f"allowed_dims={self.allowed_dimensions})")
 
 
 # ── Core Function: Observation → Constraint ───────────────────────────────────
@@ -204,12 +255,23 @@ def observation_to_constraint(
     if not budget.can_tighten(constraint_cost):
         return None  # Insufficient budget
 
+    # Item 4: Authority Boundary — filter violations to allowed dimensions
+    if budget.allowed_dimensions:
+        allowed_violations = [
+            v for v in observation.violations
+            if getattr(v, "dimension", "") in budget.allowed_dimensions
+        ]
+        if not allowed_violations:
+            return None  # No violations in allowed dimensions
+    else:
+        allowed_violations = list(observation.violations)
+
     # Derive constraint from violation pattern
     deny_list = []
     deny_commands = []
     only_paths = []
 
-    for v in observation.violations:
+    for v in allowed_violations:
         dimension = getattr(v, 'dimension', '')
         actual = getattr(v, 'actual', '')
 
@@ -323,6 +385,9 @@ class PathBAgent:
         self.max_cycles = max_cycles
         self.omission_store = omission_store
 
+        # Item 2: Constitution hash — loaded at init, verified each cycle
+        self._constitution_hash: str = _CONSTITUTION_HASH
+
         # History tracking
         self._observation_history: List[ExternalObservation] = []
         self._cycle_history:       List[ExternalGovernanceCycle] = []
@@ -332,6 +397,13 @@ class PathBAgent:
 
         # Active constraints (one per external agent)
         self._active_constraints: Dict[str, IntentContract] = {}
+
+        # Item 3: Obligation / Inconclusive / Human Gate
+        self._obligations: Dict[str, Dict[str, Any]] = {}   # agent_id -> obligation
+        self._inconclusive_count: int = 0
+        self._human_review_required: bool = False
+        # Item 6: Frozen sessions
+        self._frozen_sessions: Dict[str, bool] = {}   # agent_id -> frozen
 
         # GAP 1 FIX: Initialize OmissionEngine from omission_store (same pattern as PathAAgent)
         self.omission_engine = (
@@ -357,17 +429,31 @@ class PathBAgent:
         Execute one complete external governance cycle.
 
         Steps:
+        0. Verify constitution hash (Item 2)
         1. Get latest observation with violations
+        1b. Check HARD_OVERDUE obligations (Item 3)
         2. Derive constraint from observation + history
         3. Check() the constraint against Path B's own contract
         4. Apply constraint (write to CIEU)
+        4b. Create verify_compliance obligation (Item 3)
         5. Return cycle record
         """
         cycle = ExternalGovernanceCycle()
 
+        # Step 0 (Item 2): Verify constitution hash at cycle start
+        current_hash = _compute_constitution_hash()
+        if self._constitution_hash and current_hash and current_hash != self._constitution_hash:
+            self._write_cieu(cycle, "CONSTITUTION_HASH_MISMATCH", [])
+            return cycle  # Refuse to operate with tampered constitution
+
+        # Step 1b (Item 3): Check for HARD_OVERDUE obligations → auto-disconnect
+        self._check_overdue_obligations()
+
         # Step 1: Find observations that need governance
         violations = [obs for obs in self._observation_history if obs.has_violation()]
         if not violations:
+            # Item 3: Track inconclusive (nothing to govern = inconclusive)
+            self._track_inconclusive(cycle)
             return cycle  # Nothing to govern
 
         # Take most recent violation
@@ -380,6 +466,9 @@ class PathBAgent:
             budget = ConstraintBudget(agent_id=observation.agent_id)
             self._budgets[observation.agent_id] = budget
 
+        # Item 4: Update allowed dimensions from observed violations
+        budget.update_allowed_dimensions(self._observation_history)
+
         # Step 3: Derive constraint
         constraint = observation_to_constraint(
             observation,
@@ -391,6 +480,8 @@ class PathBAgent:
         if not constraint:
             # No constraint derived (low confidence or insufficient budget)
             self._write_cieu(cycle, "NO_CONSTRAINT_DERIVED", [])
+            # Item 3: Track INCONCLUSIVE
+            self._track_inconclusive(cycle)
             return cycle
 
         cycle.constraint = constraint
@@ -420,6 +511,16 @@ class PathBAgent:
         self._active_constraints[observation.agent_id] = constraint
         cycle.applied = True
         cycle.cieu_ref = self._write_cieu(cycle, "CONSTRAINT_APPLIED", [])
+
+        # Item 3: Create verify_compliance obligation with deadline
+        self._create_obligation(
+            observation.agent_id,
+            "verify_compliance",
+            deadline_secs=300,
+            cycle_id=cycle.cycle_id,
+        )
+        # Reset inconclusive counter on successful constraint application
+        self._inconclusive_count = 0
 
         # GAP 1 FIX: Create obligation for the external agent after governance action
         if self.omission_engine and self.omission_store:
@@ -482,13 +583,56 @@ class PathBAgent:
         else:
             return False, f"{violations_after} violations after constraint"
 
-    def disconnect_external_agent(self, agent_id: str, reason: str = "non_compliance") -> None:
+    def disconnect_external_agent(
+        self,
+        agent_id: str,
+        reason: str = "non_compliance",
+    ) -> DisconnectResult:
         """
-        Disconnect an external agent (analog to Path A's HARD_OVERDUE intervention).
+        Disconnect an external agent — real execution (Item 6).
 
         This is the enforcement mechanism: repeated violations after constraint
         application result in disconnection.
+
+        Real work performed:
+        1. Downgrade contract: remove all ALLOW, keep only DENY
+        2. Freeze the session
+        3. Write CIEU record with event_type external_agent_disconnected_real
+        4. Return DisconnectResult with status and actions taken
         """
+        actions_taken: List[str] = []
+        result = DisconnectResult(agent_id=agent_id)
+
+        # Step 1: Downgrade contract — remove ALLOW-type permissions, keep DENY
+        existing_contract = self._active_constraints.get(agent_id)
+        if existing_contract:
+            downgraded = IntentContract(
+                name=f"path_b:downgraded:{agent_id[:8]}",
+                deny=existing_contract.deny or [],
+                deny_commands=existing_contract.deny_commands or [],
+                # Remove all allow-type fields (only_paths, only_domains cleared)
+                only_paths=[],
+                only_domains=[],
+            )
+            self._active_constraints[agent_id] = downgraded
+            result.contract_downgraded = True
+            actions_taken.append("contract_downgraded")
+
+        # Step 2: Freeze the session
+        self._frozen_sessions[agent_id] = True
+        result.frozen = True
+        actions_taken.append("session_frozen")
+
+        # Step 3: Write real disconnect CIEU record
+        self._write_cieu(
+            ExternalGovernanceCycle(observation=ExternalObservation(agent_id=agent_id)),
+            "external_agent_disconnected_real",
+            [],
+            reason=reason,
+        )
+        actions_taken.append("cieu_disconnect_recorded")
+
+        # Also write legacy event for backward compatibility
         self._write_cieu(
             ExternalGovernanceCycle(observation=ExternalObservation(agent_id=agent_id)),
             "EXTERNAL_AGENT_DISCONNECTED",
@@ -496,9 +640,15 @@ class PathBAgent:
             reason=reason,
         )
 
-        # Clear agent's state
-        self._active_constraints.pop(agent_id, None)
+        # Clear budget (agent cannot constrain further)
         self._budgets.pop(agent_id, None)
+        # Clear obligations
+        self._obligations.pop(agent_id, None)
+        actions_taken.append("budget_cleared")
+
+        result.actions_taken = actions_taken
+        result.status = "disconnected"
+        return result
 
     def _write_cieu(
         self,
@@ -519,10 +669,75 @@ class PathBAgent:
                 "is_meta_agent": True,
                 "path_b_event": event,
                 "reason":     reason,
+                # Item 2: Constitution hash in every CIEU record
+                "constitution_hash": self._constitution_hash,
             }
             return self.cieu_store.write_dict(record) and cycle.cycle_id
         except Exception:
             return None
+
+    # ── Item 3: Obligation / Inconclusive / Human Gate ───────────────────────
+
+    def _create_obligation(
+        self,
+        agent_id: str,
+        obligation_type: str,
+        deadline_secs: float = 300,
+        cycle_id: str = "",
+    ) -> None:
+        """Create an obligation for an external agent with a deadline."""
+        self._obligations[agent_id] = {
+            "type": obligation_type,
+            "created_at": time.time(),
+            "deadline": time.time() + deadline_secs,
+            "cycle_id": cycle_id,
+            "status": "pending",  # pending / fulfilled / hard_overdue
+        }
+        self._write_cieu(
+            ExternalGovernanceCycle(
+                observation=ExternalObservation(agent_id=agent_id)
+            ),
+            "OBLIGATION_CREATED",
+            [],
+            reason=f"{obligation_type} deadline={deadline_secs}s",
+        )
+
+    def _check_overdue_obligations(self) -> None:
+        """
+        Check for HARD_OVERDUE obligations and auto-disconnect.
+
+        Item 3: HARD_OVERDUE obligations trigger automatic disconnect.
+        """
+        now = time.time()
+        for agent_id, obl in list(self._obligations.items()):
+            if obl["status"] != "pending":
+                continue
+            if now > obl["deadline"]:
+                obl["status"] = "hard_overdue"
+                self._write_cieu(
+                    ExternalGovernanceCycle(
+                        observation=ExternalObservation(agent_id=agent_id)
+                    ),
+                    "OBLIGATION_HARD_OVERDUE",
+                    [],
+                    reason=f"obligation '{obl['type']}' exceeded deadline",
+                )
+                # Auto-disconnect on HARD_OVERDUE
+                self.disconnect_external_agent(agent_id, reason="hard_overdue")
+
+    def _track_inconclusive(self, cycle: ExternalGovernanceCycle) -> None:
+        """
+        Item 3: Track INCONCLUSIVE state.
+
+        3 consecutive INCONCLUSIVE cycles -> human_review_required = True.
+        """
+        self._inconclusive_count += 1
+        self._write_cieu(cycle, "CYCLE_INCONCLUSIVE", [],
+                         reason=f"inconclusive_count={self._inconclusive_count}")
+        if self._inconclusive_count >= 3:
+            self._human_review_required = True
+            self._write_cieu(cycle, "HUMAN_REVIEW_REQUIRED", [],
+                             reason="3 consecutive inconclusive cycles")
 
     def history_summary(self) -> dict:
         """Return summary statistics for Path B's governance history."""

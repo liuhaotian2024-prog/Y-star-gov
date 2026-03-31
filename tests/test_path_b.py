@@ -465,10 +465,16 @@ def test_path_b_agent_disconnect():
     agent._active_constraints["agent_1"] = IntentContract(name="test")
 
     # Disconnect
-    agent.disconnect_external_agent("agent_1", "repeated_violations")
+    result = agent.disconnect_external_agent("agent_1", "repeated_violations")
 
-    # Should clear state
-    assert "agent_1" not in agent._active_constraints
+    # Item 6: Real disconnect — contract downgraded (not removed), session frozen
+    assert result.status == "disconnected"
+    assert result.frozen is True
+    assert result.contract_downgraded is True
+    assert "agent_1" in agent._active_constraints  # Downgraded, not removed
+    assert agent._active_constraints["agent_1"].name.startswith("path_b:downgraded:")
+    assert agent._frozen_sessions.get("agent_1") is True
+    # Budget should be cleared (no further constraining)
     assert "agent_1" not in agent._budgets
 
     # Should write to CIEU

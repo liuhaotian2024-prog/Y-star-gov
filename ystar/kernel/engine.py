@@ -399,9 +399,26 @@ def check(
     # FIX-C2/C3: also classify by value shape when name-based classification fails.
     # GAP-1 (meta-agent): recognize "module:" prefix for module scope constraints
     if contract.only_paths:
-        # Separate module constraints from filesystem path constraints
+        # Separate module, external, and filesystem path constraints
         module_constraints = [p[7:] for p in contract.only_paths if p.startswith("module:")]
-        path_constraints = [p for p in contract.only_paths if not p.startswith("module:")]
+        external_constraints = [p[9:] for p in contract.only_paths if p.startswith("external:")]
+        path_constraints = [
+            p for p in contract.only_paths
+            if not p.startswith("module:") and not p.startswith("external:")
+        ]
+
+        # Item 5: Check external agent scope (same pattern as module: prefix)
+        if external_constraints:
+            ext_agent_id = params.get("external_agent_id", "")
+            if ext_agent_id and ext_agent_id not in external_constraints:
+                violations.append(Violation(
+                    dimension  = "external_scope",
+                    field      = "external_agent_id",
+                    message    = f"External agent scope violation: '{ext_agent_id}' not in allowed agents {external_constraints}",
+                    actual     = ext_agent_id,
+                    constraint = f"only_paths=[external:{', external:'.join(external_constraints)}]",
+                    severity   = 0.9,
+                ))
 
         # Check module scope if module_id/source_id/target_id present
         if module_constraints:
