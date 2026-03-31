@@ -99,6 +99,7 @@ class OmissionEngine:
         registry: Optional[RuleRegistry] = None,
         cieu_store: Any = None,          # CIEUStore | NullCIEUStore | None
         now_fn: Optional[Any] = None,    # Callable[[], float]
+        causal_notify_fn: Optional[Any] = None,  # GAP 5: Callable[[dict], None]
     ) -> None:
         self.store    = store
         self.registry = registry or get_registry()
@@ -107,6 +108,8 @@ class OmissionEngine:
         # NullCIEUStore 保持接口一致，同时发出 UserWarning 提醒配置缺失。
         self.cieu_store = cieu_store if cieu_store is not None else NullCIEUStore()
         self._now     = now_fn or time.time
+        # GAP 5 FIX: Push model — notify causal engine of violations
+        self._causal_notify_fn = causal_notify_fn
 
     # ── 主入口 1：注入单个事件 ───────────────────────────────────────────────
 
@@ -280,6 +283,22 @@ class OmissionEngine:
             v = self._escalate(ob, v, now)
             self.store.update_violation(v)
             result.escalated.append(v)
+
+        # GAP 5 FIX: Push violations to causal engine via callback
+        if self._causal_notify_fn and result.violations:
+            for v in result.violations:
+                try:
+                    self._causal_notify_fn({
+                        "violation_id":  v.violation_id,
+                        "entity_id":     v.entity_id,
+                        "actor_id":      v.actor_id,
+                        "omission_type": v.omission_type,
+                        "overdue_secs":  v.overdue_secs,
+                        "severity":      v.severity.value if hasattr(v.severity, 'value') else str(v.severity),
+                        "detected_at":   v.detected_at,
+                    })
+                except Exception:
+                    pass
 
         return result
 

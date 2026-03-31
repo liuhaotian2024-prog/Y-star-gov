@@ -2343,6 +2343,7 @@ class VerificationReport:
     quality_score:        float
     verdict:              str    # "PASS" / "WARN" / "FAIL"
     verdict_reason:       str
+    cieu_evidence_count:  int = 0  # GAP 3: CIEU evidence for similar proposals
 
     @classmethod
     def _get_verdict(cls,

@@ -22,6 +22,7 @@ import time, uuid, os
 
 from ystar.kernel.dimensions import IntentContract
 from ystar.kernel.engine import check, CheckResult
+from ystar.governance.omission_engine import OmissionEngine
 
 
 # ── External Observation: What an external agent did ──────────────────────────
@@ -302,10 +303,12 @@ class PathBAgent:
         cieu_store,
         confidence_threshold: float = 0.65,
         max_cycles:           int = 100,
+        omission_store=None,
     ):
         self.cieu_store = cieu_store
         self.confidence_threshold = confidence_threshold
         self.max_cycles = max_cycles
+        self.omission_store = omission_store
 
         # History tracking
         self._observation_history: List[ExternalObservation] = []
@@ -316,6 +319,12 @@ class PathBAgent:
 
         # Active constraints (one per external agent)
         self._active_constraints: Dict[str, IntentContract] = {}
+
+        # GAP 1 FIX: Initialize OmissionEngine from omission_store (same pattern as PathAAgent)
+        self.omission_engine = (
+            OmissionEngine(store=self.omission_store, cieu_store=self.cieu_store)
+            if self.omission_store else None
+        )
 
     def observe(self, observation: ExternalObservation) -> None:
         """
@@ -398,6 +407,32 @@ class PathBAgent:
         self._active_constraints[observation.agent_id] = constraint
         cycle.applied = True
         cycle.cieu_ref = self._write_cieu(cycle, "CONSTRAINT_APPLIED", [])
+
+        # GAP 1 FIX: Create obligation for the external agent after governance action
+        if self.omission_engine and self.omission_store:
+            try:
+                from ystar.governance.omission_models import (
+                    GovernanceEvent, GEventType,
+                )
+                ev = GovernanceEvent(
+                    entity_id=observation.agent_id,
+                    actor_id="path_b_agent",
+                    event_type=GEventType.ENTITY_ASSIGNED,
+                    payload={
+                        "constraint_name": constraint.name,
+                        "cycle_id": cycle.cycle_id,
+                    },
+                )
+                self.omission_engine.ingest_event(ev)
+            except Exception:
+                pass
+
+        # GAP 1 FIX: Scan for obligation violations after constraint application
+        if self.omission_engine:
+            try:
+                self.omission_engine.scan()
+            except Exception:
+                pass
 
         self._cycle_history.append(cycle)
         return cycle

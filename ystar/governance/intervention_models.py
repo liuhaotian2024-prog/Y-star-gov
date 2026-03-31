@@ -172,6 +172,9 @@ class GateCheckResult:
     suggested_action:       Optional[str] = None
     pulse_id:               Optional[str] = None  # 触发此 gate 的 pulse
 
+    # GAP 4 FIX: Advisory causal recommendation (does NOT change gate decision)
+    causal_recommendation:  Optional[str] = None
+
     def to_dict(self) -> dict:
         return {
             "decision":               self.decision.value,
@@ -182,6 +185,7 @@ class GateCheckResult:
             "overdue_secs":           self.overdue_secs,
             "suggested_action":       self.suggested_action,
             "pulse_id":               self.pulse_id,
+            "causal_recommendation":  self.causal_recommendation,
         }
 
 

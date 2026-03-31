@@ -352,6 +352,25 @@ class ChainClosureMetrics:
 
 
 @dataclass
+class CausalMetrics:
+    """Pearl causal reasoning metrics (from CausalEngine, optional)."""
+    causal_confidence_avg:  float = 0.0
+    observations_count:     int = 0
+    autonomous_rate:        float = 0.0   # fraction of decisions made autonomously
+    human_required_rate:    float = 0.0   # fraction requiring human approval
+    counterfactual_queries: int = 0
+
+    def to_dict(self) -> dict:
+        return {
+            "causal_confidence_avg":  round(self.causal_confidence_avg, 3),
+            "observations_count":     self.observations_count,
+            "autonomous_rate":        round(self.autonomous_rate, 3),
+            "human_required_rate":    round(self.human_required_rate, 3),
+            "counterfactual_queries": self.counterfactual_queries,
+        }
+
+
+@dataclass
 class CIEUMetrics:
     """Commission/drift 指标（来自 CIEUStore，可选）。"""
     total_events:        int = 0
@@ -400,6 +419,7 @@ class Report:
     interventions:  InterventionMetrics = field(default_factory=InterventionMetrics)
     chain:          ChainClosureMetrics = field(default_factory=ChainClosureMetrics)
     cieu:           CIEUMetrics       = field(default_factory=CIEUMetrics)
+    causal:         CausalMetrics     = field(default_factory=CausalMetrics)
 
     # Top-level KPIs (pre-computed summary)
     kpis:           Dict[str, Any] = field(default_factory=dict)
@@ -435,6 +455,7 @@ class Report:
             "interventions": self.interventions.to_dict(),
             "chain":         self.chain.to_dict(),
             "cieu":          self.cieu.to_dict(),
+            "causal":        self.causal.to_dict(),
         }
 
     def to_json(self, indent: int = 2) -> str:
@@ -751,11 +772,13 @@ class ReportEngine:
         cieu_store:        Optional[Any] = None,   # CIEUStore
         intervention_eng:  Optional[Any] = None,   # InterventionEngine
         report_confidence: str = "full",
+        causal_engine:     Optional[Any] = None,   # CausalEngine
     ) -> None:
         self.omission_store   = omission_store
         self.cieu_store       = cieu_store
         self.intervention_eng = intervention_eng
         self.report_confidence = report_confidence
+        self.causal_engine     = causal_engine
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -797,6 +820,7 @@ class ReportEngine:
         self._fill_chain(r)
         self._fill_interventions(r)
         self._fill_cieu(r, since)
+        self._fill_causal(r)
         r._build_kpis()
 
     def _ts_filter(self, ts: float, since: Optional[float]) -> bool:
@@ -1109,3 +1133,24 @@ class ReportEngine:
                     m.dimension_hints = DimensionDiscovery.analyze(history)[:3]
             except Exception:
                 pass
+
+    def _fill_causal(self, r: Report) -> None:
+        """GAP 2 FIX: Compute causal metrics from CausalEngine if available."""
+        if self.causal_engine is None:
+            return
+        m = r.causal
+        try:
+            obs = getattr(self.causal_engine, '_observations', [])
+            m.observations_count = len(obs)
+            if obs:
+                confidences = [getattr(o, 'confidence', 0.0) for o in obs]
+                m.causal_confidence_avg = sum(confidences) / len(confidences)
+            threshold = getattr(self.causal_engine, 'confidence_threshold', 0.65)
+            auto_count = sum(1 for o in obs if getattr(o, 'confidence', 0.0) >= threshold)
+            human_count = len(obs) - auto_count
+            if obs:
+                m.autonomous_rate = auto_count / len(obs)
+                m.human_required_rate = human_count / len(obs)
+            m.counterfactual_queries = getattr(self.causal_engine, '_counterfactual_count', 0)
+        except Exception:
+            pass

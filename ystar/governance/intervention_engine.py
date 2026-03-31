@@ -279,6 +279,7 @@ class InterventionEngine:
         default_escalate_to: Optional[str] = None,
         default_fallback_owner: Optional[str] = None,
         gating_policy:         Optional["GatingPolicy"] = None,
+        causal_engine:         Optional[Any] = None,
     ) -> None:
         self.omission_store              = omission_store
         self.cieu_store                  = cieu_store
@@ -294,6 +295,8 @@ class InterventionEngine:
         self.default_fallback_owner      = default_fallback_owner
         # P0: gating 策略（引擎本身不硬编码任何生态字符串）
         self.gating_policy = gating_policy if gating_policy is not None                              else DEFAULT_GATING_POLICY
+        # GAP 4 FIX: Optional causal engine for advisory recommendations
+        self.causal_engine = causal_engine
 
     # ── 主入口 1：处理 omission violations → 产生干预脉冲 ────────────────────
 
@@ -392,11 +395,13 @@ class InterventionEngine:
         """
         # 义务履行动作永远允许
         if self.gating_policy.allows(action_type):
-            return GateCheckResult(
+            result = GateCheckResult(
                 decision=GateDecision.ALLOW,
                 actor_id=actor_id,
                 action_type=action_type,
             )
+            self._attach_causal_recommendation(result)
+            return result
 
         # 检查是否有 active INTERRUPT_GATE pulse（= actor 有 hard_overdue）
         actor_pulses = self.pulse_store.active_pulses_for_actor(actor_id)
@@ -404,11 +409,13 @@ class InterventionEngine:
                        if p.level == InterventionLevel.INTERRUPT_GATE]
 
         if not hard_pulses:
-            return GateCheckResult(
+            result = GateCheckResult(
                 decision=GateDecision.ALLOW,
                 actor_id=actor_id,
                 action_type=action_type,
             )
+            self._attach_causal_recommendation(result)
+            return result
 
         # actor 有 hard overdue，检查 action 是否高风险
         most_urgent = hard_pulses[0]
@@ -416,7 +423,7 @@ class InterventionEngine:
         overdue = self._now() - (ob.effective_due_at or self._now()) if ob else 0.0
 
         if self.gating_policy.is_high_risk(action_type):
-            return GateCheckResult(
+            result = GateCheckResult(
                 decision=GateDecision.DENY,
                 actor_id=actor_id,
                 action_type=action_type,
@@ -426,9 +433,11 @@ class InterventionEngine:
                 suggested_action=_build_suggested_action(ob, most_urgent, "REQUIRED"),
                 pulse_id=most_urgent.pulse_id,
             )
+            self._attach_causal_recommendation(result)
+            return result
         else:
             # Non-critical action: redirect (warn but allow with caveat)
-            return GateCheckResult(
+            result = GateCheckResult(
                 decision=GateDecision.REDIRECT,
                 actor_id=actor_id,
                 action_type=action_type,
@@ -438,6 +447,8 @@ class InterventionEngine:
                 suggested_action=_build_suggested_action(ob, most_urgent, "RECOMMENDED"),
                 pulse_id=most_urgent.pulse_id,
             )
+            self._attach_causal_recommendation(result)
+            return result
 
     # ── 主入口 3：actor 履行义务后解除干预 ───────────────────────────────────
 
@@ -530,6 +541,33 @@ class InterventionEngine:
             if p.level == InterventionLevel.REROUTE_ESCALATE
             and p.status == InterventionStatus.ACTIVE
         ]
+
+    # ── GAP 4 FIX: Causal advisory recommendation ─────────────────────────────
+
+    def _attach_causal_recommendation(self, result: GateCheckResult) -> None:
+        """
+        If causal_engine is available, compute P(Health|do(block)) vs P(Health|do(allow))
+        and attach as advisory recommendation. Does NOT change the gate decision.
+        """
+        if self.causal_engine is None:
+            return
+        try:
+            # Use do_wire_query to estimate health impact of blocking vs allowing
+            p_health_block = self.causal_engine.do_wire_query(wire=False)
+            p_health_allow = self.causal_engine.do_wire_query(wire=True)
+            if p_health_block is not None and p_health_allow is not None:
+                if p_health_block > p_health_allow:
+                    result.causal_recommendation = (
+                        f"causal: block recommended "
+                        f"(P(H|block)={p_health_block:.2f} > P(H|allow)={p_health_allow:.2f})"
+                    )
+                else:
+                    result.causal_recommendation = (
+                        f"causal: allow recommended "
+                        f"(P(H|allow)={p_health_allow:.2f} >= P(H|block)={p_health_block:.2f})"
+                    )
+        except Exception:
+            pass
 
     # ── 私有：脉冲工厂 ────────────────────────────────────────────────────────
 
