@@ -21,6 +21,8 @@ from typing import Optional, List, Tuple, Any, Callable, Dict
 import time, uuid, os
 
 from ystar.kernel.dimensions import IntentContract
+from ystar.kernel.scope_encoding import encode_module_scope
+from ystar.kernel.contract_provider import ConstitutionProvider
 from ystar.governance.governance_loop import GovernanceSuggestion
 from ystar.governance.causal_engine import CausalEngine, CausalState
 from ystar.governance.amendment import AmendmentEngine
@@ -118,8 +120,8 @@ def suggestion_to_contract(
         pass
 
     # Gap 2 修复：将 allowed_modules 作为强制约束放入 only_paths
-    # 使用特殊前缀 "module:" 标记这是模块 ID 约束，不是文件系统路径
-    module_constraints = [f"module:{mod_id}" for mod_id in allowed_modules]
+    # 使用 scope_encoding 模块的统一编码（不再使用 inline f-string）
+    module_constraints = encode_module_scope(allowed_modules)
 
     return IntentContract(
         name              = f"path_a:{suggestion.suggestion_type}:{uuid.uuid4().hex[:6]}",
@@ -298,7 +300,18 @@ class PathAAgent:
         # Fix 6.2: human review gate — blocks execution until acknowledged
         self._human_review_required = False
         # Constitution provider is the primary path; direct file loading is deprecated fallback
-        self._constitution_provider = constitution_provider
+        # N2: Use ConstitutionProvider as the canonical constitution access path
+        if constitution_provider is not None:
+            self._constitution_provider = constitution_provider
+        else:
+            _default_provider = ConstitutionProvider()
+            # Return hash in the same format as the legacy code: 'sha256:' + first 16 hex chars
+            def _provider_fn(path):
+                full_hash = _default_provider.get_hash(path)
+                if full_hash:
+                    return 'sha256:' + full_hash[:16]
+                return 'sha256:unavailable'
+            self._constitution_provider = _provider_fn
         self._amendment_engine = amendment_engine
 
 
@@ -480,31 +493,25 @@ class PathAAgent:
                 enforce, OpenClawEvent, EventType, SessionState, EnforceDecision,
             )
             from ystar.kernel.dimensions import DelegationChain, DelegationContract
+            from ystar.governance.delegation_policy import build_path_a_handoff
             import uuid as _uuid
 
-            # 父合约：GovernanceLoop 层（治理层顶层）
-            parent_contract = IntentContract(
-                name          = "governance_loop:meta_governance",
-                deny          = ["/etc", "/root"],
-                deny_commands = ["rm -rf", "sudo"],
+            # N6: Use delegation_policy to build contracts instead of inline assembly
+            _handoff_data = build_path_a_handoff(
+                constitution_bundle=None,  # hash already loaded
+                path_a_policy=self.policy,
             )
-
-            # 子合约：路径A（AGENTS.md 派生，deny 是父合约超集 → 单调性满足）
-            child_contract = IntentContract(
-                name          = f"path_a:agent:{self._constitution_hash}",
-                deny          = ["/etc", "/root", "~/.clawdbot", "/production"],
-                deny_commands = ["rm -rf", "sudo", "exec(", "eval(",
-                                 "__import__", "subprocess"],
-                hash          = self._constitution_hash,
-            )
+            parent_contract = _handoff_data["parent_contract"]
+            child_contract = _handoff_data["child_contract"]
+            # Override hash with our loaded constitution hash
+            child_contract.hash = self._constitution_hash
+            child_contract.name = f"path_a:agent:{self._constitution_hash}"
+            _parent_scope = _handoff_data["parent_scope"]
+            _child_scope = _handoff_data["child_scope"]
 
             # DelegationChain: ystar_system → governance_loop → path_a_agent
             delegation_chain = DelegationChain()
             # Fix 4.1: child action_scope is STRICT SUBSET of parent
-            _parent_scope = ["module_graph.wire", "cieu.write",
-                             "obligation.create", "governance_loop.observe"]
-            _child_scope  = ["module_graph.wire", "cieu.write",
-                             "obligation.create"]  # no governance_loop.observe
             delegation_chain.append(DelegationContract(
                 principal        = "ystar_system",
                 actor            = "governance_loop",

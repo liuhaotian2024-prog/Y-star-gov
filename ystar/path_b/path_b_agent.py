@@ -24,24 +24,22 @@ import hashlib, time, uuid, os
 
 from ystar.kernel.dimensions import IntentContract
 from ystar.kernel.engine import check, CheckResult
+from ystar.kernel.contract_provider import ConstitutionProvider
 from ystar.governance.omission_engine import OmissionEngine
 from ystar.governance.amendment import AmendmentEngine
 
 
-# ── Constitution hash — computed once at import time ─────────────────────────
-# TODO: Constitution loading should eventually go through the Intent Compilation
-# line (nl_to_contract / prefill) rather than being loaded directly here.
-# For now, direct loading is acceptable since Path B needs its constitution at
-# import time for hash verification.
+# ── Constitution hash — via ConstitutionProvider (N2) ────────────────────────
+# Constitution loading now goes through ConstitutionProvider, the canonical
+# access path for all constitution files in Y*gov.
 _CONSTITUTION_PATH = os.path.join(os.path.dirname(__file__), "PATH_B_AGENTS.md")
 
+# N2: Use ConstitutionProvider instead of direct file reading
+_CONSTITUTION_PROVIDER = ConstitutionProvider()
+
 def _compute_constitution_hash() -> str:
-    """Compute SHA-256 hash of PATH_B_AGENTS.md. Returns empty string if file missing."""
-    try:
-        with open(_CONSTITUTION_PATH, "rb") as f:
-            return hashlib.sha256(f.read()).hexdigest()
-    except (OSError, IOError):
-        return ""
+    """Compute SHA-256 hash of PATH_B_AGENTS.md via ConstitutionProvider."""
+    return _CONSTITUTION_PROVIDER.get_hash(_CONSTITUTION_PATH)
 
 _CONSTITUTION_HASH: str = _compute_constitution_hash()
 
