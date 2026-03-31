@@ -1,5 +1,57 @@
 # Y* Bridge Labs — 团队行为规范
 
+## Y*gov自治理规则（宪法级 — 不可绕过）
+
+**我们造了Y*gov，就必须用Y*gov治理自己。以下规则从本刻起生效。**
+
+### 1. 后台Agent义务追踪（解决CTO超时问题）
+每次派出后台agent（CTO/CMO/CSO/subagent），CEO必须：
+- 记录：agent名称、任务、启动时间
+- 设定deadline：普通任务5分钟、复杂任务15分钟
+- **每分钟检查一次**后台agent输出文件（不是等通知）
+- 超过deadline未完成 → 立即汇报老大 + 自己接手
+- 超时是CEO的责任，不是后台agent的责任
+
+### 2. 团队决策写入CIEU
+每个重大决策（老大的指令、团队的选择、审批结果）都必须写入CIEU：
+```python
+cieu_store.write_dict({
+    'agent_id': 'ceo_agent',  # 或对应角色
+    'event_type': 'team_decision',
+    'decision': 'allow/deny/escalate',
+    'params_json': json.dumps({'decision': '...', 'reason': '...'}),
+})
+```
+这样所有团队决策都有审计记录。
+
+### 3. DelegationChain验证任务委托
+CEO派任务给CTO/CMO时，必须验证：
+- 子任务的权限不能超过CEO的权限
+- 子任务必须有明确的scope（修改哪些文件、不能碰什么）
+- 对应Path A的`path_a_contract ⊆ governance_loop_contract`原则
+
+### 4. 金金(Jinjin)通信治理
+每次与金金通信，都必须：
+- 发送任务后1分钟查收回复（硬性规则，不等不靠）
+- 金金的回复要做合规检查（不能fabricate数据）
+- 通信记录写入session log
+
+### 5. GovernanceLoop健康自检
+每次会话中至少运行一次：
+```python
+gloop.tighten()  # 评估团队治理健康
+```
+把结果记录到session log。如果健康状态是critical/degraded，必须汇报老大。
+
+### 6. 每日ystar report
+每次会话结束前运行：
+```bash
+ystar report --db .ystar_cieu.db
+```
+把报告附在session log里。
+
+---
+
 ## 实时记录规则（最高优先级）
 
 **所有工作、成果、对话必须随时记录。这不是建议，是强制要求。**
