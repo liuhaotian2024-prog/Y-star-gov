@@ -175,12 +175,56 @@ class ExperienceBridge:
             })
 
     def generate_output(self) -> "BridgeOutput":
-        """T9: Produce a structured BridgeOutput from current state."""
+        """T9: Produce a structured BridgeOutput from current state.
+
+        N5: suggestion_candidates are now generated from InternalGovernanceGap
+        objects. Each high-confidence gap produces at least one GovernanceSuggestion
+        draft so that GovernanceLoop can act on bridge findings automatically.
+        """
         return BridgeOutput(
             metrics=self.generate_observation_metrics(),
             gap_candidates=list(self._gaps),
-            suggestion_candidates=[],
+            suggestion_candidates=self._generate_suggestion_candidates(),
         )
+
+    def _generate_suggestion_candidates(self) -> list:
+        """N5: Generate GovernanceSuggestion drafts from InternalGovernanceGap objects.
+
+        At least 1 suggestion per high-confidence gap (confidence >= 0.5).
+        """
+        suggestions = []
+        for gap in self._gaps:
+            if gap.confidence < 0.3:
+                continue  # Too uncertain to suggest anything
+
+            # Map gap type to suggestion type and target
+            if gap.inferred_gap_type == "constraint_missing":
+                stype = "wire"
+                target = gap.inferred_module_targets[0] if gap.inferred_module_targets else "constraint_derivation"
+                suggested_value = "add_constraint_for_observed_violation_class"
+            elif gap.inferred_gap_type == "constraint_weak":
+                stype = "tighten"
+                target = "constraint_derivation"
+                suggested_value = "strengthen_existing_constraint"
+            elif gap.inferred_gap_type == "scope_mismatch":
+                stype = "rewire"
+                target = "observation_schema"
+                suggested_value = "extend_observation_coverage"
+            else:
+                stype = "review"
+                target = gap.gap_id
+                suggested_value = "manual_review_required"
+
+            suggestions.append({
+                "suggestion_type": stype,
+                "target": target,
+                "suggested_value": suggested_value,
+                "confidence": gap.confidence,
+                "rationale": gap.rationale[:200] if gap.rationale else "",
+                "gap_id": gap.gap_id,
+                "source": "experience_bridge",
+            })
+        return suggestions
 
     # ── Stage 0: ingest raw CIEU records from Path B ─────────────────────────
 

@@ -522,6 +522,10 @@ class OmissionEngine:
         )
 
     # ── 私有：reminder ─────────────────────────────────────────────────────────
+    # N8 CONFIRMED: All escalation/reminder timing comes from EscalationPolicy
+    # object fields (escalate_after_secs, reminder_after_secs), not from inline
+    # constants. EscalationPolicy is set per-obligation at creation time via
+    # OmissionRule or ObligationTrigger configuration.
 
     def _should_remind(self, ob: ObligationRecord, now: float) -> bool:
         if ob.reminder_sent_at is not None:
