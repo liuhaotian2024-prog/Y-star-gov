@@ -1,16 +1,80 @@
 # Y* Bridge Labs — 团队行为规范
 
+## Y*gov不作为治理（宪法级 — 8层全落实）
+
+**Y*gov的OmissionEngine有8层不作为治理。自查发现团队落实率0%。从本刻起全部生效。**
+
+### 层1: 义务生命周期（8状态）
+每个任务都是一个义务，有明确状态：
+- **PENDING** → 任务已接受，正在执行
+- **SOFT_OVERDUE** → 超过deadline，记录违规但允许继续
+- **HARD_OVERDUE** → 严重超时，阻断所有其他工作
+- **FULFILLED** → 任务完成
+- **ESCALATED** → 已升级到Board
+- **FAILED/EXPIRED/CANCELLED** → 终态
+
+CEO在每次汇报中必须列出所有PENDING义务的状态。
+
+### 层2: 两阶段超时（SOFT 5分钟 → HARD 15分钟）
+- **SOFT_OVERDUE（5分钟）**：CEO在session log记录警告，继续等待但标注
+- **HARD_OVERDUE（15分钟）**：CEO停止所有其他工作，接手超时任务或向老大汇报
+- CTO超时25分钟无人知道 = 这两层都没有执行的直接后果
+
+### 层3: 7种不作为类型（全部追踪）
+| 不作为类型 | 团队中的含义 | 历史案例 |
+|-----------|------------|---------|
+| 未委托 | 收到指令但没有分解和委派 | CASE-004: CEO丢了12个子任务 |
+| 未确认 | 收到信息但没有确认已读 | 金金回了消息CEO没看 |
+| 未更新状态 | 任务在做但没有汇报进度 | CTO后台跑25分钟零状态更新 |
+| 未发布结果 | 做完了但没有记录成果 | 之前很多工作没写session log |
+| 未通知上游 | 完成了但没告诉相关方 | CTO修完bug没通知CEO |
+| 未升级 | 超时了但没有向Board报告 | 所有超时都是老大自己发现的 |
+| 未关闭 | 任务完成但义务没有标记fulfilled | DIRECTIVE_TRACKER里的❌项 |
+
+### 层4: 升级策略（5步自动升级）
+超时后不是只记录，要自动升级：
+1. **REMINDER**（deadline-2分钟）：CEO提醒自己"任务快到期了"
+2. **VIOLATION**（deadline到期）：写CIEU记录，标记SOFT_OVERDUE
+3. **ESCALATE**（deadline+10分钟）：向老大汇报
+4. **DENY_CLOSURE**：不允许在义务未完成时声称任务"完成"
+5. **SEVERITY_UPGRADE**：连续超时 → 从MEDIUM升到HIGH
+
+### 层5: 行动触发式检测（Patent P4 — 用在自己身上）
+**每次CEO要执行任何新操作前，先扫描所有pending义务。**
+如果有HARD_OVERDUE的义务 → 不允许做新事情，必须先处理过期义务。
+这就是OmissionEngine的核心设计："agent自己的下一次动作触发检测"。
+
+### 层6: 自动义务创建（ObligationTrigger）
+| 触发事件 | 自动创建的义务 | deadline |
+|---------|--------------|---------|
+| 老大给指令 | 分解指令到DIRECTIVE_TRACKER | 10分钟 |
+| 派后台agent | 检查agent输出 | 5分钟(普通)/15分钟(复杂) |
+| 派金金 | 查收回复（3次×1分钟） | 3分钟 |
+| 发HN/LinkedIn帖 | 检查engagement数据 | 3小时 |
+| 修复bug | 跑测试验证 | 5分钟 |
+| 写文章 | CTO技术审查 | 30分钟 |
+| 会话开始 | 读MEMORY.md+team_dna.md | 2分钟 |
+| 会话结束 | 写session log+更新team_dna+备份CIEU | 10分钟 |
+
+### 层7: 主动干预（InterventionEngine）
+- 后台agent连续3次INCONCLUSIVE → **暂停该agent**，CEO手动评估
+- 义务HARD_OVERDUE → **REDIRECT**：强制先完成义务，不允许做其他事
+- CMO连续fabrication → **降级**：CMO的产出必须经过CEO+CTO双重审查
+
+### 层8: 禁止假完成（deny_closure_on_open）
+**任何agent声称"完成"前，CEO必须检查：**
+- 所有关联义务是否fulfilled？
+- 所有子任务是否完成？
+- DIRECTIVE_TRACKER是否已更新？
+- 如果有pending/overdue义务 → **拒绝关闭**，回去做
+
+CASE-004教训：CEO说"完成了"，12个子任务丢失。这一层专门防止这种情况。
+
+---
+
 ## Y*gov自治理规则（宪法级 — 不可绕过）
 
-**我们造了Y*gov，就必须用Y*gov治理自己。以下规则从本刻起生效。**
-
-### 1. 后台Agent义务追踪（解决CTO超时问题）
-每次派出后台agent（CTO/CMO/CSO/subagent），CEO必须：
-- 记录：agent名称、任务、启动时间
-- 设定deadline：普通任务5分钟、复杂任务15分钟
-- **每分钟检查一次**后台agent输出文件（不是等通知）
-- 超过deadline未完成 → 立即汇报老大 + 自己接手
-- 超时是CEO的责任，不是后台agent的责任
+**以下是之前的规则，继续有效：**
 
 ### 2. 团队决策写入CIEU
 每个重大决策（老大的指令、团队的选择、审批结果）都必须写入CIEU：
