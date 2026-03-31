@@ -227,3 +227,86 @@ class TestRoleBoundaries:
         assert "ExternalGovernanceLoop" not in source, (
             "GovernanceLoop directly references ExternalGovernanceLoop"
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# N10: Architecture Regression Tests — Provider & Scope Encoding
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestProviderAndScopeEncoding:
+    """Verify that Path A/B use ConstitutionProvider and scope_encoding module."""
+
+    def test_path_a_uses_provider_not_direct_file(self):
+        """meta_agent.py must import ConstitutionProvider."""
+        imports = _get_imports(os.path.join(_YSTAR_ROOT, "path_a", "meta_agent.py"))
+        assert any("contract_provider" in imp for imp in imports), (
+            "Path A meta_agent.py does not import from contract_provider"
+        )
+        # Verify it also imports ConstitutionProvider specifically
+        filepath = os.path.join(_YSTAR_ROOT, "path_a", "meta_agent.py")
+        with open(filepath, "r", encoding="utf-8") as f:
+            source = f.read()
+        assert "ConstitutionProvider" in source, (
+            "Path A meta_agent.py does not reference ConstitutionProvider"
+        )
+
+    def test_path_b_uses_provider_not_direct_file(self):
+        """path_b_agent.py must import ConstitutionProvider."""
+        imports = _get_imports(os.path.join(_YSTAR_ROOT, "path_b", "path_b_agent.py"))
+        assert any("contract_provider" in imp for imp in imports), (
+            "Path B path_b_agent.py does not import from contract_provider"
+        )
+        filepath = os.path.join(_YSTAR_ROOT, "path_b", "path_b_agent.py")
+        with open(filepath, "r", encoding="utf-8") as f:
+            source = f.read()
+        assert "ConstitutionProvider" in source, (
+            "Path B path_b_agent.py does not reference ConstitutionProvider"
+        )
+
+    def test_scope_encoding_used(self):
+        """Path A must use scope_encoding module instead of inline f-strings."""
+        imports = _get_imports(os.path.join(_YSTAR_ROOT, "path_a", "meta_agent.py"))
+        assert any("scope_encoding" in imp for imp in imports), (
+            "Path A meta_agent.py does not import from scope_encoding"
+        )
+        filepath = os.path.join(_YSTAR_ROOT, "path_a", "meta_agent.py")
+        with open(filepath, "r", encoding="utf-8") as f:
+            source = f.read()
+        assert "encode_module_scope" in source, (
+            "Path A meta_agent.py does not use encode_module_scope()"
+        )
+        # Verify no inline module: f-string encoding remains
+        # (the old pattern was: f"module:{mod_id}" for mod_id in ...)
+        # We check that suggestion_to_contract doesn't use the inline pattern
+        assert 'f"module:{mod_id}"' not in source, (
+            "Path A still uses inline f-string for module scope encoding"
+        )
+
+    def test_compiler_module_exists(self):
+        """kernel/compiler.py must exist with compile_source and compile_constitution."""
+        filepath = os.path.join(_YSTAR_ROOT, "kernel", "compiler.py")
+        assert os.path.exists(filepath), "kernel/compiler.py not found"
+        with open(filepath, "r", encoding="utf-8") as f:
+            source = f.read()
+        assert "compile_source" in source
+        assert "compile_constitution" in source
+        assert "CompiledContractBundle" in source
+
+    def test_contract_provider_module_exists(self):
+        """kernel/contract_provider.py must exist with ConstitutionProvider."""
+        filepath = os.path.join(_YSTAR_ROOT, "kernel", "contract_provider.py")
+        assert os.path.exists(filepath), "kernel/contract_provider.py not found"
+        with open(filepath, "r", encoding="utf-8") as f:
+            source = f.read()
+        assert "ConstitutionProvider" in source
+        assert "resolve" in source
+        assert "invalidate_cache" in source
+
+    def test_delegation_policy_module_exists(self):
+        """governance/delegation_policy.py must exist with build_path_a_handoff."""
+        filepath = os.path.join(_YSTAR_ROOT, "governance", "delegation_policy.py")
+        assert os.path.exists(filepath), "governance/delegation_policy.py not found"
+        with open(filepath, "r", encoding="utf-8") as f:
+            source = f.read()
+        assert "build_path_a_handoff" in source
+        assert "build_delegation_chain" in source
