@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ystar"
-version = "0.42.1"
+version = "0.42.2"
 description = "Runtime Governance Framework for Multi-Agent AI Systems — deterministic enforcement, Pearl Level 2-3 causal reasoning, tamper-evident audit chain"
 authors = [{name = "Haotian Liu", email = "liuhaotian2024@gmail.com"}]
 maintainers = [{name = "Y* Bridge Labs", email = "liuhaotian2024@gmail.com"}]
