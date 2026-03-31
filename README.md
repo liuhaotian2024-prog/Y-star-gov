@@ -5,7 +5,7 @@
 [![Tests](https://img.shields.io/badge/tests-238%20passing-brightgreen)]()
 [![check() latency](https://img.shields.io/badge/check()-0.042ms-blue)]()
 
-**v0.41.1 · MIT License · Y* Bridge Labs**
+**v0.42.0 · MIT License · Y* Bridge Labs**
 
 Zero external dependencies. Installs in seconds. Runs anywhere Python runs.
 No supply chain risk. The enforcement layer contains no LLM. Governance cannot be prompt-injected.
@@ -114,6 +114,12 @@ pip install ystar
 ```
 
 **Requirements:** Python >= 3.11
+
+**See it work instantly:**
+
+```bash
+ystar demo
+```
 
 **Three-step integration (Claude Code / OpenClaw):**
 
@@ -571,7 +577,7 @@ trigger = ObligationTrigger(
 )
 ```
 
-Available in v0.41.1. Full documentation coming in v0.42.
+Available in v0.42.0.
 
 ---
 
@@ -601,7 +607,21 @@ Y*gov formalizes and enforces the monotonic authority property:
 
 `DelegationChain.validate()` checks this on every `SUBAGENT_SPAWN` and `HANDOFF` event. Violations are written to the CIEU chain and block the spawn.
 
-### 4. Constitutional Hash Traceability
+### 4. Pearl Level 2-3 Causal Reasoning
+
+Y*gov is the first production implementation of Pearl's Causal Hierarchy (Levels 2-3) in agent governance.
+
+**Pearl Level 2 — Interventional:**
+- `CausalGraph` with d-separation via Bayes-Ball algorithm
+- `BackdoorAdjuster` with real backdoor adjustment formula for causal effect estimation
+
+**Pearl Level 3 — Counterfactual:**
+- `StructuralEquation` with exact noise term abduction
+- `CounterfactualEngine` implementing the full three-step procedure (abduction, action, prediction)
+
+These enable Y*gov to answer not just "what happened?" but "what would have happened under a different policy?" — essential for contract improvement and audit forensics.
+
+### 5. Constitutional Hash Traceability
 
 Every `IntentContract` carries the SHA-256 hash of the `AGENTS.md` document that produced it. Every CIEU record carries the contract hash. This creates complete traceability:
 
@@ -681,7 +701,7 @@ Enterprise licensing · Domain pack development · Research collaboration
 
 **Tests failing:**
 - Run tests: `python -m pytest tests/ -v`
-- Expected: 141/141 passing
+- Expected: 238/238 passing
 - Report failures to: liuhaotian2024@gmail.com
 
 ---
