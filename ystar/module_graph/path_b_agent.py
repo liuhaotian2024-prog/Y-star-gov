@@ -185,11 +185,13 @@ def observation_to_constraint(
     # but zero historical observations for this agent (new user), generate
     # constraint directly instead of requiring confidence buildup.
     # Requires severity >= 0.5 to avoid cold-start on trivial violations.
-    total_history_for_agent = sum(
+    # Cold-start: count PRIOR history, excluding the current observation itself
+    prior_history = sum(
         1 for obs in violation_history
         if obs.agent_id == observation.agent_id
+        and obs.observation_id != observation.observation_id
     )
-    cold_start = (total_history_for_agent == 0
+    cold_start = (prior_history == 0
                   and observation.severity_score() >= 0.5)
 
     if not cold_start and confidence < confidence_threshold:
