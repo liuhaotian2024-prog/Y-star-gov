@@ -1,3 +1,4 @@
+# Layer: Path B
 """
 ystar.path_b.external_governance_loop — External Observation Loop (Layer 3)
 

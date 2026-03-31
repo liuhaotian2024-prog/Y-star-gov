@@ -1,3 +1,4 @@
+# Layer: Foundation
 """
 ystar.governance_loop  —  P1: Governance-Aware Meta-Learning Bridge
 ====================================================================

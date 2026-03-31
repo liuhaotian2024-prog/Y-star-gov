@@ -140,6 +140,20 @@ Intent Compilation  -->  direct execution : FORBIDDEN
 
 ---
 
+## Constitution Amendment Protocol
+
+- Amendments can only be proposed by: Board (human), Path A (via propose_amendment())
+- Amendment format: diff of constitutional document + rationale + hash of new version
+- Amendment must be written to CIEU with event_type 'constitution_amendment'
+- Amendment does NOT take effect until Board confirms
+- Path A and Path B cannot amend their own constitutions unilaterally
+
+### Amendment Layer Neutrality
+
+Constitution amendments do not belong to Path A or Path B. They are a root-level governance act requiring Board authority. Neither Path A nor Path B may initiate, approve, or execute amendments to their own constitutions without Board confirmation. The Intent Compilation line may assist in translating amendment proposals into structured diffs, but the decision authority rests with the Board.
+
+---
+
 ## Section 4: Structure Gate Rules
 
 1. **Every new module** must declare its layer in a docstring header before creation.

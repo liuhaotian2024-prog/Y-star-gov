@@ -1,3 +1,6 @@
+# Layer: Bridge
+# Direction: Path B -> Bridge -> GovernanceLoop (one-way)
+# CANNOT: command Path A, bypass GovernanceLoop, execute governance actions
 """
 ystar.governance.experience_bridge — Path B Experience Bridge
 

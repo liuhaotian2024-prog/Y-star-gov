@@ -1,3 +1,4 @@
+# Layer: Foundation
 """
 ystar.cieu_store  —  CIEU Durable Backend (SQLite)
 ====================================================

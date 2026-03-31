@@ -1,3 +1,4 @@
+# Layer: Path A
 """
 ystar.path_a.meta_agent — 路径A：元治理智能体 (Layer 2 — Path A)
 
@@ -23,6 +24,10 @@ from ystar.governance.governance_loop import GovernanceSuggestion
 from ystar.governance.causal_engine import CausalEngine, CausalState
 
 # 路径A宪法文本路径（相对于包根）
+# TODO: Constitution loading should eventually go through the Intent Compilation
+# line (nl_to_contract / prefill) rather than being loaded directly here.
+# For now, direct loading is acceptable since Path A needs its constitution at
+# import time for hash verification.
 _PATH_A_AGENTS_MD = os.path.join(
     os.path.dirname(__file__), 'PATH_A_AGENTS.md'
 )

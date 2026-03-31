@@ -1,3 +1,6 @@
+# Layer: Intent Compilation
+# Responsibility: Rules/needs -> IntentContract compilation only
+# Does NOT: execute governance, write enforcement CIEU, command Path A/B
 """
 ystar.governance.constraints  —  Constraint Lifecycle Management
 ================================================================

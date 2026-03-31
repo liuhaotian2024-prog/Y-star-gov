@@ -1,3 +1,4 @@
+# Layer: Foundation
 """
 ystar.governance.causal_engine — Pearl Level 2 & 3 因果推理引擎 (Foundation Layer)
 
@@ -71,7 +72,10 @@ class CausalState:
 
 @dataclass
 class CausalObservation:
-    """一次完整的 PathA 循环观测（用于构建 SCM）。"""
+    """一次完整的循环观测（用于构建 SCM）。
+    # TODO: This dataclass references PathA in its original docstring but is a Foundation-layer
+    # construct. It should be generalized to support any governance loop cycle, not just PathA.
+    """
     state_before: CausalState
     state_after:  CausalState
     action_taken: List[Tuple[str, str]]  # 接线的边
@@ -954,7 +958,9 @@ class CausalEngine:
         # Observational data in SCM variable space
         self._scm_data: List[Dict[str, float]] = []
 
-    # ── 更新观测（每次 PathA 循环完成后调用）────────────────────────────────
+    # ── 更新观测（每次治理循环完成后调用）────────────────────────────────
+    # TODO: Comment originally said "PathA cycle" but this is Foundation-layer code.
+    # Should be generalized to support any governance loop cycle.
     def observe(
         self,
         health_before:  str,

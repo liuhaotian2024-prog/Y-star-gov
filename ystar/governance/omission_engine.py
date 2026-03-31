@@ -1,3 +1,4 @@
+# Layer: Foundation
 """
 ystar.omission_engine  —  Deterministic Omission Governance Engine
 ==================================================================

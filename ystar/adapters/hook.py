@@ -1,3 +1,4 @@
+# Layer: Foundation
 """
 ystar.adapters.hook  —  OpenClaw hook 纯翻译层  v0.41.0
 =========================================================

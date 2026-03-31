@@ -1,3 +1,4 @@
+# Layer: Path B
 """
 ystar.path_b.path_b_agent — Path B: External Governance Agent (Layer 3)
 
@@ -26,6 +27,10 @@ from ystar.governance.omission_engine import OmissionEngine
 
 
 # ── Constitution hash — computed once at import time ─────────────────────────
+# TODO: Constitution loading should eventually go through the Intent Compilation
+# line (nl_to_contract / prefill) rather than being loaded directly here.
+# For now, direct loading is acceptable since Path B needs its constitution at
+# import time for hash verification.
 _CONSTITUTION_PATH = os.path.join(os.path.dirname(__file__), "PATH_B_AGENTS.md")
 
 def _compute_constitution_hash() -> str:
