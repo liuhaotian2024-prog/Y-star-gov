@@ -13,7 +13,9 @@ ModuleGraph 是路径 A（元治理智能体）的核心组件：
 from ystar.module_graph.graph import ModuleGraph, ModuleNode, ModuleEdge
 from ystar.module_graph.registry import MODULE_REGISTRY
 from ystar.module_graph.planner import CompositionPlanner, CompositionPlan
-from ystar.module_graph.causal_engine import CausalEngine, DoCalcResult
+from ystar.module_graph.causal_engine import (
+    CausalEngine, DoCalcResult, CausalGraph, StructuralEquation, CounterfactualEngine,
+)
 from ystar.module_graph.meta_agent import PathAAgent
 from ystar.module_graph.discovery import (
     GapDetector, TypeBasedPlanner, CombinatorialExplorer, DetectedGap
@@ -22,5 +24,7 @@ from ystar.module_graph.discovery import (
 __all__ = [
     "ModuleGraph", "ModuleNode", "ModuleEdge",
     "MODULE_REGISTRY",
-    "CompositionPlanner", "CompositionPlan", "CausalEngine", "DoCalcResult", "PathAAgent",
+    "CompositionPlanner", "CompositionPlan",
+    "CausalEngine", "DoCalcResult", "CausalGraph", "StructuralEquation", "CounterfactualEngine",
+    "PathAAgent",
 ]
