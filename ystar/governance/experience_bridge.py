@@ -66,6 +66,46 @@ class InternalGovernanceGap:
     rationale:             str = ""
 
 
+# ── T9: Bridge I/O Schema ────────────────────────────────────────────────────
+
+@dataclass
+class BridgeInput:
+    """
+    Structured input to the ExperienceBridge.
+
+    Collects all data sources that the bridge can ingest, so callers
+    know exactly what to provide and the bridge can validate completeness.
+    """
+    cieu_records:       List[Dict[str, Any]] = field(default_factory=list)
+    compliance_results: List[Dict[str, Any]] = field(default_factory=list)
+    budget_snapshots:   List[Dict[str, Any]] = field(default_factory=list)
+    causal_results:     List[Dict[str, Any]] = field(default_factory=list)
+    disconnect_events:  List[Dict[str, Any]] = field(default_factory=list)
+
+    def is_valid(self) -> bool:
+        """Validate that at least one data source is populated."""
+        return bool(
+            self.cieu_records
+            or self.compliance_results
+            or self.budget_snapshots
+            or self.causal_results
+            or self.disconnect_events
+        )
+
+
+@dataclass
+class BridgeOutput:
+    """
+    Structured output from the ExperienceBridge.
+
+    Contains the processed metrics, gap candidates, and suggestion candidates
+    that feed into GovernanceLoop.
+    """
+    metrics:              Dict[str, float] = field(default_factory=dict)
+    gap_candidates:       List[InternalGovernanceGap] = field(default_factory=list)
+    suggestion_candidates: List[Any] = field(default_factory=list)
+
+
 # ── Experience Bridge ────────────────────────────────────────────────────────
 
 class ExperienceBridge:
@@ -86,6 +126,61 @@ class ExperienceBridge:
         self._raw_records: List[Dict[str, Any]] = []
         self._patterns: List[ExternalGovernancePattern] = []
         self._gaps: List[InternalGovernanceGap] = []
+
+    # ── T9: Structured ingest with validation ───────────────────────────────
+
+    def ingest(self, bridge_input: "BridgeInput") -> None:
+        """
+        T9: Ingest structured BridgeInput with validation.
+
+        Raises ValueError if input is not valid (no data sources populated).
+        Merges all data sources into _raw_records for downstream processing.
+        """
+        if not isinstance(bridge_input, BridgeInput):
+            raise TypeError(f"Expected BridgeInput, got {type(bridge_input).__name__}")
+        if not bridge_input.is_valid():
+            raise ValueError("BridgeInput has no data sources populated")
+
+        # Ingest CIEU records (primary source)
+        self.ingest_path_b_cieu(bridge_input.cieu_records)
+
+        # Compliance results → synthetic CIEU records
+        for cr in bridge_input.compliance_results:
+            self._raw_records.append({
+                "func_name": "path_b.compliance_result",
+                "path_b_event": "COMPLIANCE_RESULT",
+                "params": cr,
+                "violations": [],
+                "source": "path_b_agent",
+            })
+
+        # Budget snapshots
+        for bs in bridge_input.budget_snapshots:
+            self._raw_records.append({
+                "func_name": "path_b.budget_snapshot",
+                "path_b_event": "BUDGET_SNAPSHOT",
+                "params": bs,
+                "violations": [],
+                "source": "path_b_agent",
+            })
+
+        # Disconnect events
+        for de in bridge_input.disconnect_events:
+            self._raw_records.append({
+                "func_name": "path_b.disconnect",
+                "path_b_event": "EXTERNAL_AGENT_DISCONNECTED",
+                "params": de,
+                "violations": [],
+                "source": "path_b_agent",
+            })
+
+    def generate_output(self) -> "BridgeOutput":
+        """T9: Produce a structured BridgeOutput from current state."""
+        return BridgeOutput(
+            metrics=self.generate_observation_metrics(),
+            gap_candidates=list(self._gaps),
+            suggestion_candidates=[],
+        )
 
     # ── Stage 0: ingest raw CIEU records from Path B ─────────────────────────
 
@@ -160,6 +255,60 @@ class ExperienceBridge:
                 confidence=confidence,
             )
             self._patterns.append(pattern)
+
+        # ── T10: Enhanced pattern detection ──────────────────────────────────
+
+        # Repeated violation detection: flag agents with 3+ violations
+        for pattern in self._patterns:
+            if pattern.pattern_type == "repeated_violation" and pattern.count >= 3:
+                pattern.confidence = min(0.98, pattern.confidence + 0.1)
+
+        # Ineffective constraint detection: CONSTRAINT_APPLIED followed by
+        # more violations from the same agent
+        applied_agents: set = set()
+        violation_after_constraint: Dict[str, int] = {}
+        for record in self._raw_records:
+            event = record.get("path_b_event", "")
+            agent_id = record.get("params", {}).get("agent_id", "unknown")
+            if "CONSTRAINT_APPLIED" in event:
+                applied_agents.add(agent_id)
+            elif agent_id in applied_agents and record.get("violations"):
+                violation_after_constraint[agent_id] = (
+                    violation_after_constraint.get(agent_id, 0) + 1
+                )
+
+        for agent_id, count in violation_after_constraint.items():
+            if count >= 2:
+                self._patterns.append(ExternalGovernancePattern(
+                    pattern_id=f"pat_ineff_{agent_id[:6]}",
+                    pattern_type="ineffective_constraint",
+                    count=count,
+                    severity_mean=0.7,
+                    affected_agents=[agent_id],
+                    evidence_refs=[],
+                    confidence=min(0.95, 0.3 + count * 0.15),
+                ))
+
+        # Causal effectiveness summary: ratio of successful constraints
+        total_applied = sum(
+            1 for r in self._raw_records
+            if "CONSTRAINT_APPLIED" in r.get("path_b_event", "")
+        )
+        total_compliant = sum(
+            1 for r in self._raw_records
+            if "COMPLIANCE_RESULT" in r.get("path_b_event", "")
+        )
+        if total_applied > 0:
+            effectiveness = total_compliant / total_applied
+            self._patterns.append(ExternalGovernancePattern(
+                pattern_id="pat_causal_effectiveness",
+                pattern_type="causal_effectiveness_summary",
+                count=total_applied,
+                severity_mean=1.0 - effectiveness,
+                affected_agents=[],
+                evidence_refs=[],
+                confidence=min(0.95, 0.3 + total_applied * 0.1),
+            ))
 
         return self._patterns
 

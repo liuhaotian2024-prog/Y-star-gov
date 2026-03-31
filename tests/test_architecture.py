@@ -205,3 +205,25 @@ class TestRoleBoundaries:
         assert "PathAAgent" not in source, (
             "ExperienceBridge directly references PathAAgent"
         )
+
+    # ── T11: Bridge-Only Routing Enforcement ─────────────────────────────────
+
+    def test_governance_loop_does_not_import_path_b_agent(self):
+        """GovernanceLoop must not directly import PathBAgent or ExternalGovernanceLoop."""
+        filepath = os.path.join(_YSTAR_ROOT, "governance", "governance_loop.py")
+        if not os.path.exists(filepath):
+            pytest.skip("governance_loop.py not found")
+        imports = _get_imports(filepath)
+        for imp in imports:
+            assert "path_b" not in imp, (
+                f"GovernanceLoop imports from path_b: {imp}"
+            )
+        # Also check for direct class references
+        with open(filepath, "r", encoding="utf-8") as f:
+            source = f.read()
+        assert "PathBAgent" not in source, (
+            "GovernanceLoop directly references PathBAgent"
+        )
+        assert "ExternalGovernanceLoop" not in source, (
+            "GovernanceLoop directly references ExternalGovernanceLoop"
+        )
