@@ -1,7 +1,7 @@
 # Framework Validation Report v1
 
-> Generated: 2026-03-29
-> Version: v0.42.0 + 100% Framework Worklist
+> Generated: 2026-03-31
+> Version: v0.43.0 — 100% Framework Complete
 
 ---
 
