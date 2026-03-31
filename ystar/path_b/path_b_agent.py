@@ -46,6 +46,29 @@ def _compute_constitution_hash() -> str:
 _CONSTITUTION_HASH: str = _compute_constitution_hash()
 
 
+@dataclass
+class PathBPolicy:
+    """Unified failure + configuration policy for Path B.
+
+    Failure matrix (F6): each field specifies response when that subsystem fails.
+    Configuration defaults (F2): extracted from previously hardcoded values.
+    """
+    # F6: Failure matrix
+    observation_failure:        str = "skip"
+    constraint_failure:         str = "warn"
+    compliance_check_failure:   str = "warn"
+    budget_exhaustion:          str = "require_human"
+    disconnect_failure:         str = "abort"
+    constitution_mismatch:      str = "skip"
+    human_review:               str = "suspend"
+    # F2: Configurable defaults (extracted from hardcoded values)
+    default_budget:             float = 1.0
+    budget_cost_per_constraint: float = 0.1
+    compliance_check_deadline:  float = 300.0
+    max_consecutive_ineffective: int = 3
+    disconnect_threshold:       int = 3
+
+
 # ── Disconnect result (Item 6) ───────────────────────────────────────────────
 @dataclass
 class DisconnectResult:
@@ -472,14 +495,17 @@ class PathBAgent:
         omission_store=None,
         constitution_provider: Optional[Callable[[str], str]] = None,
         amendment_engine: Optional[AmendmentEngine] = None,
+        policy: Optional[PathBPolicy] = None,
     ):
         self.cieu_store = cieu_store
         self.confidence_threshold = confidence_threshold
         self.max_cycles = max_cycles
         self.omission_store = omission_store
-        # Intent Compilation line provides constitution; direct loading is fallback only
+        # Constitution provider is the primary path; direct file loading is deprecated fallback (F3)
         self._constitution_provider = constitution_provider
         self._amendment_engine = amendment_engine
+        # F2/F6: Unified policy object
+        self.policy = policy or PathBPolicy()
 
         # Item 2: Constitution hash — loaded at init, verified each cycle
         self._constitution_hash: str = _CONSTITUTION_HASH
@@ -541,13 +567,18 @@ class PathBAgent:
         cycle = ExternalGovernanceCycle()
 
         # Step 0 (Item 2): Verify constitution hash at cycle start + Amendment Response Chain
-        # Intent Compilation line provides constitution; direct loading is fallback only
+        # Constitution provider is the primary path (F3)
         if self._constitution_provider is not None:
             try:
                 current_hash = self._constitution_provider(_CONSTITUTION_PATH)
             except Exception:
-                current_hash = _compute_constitution_hash()
+                current_hash = None  # Provider failed — do not fall back
         else:
+            # F3: Deprecated fallback — direct file loading
+            import logging as _logging
+            _logging.getLogger("ystar.path_b").warning(
+                "Direct constitution loading is deprecated; use constitution_provider"
+            )
             current_hash = _compute_constitution_hash()
         if self._constitution_hash and current_hash and current_hash != self._constitution_hash:
             # Check if there's an approved amendment for this document
@@ -607,6 +638,7 @@ class PathBAgent:
 
         # Step 4: Check Path B's own contract
         # Path B must verify it's not exceeding its own authority
+        # F2: Self-governance contract uses same forbidden paths/commands pattern
         path_b_contract = IntentContract(
             name="path_b:self_governance",
             deny=["/etc", "/root", "~/.clawdbot", "/production"],
@@ -635,7 +667,7 @@ class PathBAgent:
         self._create_obligation(
             observation.agent_id,
             "verify_compliance",
-            deadline_secs=300,
+            deadline_secs=self.policy.compliance_check_deadline,
             cycle_id=cycle.cycle_id,
         )
         # Reset inconclusive counter on successful constraint application
@@ -853,7 +885,7 @@ class PathBAgent:
         self._inconclusive_count += 1
         self._write_cieu(cycle, "CYCLE_INCONCLUSIVE", [],
                          reason=f"inconclusive_count={self._inconclusive_count}")
-        if self._inconclusive_count >= 3:
+        if self._inconclusive_count >= self.policy.disconnect_threshold:
             self._human_review_required = True
             self._write_cieu(cycle, "HUMAN_REVIEW_REQUIRED", [],
                              reason="3 consecutive inconclusive cycles")
@@ -897,7 +929,7 @@ class PathBAgent:
         count = self._consecutive_ineffective.get(agent_id, 0) + 1
         self._consecutive_ineffective[agent_id] = count
 
-        if count >= 3:
+        if count >= self.policy.max_consecutive_ineffective:
             self._human_review_required = True
             self._write_cieu(
                 ExternalGovernanceCycle(

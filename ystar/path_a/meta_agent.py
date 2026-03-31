@@ -69,6 +69,11 @@ class PathAPolicy:
     omission_scan_failure: str = "warn"       # fail-soft + observable
     constitution_mismatch: str = "skip"       # hard stop
     human_review:          str = "suspend"    # pause execution
+    # Configurable defaults (F1: extracted from hardcoded values)
+    default_forbidden_paths:    List[str] = field(default_factory=lambda: ["/etc", "/root", "~/.clawdbot", "/production"])
+    default_forbidden_commands: List[str] = field(default_factory=lambda: ["rm -rf", "sudo", "exec(", "eval(", "__import__", "subprocess", "os.system"])
+    default_deadline_secs:      float = 600.0
+    auto_confidence_threshold:  float = 0.65
 
 
 # ── 步骤2 核心函数：Suggestion → IntentContract ──────────────────────────────
@@ -76,6 +81,7 @@ def suggestion_to_contract(
     suggestion:       GovernanceSuggestion,
     allowed_modules:  List[str],    # CompositionPlan 里的模块 ID（Gap 2: 现在被强制执行）
     deadline_secs:    float = 600.0,
+    policy:           Optional[PathAPolicy] = None,
 ) -> IntentContract:
     """
     把一个 GovernanceSuggestion 转成路径A执行本次任务的 IntentContract。
@@ -86,15 +92,16 @@ def suggestion_to_contract(
       - 范围控制靠 CompositionPlan 本身（有限 ModuleGraph 子集）
       - 截止时间和范围记录在 obligation_timing 里
     """
-    # 基础安全约束：禁止危险文件路径
-    forbidden_paths = ["/etc", "/root", "~/.clawdbot", "/production"]
-    # 禁止危险命令（路径A不应该执行任何 shell 命令）
-    forbidden_cmds  = ["rm -rf", "sudo", "exec(", "eval(", "__import__",
-                       "subprocess", "os.system"]
+    # F1: Read safety constraints from policy object (configurable, not hardcoded)
+    _policy = policy or PathAPolicy()
+    forbidden_paths = list(_policy.default_forbidden_paths)
+    forbidden_cmds  = list(_policy.default_forbidden_commands)
+    # Use policy deadline unless caller overrides explicitly
+    effective_deadline = deadline_secs if deadline_secs != 600.0 else _policy.default_deadline_secs
 
     # obligation_timing：X 秒内必须汇报，同时记录允许的模块范围
     obligation = {
-        "deadline_secs":    deadline_secs,
+        "deadline_secs":    effective_deadline,
         "obligation_type":  "meta_agent_report",
         "trigger":          f"suggestion:{suggestion.target_rule_id}",
         "allowed_modules":  allowed_modules,
@@ -258,9 +265,13 @@ class PathAAgent:
         self.max_cycles    = max_cycles
         self.cycle_timeout = cycle_timeout
         self._history:     List[MetaAgentCycle] = []
+        # Unified failure policy (must be set early — other init code reads from it)
+        self.policy = policy or PathAPolicy()
         # Pearl Level 3 因果推理引擎
+        # F1: Use policy threshold if caller didn't override the default
+        _effective_threshold = auto_confidence_threshold if auto_confidence_threshold != 0.65 else self.policy.auto_confidence_threshold
         self.causal_engine = CausalEngine(
-            confidence_threshold=auto_confidence_threshold
+            confidence_threshold=_effective_threshold
         )
         # 开放世界发现引擎
         self.gap_detector  = GapDetector(planner.graph)
@@ -286,15 +297,13 @@ class PathAAgent:
         self._inconclusive_count = 0  # Gap 5: Track inconclusive cycles
         # Fix 6.2: human review gate — blocks execution until acknowledged
         self._human_review_required = False
-        # Unified failure policy (Issue 6)
-        self.policy = policy or PathAPolicy()
-        # Intent Compilation line provides constitution; direct loading is fallback only
+        # Constitution provider is the primary path; direct file loading is deprecated fallback
         self._constitution_provider = constitution_provider
         self._amendment_engine = amendment_engine
 
 
     def _load_constitution_hash(self) -> str:
-        # Intent Compilation line provides constitution; direct loading is fallback only
+        # Constitution provider is the primary path (F3)
         if self._constitution_provider is not None:
             try:
                 h = self._constitution_provider(self._constitution_path)
@@ -302,7 +311,13 @@ class PathAAgent:
                     return h
             except Exception:
                 pass
-        # Fallback: direct file reading
+            # If provider is set but failed, do NOT fall back — provider is authoritative
+            return 'sha256:unavailable'
+        # Deprecated fallback: direct file reading
+        import logging as _logging
+        _logging.getLogger("ystar.path_a").warning(
+            "Direct constitution loading is deprecated; use constitution_provider"
+        )
         try:
             import hashlib
             with open(self._constitution_path, 'rb') as f:
@@ -768,6 +783,7 @@ class PathAAgent:
             suggestion,
             allowed_modules = cycle.plan_nodes,
             deadline_secs   = self.cycle_timeout,
+            policy          = self.policy,
         )
         cycle.contract = contract
 
@@ -1214,6 +1230,7 @@ class PathAAgent:
             ),
             allowed_modules=["constitution"],
             deadline_secs=self.cycle_timeout,
+            policy=self.policy,
         )
 
         # Validate the proposal through check() — even constitution changes
