@@ -828,7 +828,53 @@ class PathAAgent:
         # BUG 2 FIX: Check if omission_engine exists before calling scan()
         if self.omission_engine:
             try:
-                self.omission_engine.scan()
+                scan_result = self.omission_engine.scan()
+
+                # ── Pearl Integration 3: OmissionEngine violations → CausalEngine ──
+                # Feed obligation fulfillment/violation data as causal evidence:
+                #   Obligation fulfilled → health maintained/improved (positive obs)
+                #   Obligation violated → health degraded (negative obs)
+                # This creates a causal link: obligation_fulfillment → health
+                if self.omission_store:
+                    try:
+                        obligations = self.omission_store.list_obligations()
+                        for ob in obligations:
+                            ob_status = str(getattr(ob, 'status', '')).lower()
+                            ob_id = getattr(ob, 'obligation_id', 'unknown')
+                            entity_id = getattr(ob, 'entity_id', 'unknown')
+
+                            if ob_status in ('fulfilled',):
+                                # Fulfilled obligation → positive causal evidence
+                                self.causal_engine.observe(
+                                    health_before=cycle.health_before,
+                                    health_after=cycle.health_after,
+                                    obl_before=(0, 1),
+                                    obl_after=(1, 1),
+                                    edges_before=[],
+                                    edges_after=[(entity_id, ob_id)],
+                                    action_edges=[(entity_id, ob_id)],
+                                    succeeded=True,
+                                    cycle_id=f"obl_fulfilled_{ob_id}",
+                                    suggestion_type="obligation_fulfilled",
+                                )
+                            elif ob_status in ('hard_overdue', 'soft_overdue',
+                                               'failed'):
+                                # Violated obligation → negative causal evidence
+                                self.causal_engine.observe(
+                                    health_before=cycle.health_before,
+                                    health_after="degraded",
+                                    obl_before=(0, 1),
+                                    obl_after=(0, 1),
+                                    edges_before=[],
+                                    edges_after=[],
+                                    action_edges=[(entity_id, ob_id)],
+                                    succeeded=False,
+                                    cycle_id=f"obl_violated_{ob_id}",
+                                    suggestion_type="obligation_violated",
+                                )
+                    except Exception:
+                        pass  # Causal feed failed; don't block cycle
+
             except Exception:
                 pass  # scan 失败不阻断循环
 

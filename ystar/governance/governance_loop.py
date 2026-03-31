@@ -165,6 +165,8 @@ class GovernanceTightenResult:
     restored_actors:         List[str] = field(default_factory=list)
     # Connection 8: intervention snapshot
     intervention_snapshot:   Optional[dict] = None
+    # Pearl integration: causal reasoning chain from CausalEngine
+    causal_chain:            List[str] = field(default_factory=list)
 
     def is_action_required(self) -> bool:
         return self.overall_health in ("degraded", "critical") or \
@@ -240,10 +242,12 @@ class GovernanceLoop:
         ystar_loop:           Optional[Any] = None,   # YStarLoop（可选）
         constraint_registry:  Optional[Any] = None,   # ConstraintRegistry（可选）
         intervention_engine:  Optional[Any] = None,   # InterventionEngine（可选）
+        causal_engine:        Optional[Any] = None,   # CausalEngine（可选）— Pearl L2-3
     ) -> None:
         self.report_engine        = report_engine
         self.constraint_registry  = constraint_registry
         self._intervention_engine = intervention_engine
+        self._causal_engine       = causal_engine       # Pearl integration point
         self._observations:       List[GovernanceObservation] = []
         self._baseline:           Optional[GovernanceObservation] = None
 
@@ -371,6 +375,82 @@ class GovernanceLoop:
             return n
         except Exception:
             return 0
+    def ingest_cieu_to_causal_engine(
+        self,
+        cieu_records: List[Dict[str, Any]],
+    ) -> int:
+        """
+        Pearl Integration 4: Feed CIEU global records into CausalEngine.
+
+        Converts CIEU audit records (from any source, not just Path A) into
+        CausalObservation format and feeds them into the SCM. This gives the
+        Pearl engine a much richer dataset than Path A cycles alone.
+
+        Each CIEU record is mapped to SCM variables:
+          - W (wiring): 1.0 if action=wire/allow, 0.0 if deny
+          - O (obligations): derived from passed/decision fields
+          - H (health): inferred from result fields
+          - S (suggestions): derived from event_type
+
+        Args:
+            cieu_records: list of CIEU record dicts (from CIEUStore or JSONL)
+
+        Returns:
+            Number of records successfully ingested.
+        """
+        if self._causal_engine is None:
+            return 0
+
+        ingested = 0
+        for rec in cieu_records:
+            try:
+                event_type = rec.get("event_type", "")
+                decision = rec.get("decision", "")
+                passed = rec.get("passed", False)
+                result_data = rec.get("result", {})
+
+                # Map to health labels
+                # Successful decisions suggest healthy/stable state
+                health_after = "stable" if passed else "degraded"
+                if isinstance(result_data, dict):
+                    if result_data.get("status") == "fulfilled":
+                        health_after = "healthy"
+                    elif result_data.get("status") in ("failed", "rollback"):
+                        health_after = "critical"
+
+                # Previous health: assume stable as baseline for CIEU records
+                health_before = "stable"
+
+                # Obligation counts: infer from event semantics
+                obl_total = 1  # Each CIEU record represents one obligation unit
+                obl_fulfilled = 1 if passed else 0
+
+                # Action edges: derive from event type
+                action_edges = []
+                params = rec.get("params", {})
+                if isinstance(params, dict):
+                    src = params.get("source", event_type)
+                    tgt = params.get("target", rec.get("agent_id", "unknown"))
+                    action_edges = [(str(src), str(tgt))]
+
+                self._causal_engine.observe(
+                    health_before=health_before,
+                    health_after=health_after,
+                    obl_before=(0, obl_total),
+                    obl_after=(obl_fulfilled, obl_total),
+                    edges_before=[],
+                    edges_after=action_edges,
+                    action_edges=action_edges,
+                    succeeded=passed,
+                    cycle_id=f"cieu_{rec.get('session_id', 'unknown')}_{ingested}",
+                    suggestion_type=event_type or None,
+                )
+                ingested += 1
+            except Exception:
+                continue  # Skip malformed records
+
+        return ingested
+
     def observe_from_report_engine(self, since: Optional[float] = None) -> GovernanceObservation:
         """
         从 ReportEngine 生成当前观测，加入观测历史。
@@ -551,11 +631,94 @@ class GovernanceLoop:
             except Exception:
                 pass
 
+        # ── Pearl Integration 2: Metalearning results → CausalEngine ──────
+        # When GovernanceLoop runs tighten(), the metalearning results (what
+        # rules were learned) are converted to CausalObservation format and
+        # fed into CausalEngine.observe(). This gives the Pearl engine
+        # visibility into the metalearning loop's outcomes.
+        #   Rule learned + health improved → positive observation
+        #   Rule learned + no improvement → negative observation
+        if (self._causal_engine is not None
+                and len(self._observations) >= 2
+                and result.commission_result is not None):
+            try:
+                prev, curr = self._observations[-2], self._observations[-1]
+                health_improved = (
+                    curr.obligation_fulfillment_rate > prev.obligation_fulfillment_rate
+                    or (curr.hard_overdue_rate < prev.hard_overdue_rate)
+                )
+                # Map governance observation to CausalEngine's observe() format
+                # Suggestion type from commission result
+                stype = None
+                if hasattr(result.commission_result, 'adjustments'):
+                    stype = "metalearning_tighten"
+
+                # Obligation counts from governance observations
+                total_ent = max(curr.total_entities, 1)
+                fulfilled = int(curr.obligation_fulfillment_rate * total_ent)
+                prev_fulfilled = int(prev.obligation_fulfillment_rate * total_ent)
+
+                health_label = "healthy" if curr.is_healthy() else (
+                    "degraded" if curr.hard_overdue_rate > 0.1 else "stable"
+                )
+                prev_health = "healthy" if prev.is_healthy() else (
+                    "degraded" if prev.hard_overdue_rate > 0.1 else "stable"
+                )
+
+                self._causal_engine.observe(
+                    health_before=prev_health,
+                    health_after=health_label,
+                    obl_before=(prev_fulfilled, total_ent),
+                    obl_after=(fulfilled, total_ent),
+                    edges_before=[],
+                    edges_after=[],
+                    action_edges=[("metalearning", "governance")],
+                    succeeded=health_improved,
+                    cycle_id=f"governance_tighten_{curr.period_label}",
+                    suggestion_type=stype,
+                )
+            except Exception:
+                pass  # CausalEngine feed failed; don't block governance
+
         # Governance 侧：产出参数建议
         suggestions = self._generate_governance_suggestions(latest)
         # Connection 2: DimensionDiscovery — new dimension suggestions
         dim_suggestions = self._run_dimension_discovery()
         suggestions = suggestions + dim_suggestions
+
+        # ── Pearl Integration 1: CausalEngine weights suggestions ──────────
+        # When CausalEngine is available, ask P(Health|do(suggestion)) for each
+        # suggestion and use causal confidence to weight the suggestion's own
+        # confidence score. Higher causal confidence = more trustworthy.
+        if self._causal_engine is not None and suggestions:
+            causal_chain_entries: List[str] = []
+            for sug in suggestions:
+                try:
+                    # Query the causal engine: what is the expected health
+                    # effect if we apply this suggestion (wiring action)?
+                    do_result = self._causal_engine.do_wire_query(
+                        sug.suggestion_type,
+                        sug.target_rule_id,
+                    )
+                    # Weight the suggestion confidence by causal confidence
+                    # formula: blended = 0.5 * original + 0.5 * causal_confidence
+                    if do_result.confidence > 0:
+                        original_conf = sug.confidence
+                        sug.confidence = (
+                            0.5 * original_conf + 0.5 * do_result.confidence
+                        )
+                        causal_chain_entries.append(
+                            f"P(H|do({sug.suggestion_type}→{sug.target_rule_id}))"
+                            f"={do_result.predicted_health}"
+                            f" conf={do_result.confidence:.2f}"
+                            f" (original={original_conf:.2f}→{sug.confidence:.2f})"
+                        )
+                    # Include the full causal chain from the do-calculus query
+                    causal_chain_entries.extend(do_result.causal_chain)
+                except Exception:
+                    pass  # CausalEngine query failed; keep original confidence
+            result.causal_chain = causal_chain_entries
+
         result.governance_suggestions = suggestions
 
         # Connection 13: process_violations → intervention pulses
