@@ -28,6 +28,7 @@ import os
 import re
 import sys
 import urllib.request
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -780,3 +781,118 @@ def load_and_translate(
             return None, str(md_path)
 
     return contract_dict, str(md_path)
+
+
+# ── Compile Diagnostics & Ambiguity ──────────────────────────────────────────
+
+@dataclass
+class CompileDiagnostics:
+    """
+    Diagnostics report for a contract compilation.
+
+    Produced by diagnose_compilation() to surface ambiguities,
+    unsupported rules, and confidence issues before human review.
+    """
+    confidence: float = 0.0              # 0-1
+    ambiguous_rules: List[str] = field(default_factory=list)    # rules that couldn't be clearly parsed
+    unsupported_rules: List[str] = field(default_factory=list)  # rules that have no mapping
+    warnings: List[str] = field(default_factory=list)
+    requires_human_review: bool = False  # True if confidence < 0.7 or ambiguities exist
+
+
+def diagnose_compilation(
+    source_text: str,
+    contract_dict: Dict[str, Any],
+) -> CompileDiagnostics:
+    """
+    Produce a diagnostics report for a compiled contract.
+
+    Analyzes the source text against the compiled contract to identify:
+    - Ambiguous rules (text that might map to multiple dimensions)
+    - Unsupported rules (text with constraint-like language but no mapping)
+    - Low confidence warnings
+    - Whether human review is needed
+
+    Args:
+        source_text: the original natural language text
+        contract_dict: the compiled contract fields dict
+
+    Returns:
+        CompileDiagnostics with analysis results
+    """
+    diag = CompileDiagnostics()
+
+    # Run validation to get coverage and warnings
+    validation = validate_contract_draft(contract_dict, source_text)
+    diag.warnings = list(validation.get("warnings", []))
+
+    # Calculate confidence from coverage and errors
+    coverage = validation.get("coverage", 0.0)
+    errors = validation.get("errors", [])
+    if errors:
+        diag.confidence = max(0.1, coverage * 0.3)
+    else:
+        diag.confidence = max(0.3, min(0.95, coverage * 0.5 + 0.5))
+
+    # Scan source text for constraint-like patterns that weren't captured
+    _CONSTRAINT_PATTERNS = [
+        (r'(?:must|should|shall|need to|required to)\s+\w+', "obligation"),
+        (r'(?:never|cannot|must not|shall not|do not|don\'t)\s+\w+', "prohibition"),
+        (r'(?:only|exclusively|solely)\s+(?:access|use|write|read)', "restriction"),
+        (r'(?:within|before|after|every)\s+\d+\s*(?:seconds?|minutes?|hours?|days?)', "temporal"),
+        (r'(?:maximum|minimum|at most|at least|no more than)\s+\d+', "value_range"),
+        (r'(?:forbidden|prohibited|banned|blocked|disallowed)', "prohibition"),
+    ]
+
+    text_lower = source_text.lower()
+    detected_intents: List[str] = []
+    for pattern, intent_type in _CONSTRAINT_PATTERNS:
+        matches = re.findall(pattern, text_lower)
+        for m in matches:
+            detected_intents.append(f"{intent_type}: '{m.strip()[:60]}'")
+
+    # Check which detected intents have corresponding contract fields
+    mapped_dimensions = set()
+    if contract_dict.get("deny"):
+        mapped_dimensions.add("prohibition")
+    if contract_dict.get("only_paths") or contract_dict.get("only_domains"):
+        mapped_dimensions.add("restriction")
+    if contract_dict.get("deny_commands"):
+        mapped_dimensions.add("prohibition")
+    if contract_dict.get("temporal"):
+        mapped_dimensions.add("temporal")
+    if contract_dict.get("value_range"):
+        mapped_dimensions.add("value_range")
+    if contract_dict.get("obligation_timing"):
+        mapped_dimensions.add("obligation")
+    if contract_dict.get("invariant") or contract_dict.get("optional_invariant"):
+        mapped_dimensions.add("obligation")
+
+    for intent in detected_intents:
+        intent_type = intent.split(":")[0].strip()
+        if intent_type not in mapped_dimensions:
+            diag.unsupported_rules.append(intent)
+
+    # Detect ambiguity: text that could map to multiple dimensions
+    _AMBIGUOUS_PATTERNS = [
+        (r'(?:path|file|directory|folder)', {"deny", "only_paths"},
+         "path reference could be deny (blocklist) or only_paths (allowlist)"),
+        (r'(?:api|url|endpoint|domain)', {"deny", "only_domains"},
+         "URL/domain reference could be deny (blocklist) or only_domains (allowlist)"),
+    ]
+    for pattern, dimensions, explanation in _AMBIGUOUS_PATTERNS:
+        if re.search(pattern, text_lower):
+            active_dims = dimensions & set(contract_dict.keys())
+            # If the text mentions paths/URLs but only one dimension is set,
+            # the other might be what was intended
+            if len(active_dims) <= 1 and len(dimensions) > 1:
+                diag.ambiguous_rules.append(explanation)
+
+    # Determine if human review is required
+    diag.requires_human_review = (
+        diag.confidence < 0.7
+        or len(diag.ambiguous_rules) > 0
+        or len(errors) > 0
+    )
+
+    return diag

@@ -16,12 +16,13 @@ ystar.path_a.meta_agent — 路径A：元治理智能体 (Layer 2 — Path A)
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Optional, List, Tuple, Any
+from typing import Optional, List, Tuple, Any, Callable
 import time, uuid, os
 
 from ystar.kernel.dimensions import IntentContract
 from ystar.governance.governance_loop import GovernanceSuggestion
 from ystar.governance.causal_engine import CausalEngine, CausalState
+from ystar.governance.amendment import AmendmentEngine
 
 # 路径A宪法文本路径（相对于包根）
 # TODO: Constitution loading should eventually go through the Intent Compilation
@@ -235,6 +236,8 @@ class PathAAgent:
         cycle_timeout: float = 600.0,
         auto_confidence_threshold: float = 0.65,  # 高于此值自主执行，无需人工
         policy:        Optional[PathAPolicy] = None,
+        constitution_provider: Optional[Callable[[str], str]] = None,
+        amendment_engine: Optional[AmendmentEngine] = None,
     ):
         self.gloop         = governance_loop
         self.cieu_store    = cieu_store
@@ -273,9 +276,21 @@ class PathAAgent:
         self._human_review_required = False
         # Unified failure policy (Issue 6)
         self.policy = policy or PathAPolicy()
+        # Intent Compilation line provides constitution; direct loading is fallback only
+        self._constitution_provider = constitution_provider
+        self._amendment_engine = amendment_engine
 
 
     def _load_constitution_hash(self) -> str:
+        # Intent Compilation line provides constitution; direct loading is fallback only
+        if self._constitution_provider is not None:
+            try:
+                h = self._constitution_provider(self._constitution_path)
+                if h:
+                    return h
+            except Exception:
+                pass
+        # Fallback: direct file reading
         try:
             import hashlib
             with open(self._constitution_path, 'rb') as f:
@@ -578,25 +593,42 @@ class PathAAgent:
                 self._history.append(cycle)
                 return cycle
 
-        # 步骤0b：宪法完整性验证（防篡改）
+        # 步骤0b：宪法完整性验证（防篡改）+ Amendment Response Chain
         try:
-            import hashlib as _hl
-            with open(self._constitution_path, 'rb') as _cf:
-                current_hash = "sha256:" + _hl.sha256(_cf.read()).hexdigest()[:16]
+            current_hash = self._load_constitution_hash()
             if current_hash != self._constitution_hash:
-                # 宪法被篡改：policy.constitution_mismatch == "skip"
-                self.cieu_store.write_dict(self._make_cieu_record(
-                    event_type="constitution_integrity_check",
-                    action="constitution_integrity_check",
-                    decision="deny",
-                    params={"expected": self._constitution_hash,
-                            "found":    current_hash},
-                    result={"decision": "skip_cycle",
-                            "reason":   "constitution_hash_mismatch"},
-                    cycle=cycle,
-                ))
-                cycle.executed = False
-                return cycle
+                # Check if there's an approved amendment for this document
+                amendment_authorized = False
+                if self._amendment_engine is not None:
+                    amendment_authorized = self._amendment_engine.has_approved_amendment(
+                        "PATH_A_AGENTS.md", current_hash,
+                    )
+
+                if amendment_authorized:
+                    # Amendment was approved: accept the new hash
+                    self._constitution_hash = current_hash
+                    self.cieu_store.write_dict(self._make_cieu_record(
+                        event_type="constitution_amended",
+                        action="constitution_amended",
+                        decision="allow",
+                        params={"new_hash": current_hash},
+                        result={"decision": "accept_amendment"},
+                        cycle=cycle,
+                    ))
+                else:
+                    # Unauthorized change: abort + write CIEU
+                    self.cieu_store.write_dict(self._make_cieu_record(
+                        event_type="unauthorized_constitution_change",
+                        action="constitution_integrity_check",
+                        decision="deny",
+                        params={"expected": self._constitution_hash,
+                                "found":    current_hash},
+                        result={"decision": "skip_cycle",
+                                "reason":   "unauthorized_constitution_change"},
+                        cycle=cycle,
+                    ))
+                    cycle.executed = False
+                    return cycle
         except FileNotFoundError:
             pass  # 文件不存在时不阻断（容错）
 

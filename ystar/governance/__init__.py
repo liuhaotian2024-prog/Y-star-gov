@@ -78,6 +78,12 @@ from ystar.governance.adaptive import (
     discover_parameters,
     ParameterHint,
 )
+# Amendment system
+from ystar.governance.amendment import AmendmentEngine, AmendmentProposal
+
+# Contract lifecycle
+from ystar.governance.contract_lifecycle import ContractLifecycle, ContractDraft
+
 # P3: Auto-configuration
 from ystar.governance.auto_configure import (
     run_governance_auto_configure,
@@ -120,4 +126,8 @@ __all__ = [
     # Auto-configure
     "run_governance_auto_configure", "GovernanceAutoConfigureScheduler",
     "AUTO_CONFIGURE_FLOOR_SECS",
+    # Amendment
+    "AmendmentEngine", "AmendmentProposal",
+    # Contract Lifecycle
+    "ContractLifecycle", "ContractDraft",
 ]

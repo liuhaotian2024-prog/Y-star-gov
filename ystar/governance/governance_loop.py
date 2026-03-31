@@ -246,11 +246,13 @@ class GovernanceLoop:
         constraint_registry:  Optional[Any] = None,   # ConstraintRegistry（可选）
         intervention_engine:  Optional[Any] = None,   # InterventionEngine（可选）
         causal_engine:        Optional[Any] = None,   # CausalEngine（可选）— Pearl L2-3
+        amendment_engine:     Optional[Any] = None,   # AmendmentEngine（可选）
     ) -> None:
         self.report_engine        = report_engine
         self.constraint_registry  = constraint_registry
         self._intervention_engine = intervention_engine
         self._causal_engine       = causal_engine       # Pearl integration point
+        self._amendment_engine    = amendment_engine     # Amendment system integration
         self._observations:       List[GovernanceObservation] = []
         self._baseline:           Optional[GovernanceObservation] = None
 
@@ -574,6 +576,18 @@ class GovernanceLoop:
 
         latest = self._observations[-1]
         result.observation = latest
+
+        # Amendment check: if amendment_engine has pending amendments, note in result
+        if self._amendment_engine is not None:
+            try:
+                pending = self._amendment_engine.list_proposals(status="approved")
+                if pending:
+                    result.recommended_action = (
+                        f"{len(pending)} approved amendment(s) pending activation. "
+                        + result.recommended_action
+                    )
+            except Exception:
+                pass
 
         # Connection 8a: scan_restorations — restore actor capabilities
         # when their hard_overdue obligations are fulfilled.

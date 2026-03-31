@@ -18,12 +18,13 @@ The symmetry is the proof — if Path A can't escape its bounds, neither can ext
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Optional, List, Tuple, Any, Dict
+from typing import Optional, List, Tuple, Any, Dict, Callable
 import hashlib, time, uuid, os
 
 from ystar.kernel.dimensions import IntentContract
 from ystar.kernel.engine import check, CheckResult
 from ystar.governance.omission_engine import OmissionEngine
+from ystar.governance.amendment import AmendmentEngine
 
 
 # ── Constitution hash — computed once at import time ─────────────────────────
@@ -384,11 +385,16 @@ class PathBAgent:
         confidence_threshold: float = 0.65,
         max_cycles:           int = 100,
         omission_store=None,
+        constitution_provider: Optional[Callable[[str], str]] = None,
+        amendment_engine: Optional[AmendmentEngine] = None,
     ):
         self.cieu_store = cieu_store
         self.confidence_threshold = confidence_threshold
         self.max_cycles = max_cycles
         self.omission_store = omission_store
+        # Intent Compilation line provides constitution; direct loading is fallback only
+        self._constitution_provider = constitution_provider
+        self._amendment_engine = amendment_engine
 
         # Item 2: Constitution hash — loaded at init, verified each cycle
         self._constitution_hash: str = _CONSTITUTION_HASH
@@ -445,11 +451,30 @@ class PathBAgent:
         """
         cycle = ExternalGovernanceCycle()
 
-        # Step 0 (Item 2): Verify constitution hash at cycle start
-        current_hash = _compute_constitution_hash()
+        # Step 0 (Item 2): Verify constitution hash at cycle start + Amendment Response Chain
+        # Intent Compilation line provides constitution; direct loading is fallback only
+        if self._constitution_provider is not None:
+            try:
+                current_hash = self._constitution_provider(_CONSTITUTION_PATH)
+            except Exception:
+                current_hash = _compute_constitution_hash()
+        else:
+            current_hash = _compute_constitution_hash()
         if self._constitution_hash and current_hash and current_hash != self._constitution_hash:
-            self._write_cieu(cycle, "CONSTITUTION_HASH_MISMATCH", [])
-            return cycle  # Refuse to operate with tampered constitution
+            # Check if there's an approved amendment for this document
+            amendment_authorized = False
+            if self._amendment_engine is not None:
+                amendment_authorized = self._amendment_engine.has_approved_amendment(
+                    "PATH_B_AGENTS.md", current_hash,
+                )
+            if amendment_authorized:
+                # Amendment was approved: accept the new hash
+                self._constitution_hash = current_hash
+                self._write_cieu(cycle, "CONSTITUTION_AMENDED", [])
+            else:
+                # Unauthorized change
+                self._write_cieu(cycle, "unauthorized_constitution_change", [])
+                return cycle  # Refuse to operate with tampered constitution
 
         # Step 1b (Item 3): Check for HARD_OVERDUE obligations → auto-disconnect
         self._check_overdue_obligations()
