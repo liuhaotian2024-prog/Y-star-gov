@@ -1,5 +1,5 @@
 """
-ystar.module_graph.path_b_agent — Path B: External Governance Agent
+ystar.path_b.path_b_agent — Path B: External Governance Agent (Layer 3)
 
 Path A governs Y*gov's own improvement (internal).
 Path B governs external agents using the same architectural pattern (external).

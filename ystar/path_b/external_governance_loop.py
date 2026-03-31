@@ -1,5 +1,5 @@
 """
-ystar.module_graph.external_governance_loop — External Observation Loop
+ystar.path_b.external_governance_loop — External Observation Loop (Layer 3)
 
 Mirrors governance_loop.py but for external agents.
 
@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple, Any
 import time
 
-from ystar.module_graph.path_b_agent import (
+from ystar.path_b.path_b_agent import (
     ExternalObservation,
     ConstraintBudget,
     observation_to_constraint,
@@ -35,7 +35,7 @@ from ystar.governance.metalearning import (
     ContractQuality,
     AdaptiveCoefficients,
 )
-from ystar.module_graph.causal_engine import CausalEngine, DoCalcResult
+from ystar.governance.causal_engine import CausalEngine, DoCalcResult
 from ystar.kernel.dimensions import IntentContract
 
 

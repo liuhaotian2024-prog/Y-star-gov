@@ -15,14 +15,14 @@ Run with: python -m pytest tests/test_path_b.py -v
 """
 import pytest
 from unittest.mock import Mock, MagicMock
-from ystar.module_graph.path_b_agent import (
+from ystar.path_b.path_b_agent import (
     ExternalObservation,
     ConstraintBudget,
     observation_to_constraint,
     ExternalGovernanceCycle,
     PathBAgent,
 )
-from ystar.module_graph.external_governance_loop import (
+from ystar.path_b.external_governance_loop import (
     ExternalGovernanceLoop,
     ExternalGovernanceObservation,
     ExternalConstraintSuggestion,

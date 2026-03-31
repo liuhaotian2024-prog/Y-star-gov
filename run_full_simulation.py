@@ -48,7 +48,7 @@ from ystar.governance.omission_models import (
     TrackedEntity, EntityStatus, GovernanceEvent, GEventType,
     Severity, EscalationPolicy, EscalationAction,
 )
-from ystar.module_graph.path_b_agent import (
+from ystar.path_b.path_b_agent import (
     PathBAgent, ExternalObservation, ConstraintBudget,
     observation_to_constraint,
 )
@@ -378,7 +378,7 @@ def step_4_path_a_cycle(cieu: CIEUStore) -> int:
     from ystar.governance.governance_loop import GovernanceLoop
     from ystar.module_graph.registry import _graph
     from ystar.module_graph.planner import CompositionPlanner
-    from ystar.module_graph.meta_agent import PathAAgent
+    from ystar.path_a.meta_agent import PathAAgent
 
     omission_store = InMemoryOmissionStore()
     report_engine = ReportEngine(omission_store=omission_store)

@@ -1,5 +1,5 @@
 """
-ystar.module_graph.meta_agent — 路径A：元治理智能体
+ystar.path_a.meta_agent — 路径A：元治理智能体 (Layer 2 — Path A)
 
 核心设计原理：GovernanceSuggestion IS IntentContract
 
@@ -20,7 +20,7 @@ import time, uuid, os
 
 from ystar.kernel.dimensions import IntentContract
 from ystar.governance.governance_loop import GovernanceSuggestion
-from ystar.module_graph.causal_engine import CausalEngine, CausalState
+from ystar.governance.causal_engine import CausalEngine, CausalState
 
 # 路径A宪法文本路径（相对于包根）
 _PATH_A_AGENTS_MD = os.path.join(
@@ -1009,7 +1009,7 @@ class PathAAgent:
         """
         # 1. 把 suggestion 转成一个临时 DetectedGap
         from ystar.module_graph.discovery import DetectedGap
-        from ystar.module_graph.causal_engine import CausalState
+        from ystar.governance.causal_engine import CausalState
 
         # 根据 suggestion 的 rationale 推断需要的输出类型
         type_hints = {

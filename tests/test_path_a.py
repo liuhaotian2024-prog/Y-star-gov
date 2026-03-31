@@ -24,7 +24,7 @@ Run with: python -m pytest tests/test_path_a.py -v
 """
 import pytest
 from unittest.mock import Mock, MagicMock, patch
-from ystar.module_graph.meta_agent import (
+from ystar.path_a.meta_agent import (
     PathAAgent,
     MetaAgentCycle,
     suggestion_to_contract,
@@ -355,7 +355,7 @@ def test_module_scope_enforcement():
 # ── Test 11: CausalEngine integration ──────────────────────────────────────
 def test_causal_engine_integration():
     """Test that CausalEngine.do_wire_query affects plan selection."""
-    from ystar.module_graph.causal_engine import CausalEngine, DoCalcResult
+    from ystar.governance.causal_engine import CausalEngine, DoCalcResult
 
     engine = CausalEngine(confidence_threshold=0.65)
 
@@ -384,7 +384,7 @@ def test_causal_engine_integration():
 # ── Test 12: Counterfactual query ──────────────────────────────────────────
 def test_counterfactual_query():
     """Test that counterfactual queries work with cycle history."""
-    from ystar.module_graph.causal_engine import CausalEngine, CausalState
+    from ystar.governance.causal_engine import CausalEngine, CausalState
 
     engine = CausalEngine()
 

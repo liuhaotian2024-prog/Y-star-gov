@@ -1,5 +1,5 @@
 """
-ystar.module_graph.causal_engine — Pearl Level 2 & 3 因果推理引擎
+ystar.governance.causal_engine — Pearl Level 2 & 3 因果推理引擎 (Foundation Layer)
 
 Genuine implementation of Judea Pearl's causal hierarchy:
   Level 1 (Association): P(Y|X) — standard conditional probability
