@@ -24,7 +24,7 @@ from ystar.kernel.dimensions import IntentContract
 from ystar.kernel.scope_encoding import encode_module_scope
 from ystar.kernel.contract_provider import ConstitutionProvider
 from ystar.governance.governance_loop import GovernanceSuggestion
-from ystar.governance.causal_engine import CausalEngine, CausalState
+from ystar.governance.causal_engine import CausalEngine, CausalState, DoCalcResult
 from ystar.governance.amendment import AmendmentEngine
 
 # 路径A宪法文本路径（相对于包根）
@@ -76,6 +76,10 @@ class PathAPolicy:
     default_forbidden_commands: List[str] = field(default_factory=lambda: ["rm -rf", "sudo", "exec(", "eval(", "__import__", "subprocess", "os.system"])
     default_deadline_secs:      float = 600.0
     auto_confidence_threshold:  float = 0.65
+    # C6: Causal policy (Pearl L2-L3 integration)
+    causal_l2_before_wiring:       bool  = True
+    causal_l3_on_failure:          bool  = True
+    causal_human_gate_threshold:   float = 0.65
 
 
 # ── 步骤2 核心函数：Suggestion → IntentContract ──────────────────────────────
@@ -208,6 +212,8 @@ class MetaAgentCycle:
     # Gap 5: INCONCLUSIVE 状态支持
     inconclusive:       bool  = False  # 既未成功也未失败
     inconclusive_reason: Optional[str] = None
+    # C5: Counterfactual review on failure (Pearl L3)
+    counterfactual_review: Optional[Any] = None
 
     def to_dict(self) -> dict:
         return {
@@ -930,6 +936,26 @@ class PathAAgent:
                 # Fix 6.3: explicitly fail obligation on cycle failure
                 if self.omission_store and cycle.obligation_id:
                     self._fail_obligation(cycle.obligation_id)
+
+                # C5: Counterfactual review on failure — "what if we had chosen differently?"
+                if (self.policy.causal_l3_on_failure
+                        and len(self.causal_engine._observations) > 1
+                        and cycle.plan_edges):
+                    try:
+                        # Try counterfactual: what if we had chosen a different plan?
+                        # Use an alternative set of edges (reverse of what was tried)
+                        alternative_edges = [(t, s) for s, t in cycle.plan_edges]
+                        cf_result = self.causal_engine.counterfactual_query(
+                            cycle.cycle_id, alternative_edges
+                        )
+                        cycle.counterfactual_review = cf_result
+                        self._write_cieu(cycle, "counterfactual_review", [
+                            f"cf_gain={cf_result.counterfactual_gain}",
+                            f"cf_health={cf_result.predicted_health}",
+                            f"cf_confidence={cf_result.confidence}",
+                        ])
+                    except Exception:
+                        pass  # L3 review failed; don't block cycle
         else:
             # 成功：重置计数, clear inconclusive to prevent state leakage
             cycle.success = True

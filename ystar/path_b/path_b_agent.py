@@ -28,6 +28,8 @@ from ystar.kernel.contract_provider import ConstitutionProvider
 from ystar.governance.omission_engine import OmissionEngine
 from ystar.governance.omission_models import ObligationRecord, ObligationStatus, Severity as ObligationSeverity
 from ystar.governance.amendment import AmendmentEngine
+from ystar.governance.causal_engine import CausalEngine, DoCalcResult
+from ystar.path_b.causal_adapter import PathBCausalAdapter
 
 
 # ── Constitution hash — via ConstitutionProvider (N2) ────────────────────────
@@ -73,6 +75,14 @@ class PathBPolicy:
     # R5: Escalation policy
     escalation_steps:           List[str] = field(default_factory=lambda: ["warn", "downgrade", "freeze", "disconnect"])
     escalation_thresholds:      Dict[str, Any] = field(default_factory=dict)
+    # C1/C6: Causal engine policy
+    causal_confidence_threshold: float = 0.65
+    causal_l2_before_escalation: bool = True
+    causal_l3_on_ineffective:    bool = True
+    # C4: Human gate policy
+    human_gate_disconnect:              bool  = True   # disconnect always needs human
+    human_gate_freeze:                  bool  = True   # freeze needs human if low confidence
+    human_gate_low_confidence_threshold: float = 0.65  # below this -> human gate
 
 
 # ── Disconnect result (Item 6) ───────────────────────────────────────────────
@@ -508,6 +518,7 @@ class PathBAgent:
         constitution_provider: Optional[Callable[[str], str]] = None,
         amendment_engine: Optional[AmendmentEngine] = None,
         policy: Optional[PathBPolicy] = None,
+        causal_engine: Optional[CausalEngine] = None,
     ):
         self.cieu_store = cieu_store
         self.confidence_threshold = confidence_threshold
@@ -518,6 +529,10 @@ class PathBAgent:
         self._amendment_engine = amendment_engine
         # F2/F6: Unified policy object
         self.policy = policy or PathBPolicy()
+        # C1: Pearl L2-L3 causal engine for intervention effect estimation
+        self._causal_engine = causal_engine or CausalEngine(
+            confidence_threshold=self.policy.causal_confidence_threshold
+        )
 
         # Item 2: Constitution hash — loaded at init via ConstitutionProvider (fail-closed)
         try:
@@ -717,6 +732,27 @@ class PathBAgent:
                 self.omission_engine.scan()
             except Exception:
                 pass
+
+        # C2: Feed cycle data to CausalEngine for Pearl L2-L3 reasoning
+        if self._causal_engine:
+            try:
+                adapter = PathBCausalAdapter()
+                # Count violations before/after for this agent
+                agent_obs = [o for o in self._observation_history
+                             if o.agent_id == observation.agent_id]
+                v_before = sum(1 for o in agent_obs[:-1] if o.has_violation()) if len(agent_obs) > 1 else 0
+                v_after = sum(1 for o in agent_obs if o.has_violation())
+                compliant, _ = self.verify_compliance(observation.agent_id)
+                obs_kwargs = adapter.to_observation_kwargs({
+                    "action": ExternalGovernanceAction.APPLY_CONSTRAINT,
+                    "compliant": compliant,
+                    "violation_count_before": v_before,
+                    "violation_count_after": v_after,
+                    "cycle_id": cycle.cycle_id,
+                })
+                self._causal_engine.observe(**obs_kwargs)
+            except Exception:
+                pass  # Causal feed failed; don't block governance cycle
 
         self._cycle_history.append(cycle)
         return cycle
@@ -990,12 +1026,48 @@ class PathBAgent:
         R5: Escalation ladder is driven by self.policy.escalation_steps (swappable).
         Default: warn -> downgrade -> freeze -> disconnect
 
+        C3: Before each escalation step, estimate causal effect. If predicted
+        gain is negligible, skip to the next step or request human review.
+
         Returns ExternalGovernanceResult with the action taken.
         """
         actions_taken: List[str] = []
         steps = self.policy.escalation_steps
 
+        # Map step names to ExternalGovernanceAction for causal estimation
+        _step_to_action = {
+            "warn":       ExternalGovernanceAction.APPLY_CONSTRAINT,
+            "downgrade":  ExternalGovernanceAction.DOWNGRADE_CONTRACT,
+            "freeze":     ExternalGovernanceAction.FREEZE_SESSION,
+            "disconnect": ExternalGovernanceAction.DISCONNECT_AGENT,
+        }
+
         for step in steps:
+            step_action = _step_to_action.get(step)
+
+            # C3: Estimate causal effect before executing this step
+            causal_result = None
+            if self.policy.causal_l2_before_escalation and step_action:
+                causal_result = self.estimate_action_effect(step_action, agent_id)
+
+            # C4: Check human gate — only applies when causal estimation
+            # returned a result (i.e., there IS causal data to reason about).
+            # Without causal data, actions proceed as before (backward compatible).
+            if (causal_result is not None
+                    and step_action
+                    and self.needs_human_for_action(step_action, causal_result)):
+                self._human_review_required = True
+                self._write_cieu(
+                    ExternalGovernanceCycle(
+                        observation=ExternalObservation(agent_id=agent_id)
+                    ),
+                    "HUMAN_GATE_ESCALATION",
+                    [],
+                    reason=f"human approval required for {step} (causal gate)",
+                )
+                actions_taken.append(f"human_gate_{step}")
+                continue  # Skip this step, move to next
+
             if step == "warn":
                 self.execute_action(ExternalGovernanceAction.APPLY_CONSTRAINT, agent_id,
                                     {"reason": f"warn:{reason}"})
@@ -1056,3 +1128,76 @@ class PathBAgent:
             [],
             reason=params.get("reason", ""),
         )
+
+    # ── C3: Pearl L2 intervention effect estimation ──────────────────────────
+
+    def estimate_action_effect(
+        self,
+        action: ExternalGovernanceAction,
+        agent_id: str,
+    ) -> Optional[DoCalcResult]:
+        """Before executing an external governance action, estimate its causal effect.
+
+        Uses Pearl Level 2 (do-calculus via backdoor adjustment) to predict
+        whether the proposed action will improve compliance for this agent.
+
+        Returns None if causal engine is not available or has insufficient
+        observational data (cold start -- no historical cycles to reason from).
+        """
+        if not self._causal_engine:
+            return None
+        # No observational data = cold start; return None so escalation
+        # proceeds without causal gating (backward compatible).
+        if not self._causal_engine._observations:
+            return None
+
+        # Map action to treatment value via adapter
+        adapter = PathBCausalAdapter()
+        treatment_w = adapter.map_action_to_W(action)
+
+        # Use do_wire_query with action-as-treatment
+        # src_id = "path_b", tgt_id = agent_id (governance action edge)
+        try:
+            result = self._causal_engine.do_wire_query(
+                src_id=f"path_b_{action.value}",
+                tgt_id=agent_id,
+            )
+            return result
+        except Exception:
+            return None
+
+    # ── C4: Causal-based human gate ──────────────────────────────────────────
+
+    def needs_human_for_action(
+        self,
+        action: ExternalGovernanceAction,
+        causal_result: Optional[DoCalcResult] = None,
+    ) -> bool:
+        """Determine if external governance action needs human approval based on causal confidence.
+
+        Rules:
+        - disconnect always needs human (unless policy overrides)
+        - freeze needs human if causal_confidence < threshold
+        - warn/downgrade: only gate when causal data exists but confidence is low
+        - No causal data at all: allow low-impact actions (warn, downgrade) to proceed
+        """
+        # disconnect always needs human
+        if action == ExternalGovernanceAction.DISCONNECT_AGENT:
+            return self.policy.human_gate_disconnect
+
+        # freeze needs human if confidence is low
+        if action == ExternalGovernanceAction.FREEZE_SESSION:
+            if not self.policy.human_gate_freeze:
+                return False
+            if causal_result is None:
+                return True  # No causal data -> need human for freeze
+            return causal_result.confidence < self.policy.human_gate_low_confidence_threshold
+
+        # For lower-impact actions (warn, downgrade, etc.):
+        # Only gate when we have causal data that shows low confidence.
+        # No causal data = allow action to proceed (cold start).
+        if causal_result is not None and causal_result.evidence_count > 0:
+            if causal_result.confidence < self.policy.human_gate_low_confidence_threshold:
+                return True
+
+        return False
