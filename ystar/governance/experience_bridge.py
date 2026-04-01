@@ -94,6 +94,21 @@ class BridgeInput:
 
 
 @dataclass
+class BridgeSuggestionCandidate:
+    """
+    A typed suggestion candidate produced by the ExperienceBridge.
+
+    Each candidate represents a concrete governance action that should be
+    considered by GovernanceLoop, originating from Path B gap analysis.
+    """
+    suggestion_type: str      # "wire", "tighten", "add_domain_pack", "rewire", "review"
+    target: str               # module or rule target
+    confidence: float         # 0-1
+    source_gap: str           # which InternalGovernanceGap produced this
+    rationale: str
+
+
+@dataclass
 class BridgeOutput:
     """
     Structured output from the ExperienceBridge.
@@ -103,7 +118,7 @@ class BridgeOutput:
     """
     metrics:              Dict[str, float] = field(default_factory=dict)
     gap_candidates:       List[InternalGovernanceGap] = field(default_factory=list)
-    suggestion_candidates: List[Any] = field(default_factory=list)
+    suggestion_candidates: List[BridgeSuggestionCandidate] = field(default_factory=list)
 
 
 # ── Experience Bridge ────────────────────────────────────────────────────────
@@ -187,12 +202,13 @@ class ExperienceBridge:
             suggestion_candidates=self._generate_suggestion_candidates(),
         )
 
-    def _generate_suggestion_candidates(self) -> list:
-        """N5: Generate GovernanceSuggestion drafts from InternalGovernanceGap objects.
+    def _generate_suggestion_candidates(self) -> "List[BridgeSuggestionCandidate]":
+        """N5: Generate BridgeSuggestionCandidate objects from InternalGovernanceGap objects.
 
         At least 1 suggestion per high-confidence gap (confidence >= 0.5).
+        Returns typed BridgeSuggestionCandidate objects instead of raw dicts.
         """
-        suggestions = []
+        suggestions: List[BridgeSuggestionCandidate] = []
         for gap in self._gaps:
             if gap.confidence < 0.3:
                 continue  # Too uncertain to suggest anything
@@ -201,29 +217,23 @@ class ExperienceBridge:
             if gap.inferred_gap_type == "constraint_missing":
                 stype = "wire"
                 target = gap.inferred_module_targets[0] if gap.inferred_module_targets else "constraint_derivation"
-                suggested_value = "add_constraint_for_observed_violation_class"
             elif gap.inferred_gap_type == "constraint_weak":
                 stype = "tighten"
                 target = "constraint_derivation"
-                suggested_value = "strengthen_existing_constraint"
             elif gap.inferred_gap_type == "scope_mismatch":
                 stype = "rewire"
                 target = "observation_schema"
-                suggested_value = "extend_observation_coverage"
             else:
                 stype = "review"
                 target = gap.gap_id
-                suggested_value = "manual_review_required"
 
-            suggestions.append({
-                "suggestion_type": stype,
-                "target": target,
-                "suggested_value": suggested_value,
-                "confidence": gap.confidence,
-                "rationale": gap.rationale[:200] if gap.rationale else "",
-                "gap_id": gap.gap_id,
-                "source": "experience_bridge",
-            })
+            suggestions.append(BridgeSuggestionCandidate(
+                suggestion_type=stype,
+                target=target,
+                confidence=gap.confidence,
+                source_gap=gap.gap_id,
+                rationale=gap.rationale[:200] if gap.rationale else "",
+            ))
         return suggestions
 
     # ── Stage 0: ingest raw CIEU records from Path B ─────────────────────────

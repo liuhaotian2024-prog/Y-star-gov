@@ -237,9 +237,11 @@ class TestRealBridgeFlow:
         assert len(output.gap_candidates) > 0
         assert len(output.suggestion_candidates) > 0
         for sug in output.suggestion_candidates:
-            assert "suggestion_type" in sug
-            assert "target" in sug
-            assert "confidence" in sug
+            assert hasattr(sug, "suggestion_type")
+            assert hasattr(sug, "target")
+            assert hasattr(sug, "confidence")
+            assert hasattr(sug, "source_gap")
+            assert hasattr(sug, "rationale")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
