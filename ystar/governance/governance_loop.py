@@ -52,6 +52,16 @@ from ystar.governance.observation_fusion import (
     recommend_action as _recommend_action_impl,
     score_contract_quality as _score_contract_quality_impl,
 )
+from ystar.governance.causal_feedback import (
+    weight_suggestions_by_causal as _weight_suggestions_by_causal,
+    feed_metalearning_to_causal as _feed_metalearning_to_causal,
+    try_structure_discovery as _try_structure_discovery,
+)
+from ystar.governance.proposal_submission import (
+    submit_verified_proposals as _submit_verified_proposals,
+    submit_suggestions as _submit_suggestions,
+    apply_active_constraints as _apply_active_constraints,
+)
 
 
 # ── 治理侧观测对象 ─────────────────────────────────────────────────────────────
@@ -645,71 +655,12 @@ class GovernanceLoop:
             except Exception:
                 pass
 
-        # ── Pearl Integration 2: Metalearning results → CausalEngine ──────
-        # When GovernanceLoop runs tighten(), the metalearning results (what
-        # rules were learned) are converted to CausalObservation format and
-        # fed into CausalEngine.observe(). This gives the Pearl engine
-        # visibility into the metalearning loop's outcomes.
-        #   Rule learned + health improved → positive observation
-        #   Rule learned + no improvement → negative observation
-        if (self._causal_engine is not None
-                and len(self._observations) >= 2
-                and result.commission_result is not None):
-            try:
-                prev, curr = self._observations[-2], self._observations[-1]
-                health_improved = (
-                    curr.obligation_fulfillment_rate > prev.obligation_fulfillment_rate
-                    or (curr.hard_overdue_rate < prev.hard_overdue_rate)
-                )
-                # Map governance observation to CausalEngine's observe() format
-                # Suggestion type from commission result
-                stype = None
-                if hasattr(result.commission_result, 'adjustments'):
-                    stype = "metalearning_tighten"
-
-                # Obligation counts from governance observations
-                total_ent = max(curr.total_entities, 1)
-                fulfilled = int(curr.obligation_fulfillment_rate * total_ent)
-                prev_fulfilled = int(prev.obligation_fulfillment_rate * total_ent)
-
-                health_label = "healthy" if curr.is_healthy() else (
-                    "degraded" if curr.hard_overdue_rate > 0.1 else "stable"
-                )
-                prev_health = "healthy" if prev.is_healthy() else (
-                    "degraded" if prev.hard_overdue_rate > 0.1 else "stable"
-                )
-
-                self._causal_engine.observe(
-                    health_before=prev_health,
-                    health_after=health_label,
-                    obl_before=(prev_fulfilled, total_ent),
-                    obl_after=(fulfilled, total_ent),
-                    edges_before=[],
-                    edges_after=[],
-                    action_edges=[("metalearning", "governance")],
-                    succeeded=health_improved,
-                    cycle_id=f"governance_tighten_{curr.period_label}",
-                    suggestion_type=stype,
-                )
-            except Exception:
-                pass  # CausalEngine feed failed; don't block governance
-
-        # ── Pearl Integration 3: Auto-trigger structure discovery ─────
-        # When enough cycle-level observations have accumulated, validate
-        # the causal DAG against data-discovered structure.
+        # ── Pearl Integration 2-3: causal feedback + structure discovery ──
         if self._causal_engine is not None:
-            try:
-                n_obs = self._causal_engine.count_cycle_observations()
-                if n_obs >= 30:
-                    discovered = self._causal_engine.learn_structure(
-                        min_observations=30,
-                    )
-                    if discovered is not None:
-                        result.structure_validated = getattr(
-                            self._causal_engine, '_structure_validation', None
-                        )
-            except Exception:
-                pass  # Structure discovery failed; don't block governance
+            _feed_metalearning_to_causal(
+                self._causal_engine, self._observations, result.commission_result,
+            )
+            result.structure_validated = _try_structure_discovery(self._causal_engine)
 
         # Governance 侧：产出参数建议
         suggestions = self._generate_governance_suggestions(latest)
@@ -718,37 +669,10 @@ class GovernanceLoop:
         suggestions = suggestions + dim_suggestions
 
         # ── Pearl Integration 1: CausalEngine weights suggestions ──────────
-        # When CausalEngine is available, ask P(Health|do(suggestion)) for each
-        # suggestion and use causal confidence to weight the suggestion's own
-        # confidence score. Higher causal confidence = more trustworthy.
         if self._causal_engine is not None and suggestions:
-            causal_chain_entries: List[str] = []
-            for sug in suggestions:
-                try:
-                    # Query the causal engine: what is the expected health
-                    # effect if we apply this suggestion (wiring action)?
-                    do_result = self._causal_engine.do_wire_query(
-                        sug.suggestion_type,
-                        sug.target_rule_id,
-                    )
-                    # Weight the suggestion confidence by causal confidence
-                    # formula: blended = 0.5 * original + 0.5 * causal_confidence
-                    if do_result.confidence > 0:
-                        original_conf = sug.confidence
-                        sug.confidence = (
-                            0.5 * original_conf + 0.5 * do_result.confidence
-                        )
-                        causal_chain_entries.append(
-                            f"P(H|do({sug.suggestion_type}→{sug.target_rule_id}))"
-                            f"={do_result.predicted_health}"
-                            f" conf={do_result.confidence:.2f}"
-                            f" (original={original_conf:.2f}→{sug.confidence:.2f})"
-                        )
-                    # Include the full causal chain from the do-calculus query
-                    causal_chain_entries.extend(do_result.causal_chain)
-                except Exception:
-                    pass  # CausalEngine query failed; keep original confidence
-            result.causal_chain = causal_chain_entries
+            result.causal_chain = _weight_suggestions_by_causal(
+                self._causal_engine, suggestions,
+            )
 
         result.governance_suggestions = suggestions
 
@@ -818,217 +742,29 @@ class GovernanceLoop:
         self,
         auto_approve_confidence_threshold: float = 0.7,
     ) -> int:
-        """
-        Connection 15: inquire_and_verify — run the full pipeline then submit.
-
-        Combines auto_inquire_all() + verify_proposal() and directly submits
-        proposals that pass mathematical verification to ConstraintRegistry.
-        Only proposals with verdict=PASS/WARN enter the registry.
-
-        Returns number of verified proposals submitted.
-        """
-        if not self._ystar_loop or not self._ystar_loop.history:
-            return 0
-        try:
-            from ystar.governance.metalearning import inquire_and_verify, ManagedConstraint
-            import time, uuid
-            tuples = inquire_and_verify(
-                history        = self._ystar_loop.history,
-                known_contract = self._ystar_loop.base_contract,
-                domain_context = "governance",
-                api_call_fn    = None,
-                min_confidence = 0.4,
-            )
-            submitted = 0
-            for proposal, vreport in tuples:
-                if vreport.verdict not in ("PASS", "WARN"):
-                    continue
-                mc = ManagedConstraint(
-                    id         = str(uuid.uuid4())[:8],
-                    dimension  = getattr(proposal, 'suggested_dim', 'governance'),
-                    rule       = getattr(proposal, 'suggested_rule', str(proposal)),
-                    status     = "DRAFT",
-                    source     = "inquire_and_verify",
-                    confidence = getattr(proposal, 'confidence', 0.5),
-                    created_at = time.time(),
-                    updated_at = time.time(),
-                    notes      = (
-                        f"verify={vreport.verdict} "
-                        f"cov={vreport.empirical_coverage:.0%} "
-                        f"fp={vreport.empirical_fp_rate:.0%}"
-                    ),
-                )
-                if self.constraint_registry:
-                    self.constraint_registry.add(mc)
-                    if mc.confidence >= auto_approve_confidence_threshold:
-                        self.constraint_registry.verify(mc.id, notes="auto-verified")
-                        self.constraint_registry.approve(mc.id, notes="auto-approved")
-                    submitted += 1
-            return submitted
-        except Exception:
-            return 0
+        """Connection 15: inquire_and_verify — run full pipeline then submit."""
+        return _submit_verified_proposals(
+            self._ystar_loop, self.constraint_registry,
+            auto_approve_confidence_threshold,
+        )
 
     def submit_suggestions_to_registry(
         self,
         result: GovernanceTightenResult,
         auto_approve_confidence_threshold: float = 0.9,
     ) -> int:
-        """
-        把治理建议提交到 ConstraintRegistry 受控激活链。
-
-        生命周期：
-          DRAFT → VERIFIED（confidence >= 0.6）→ APPROVED（confidence >= threshold）→ ACTIVE
-
-        confidence >= auto_approve_confidence_threshold 的建议直接走到 APPROVED，
-        等待下次 activate() 被激活写入合约。
-        其他建议停在 DRAFT，需要人工审批。
-
-        这实现了"参数调整有记录、可回滚、可审批"的设计目标。
-        不直接热改任何规则，只提交到受控链。
-        """
-        if self.constraint_registry is None:
-            return 0
-
-        try:
-            from ystar.governance.metalearning import ManagedConstraint
-        except ImportError:
-            return 0
-
-        submitted = 0
-        # Connection 4: VerificationReport gates approval
-        # Only auto-approve if verify_proposal() returns PASS or WARN
-        # This ensures LLM-generated suggestions get mathematical validation
-        # before entering the controlled activation chain.
-        try:
-            from ystar.governance.metalearning import verify_proposal, SemanticConstraintProposal
-            _verify_available = True
-        except ImportError:
-            _verify_available = False
-
-        for sug in result.governance_suggestions:
-            try:
-                import time, uuid
-                mc = ManagedConstraint(
-                    id         = str(uuid.uuid4())[:8],
-                    dimension  = "governance_timing",
-                    rule       = (
-                        f"{sug.target_rule_id}:{sug.suggestion_type}"
-                        f":{sug.suggested_value}"
-                    ),
-                    status     = "DRAFT",
-                    source     = "governance_loop",
-                    confidence = sug.confidence,
-                    created_at = time.time(),
-                    updated_at = time.time(),
-                    notes      = sug.rationale[:200],
-                )
-                self.constraint_registry.add(mc)
-
-                # Verification gate: run verify_proposal() if we have history
-                verification_passed = True  # default: allow without history
-                if (_verify_available
-                        and self._ystar_loop
-                        and self._ystar_loop.history
-                        and sug.confidence >= 0.6):
-                    try:
-                        # Build a SemanticConstraintProposal from suggestion
-                        proposal = SemanticConstraintProposal(
-                            dimension   = "governance_timing",
-                            rule        = mc.rule,
-                            rationale   = sug.rationale,
-                            confidence  = sug.confidence,
-                        )
-                        vreport = verify_proposal(
-                            proposal,
-                            self._ystar_loop.history,
-                        )
-                        # Connection 4: only advance if PASS or WARN (not FAIL)
-                        verification_passed = vreport.verdict in ("PASS", "WARN")
-                        # Annotate the constraint with verification evidence
-                        notes_with_verify = (
-                            f"{mc.notes} | verify={vreport.verdict} "
-                            f"coverage={vreport.empirical_coverage:.0%} "
-                            f"fp={vreport.empirical_fp_rate:.0%}"
-                        )
-                        # Rebuild with verify notes (ManagedConstraint is frozen-ish)
-                        mc = ManagedConstraint(
-                            id=mc.id, dimension=mc.dimension, rule=mc.rule,
-                            status=mc.status, source=mc.source,
-                            confidence=sug.confidence * (1.1 if verification_passed else 0.5),
-                            created_at=mc.created_at, updated_at=time.time(),
-                            notes=notes_with_verify[:300],
-                        )
-                        # Update in registry
-                        self.constraint_registry.constraints = [
-                            mc if c.id == mc.id else c
-                            for c in self.constraint_registry.constraints
-                        ]
-                    except Exception:
-                        pass  # verification failed to run; proceed conservatively
-
-                # Auto-advance through lifecycle — gated by verification
-                if sug.confidence >= 0.6 and verification_passed:
-                    self.constraint_registry.verify(mc.id,
-                        notes=f"auto-verified (confidence={sug.confidence:.2f})")
-                if (sug.confidence >= auto_approve_confidence_threshold
-                        and verification_passed):
-                    self.constraint_registry.approve(mc.id,
-                        notes=f"auto-approved+verified (confidence={sug.confidence:.2f})")
-
-                submitted += 1
-            except Exception:
-                pass
-        return submitted
+        """Submit governance suggestions to ConstraintRegistry controlled activation chain."""
+        return _submit_suggestions(
+            result.governance_suggestions, self.constraint_registry,
+            self._ystar_loop, auto_approve_confidence_threshold,
+        )
 
     def apply_active_constraints_to_registry(
         self,
         omission_registry: Any,
     ) -> int:
-        """
-        P3: 把 ConstraintRegistry 中 ACTIVE 状态的治理约束
-        应用到 omission_rules 的 RuleRegistry。
-
-        这是闭环的最后一步：
-          GovernanceSuggestion → ConstraintRegistry → ACTIVE → 实际影响治理参数
-
-        返回成功应用的约束数量。
-        """
-        if self.constraint_registry is None:
-            return 0
-
-        applied = 0
-        try:
-            active = self.constraint_registry.by_status("ACTIVE")
-            for mc in active:
-                # 解析规则格式: "rule_id:suggestion_type:suggested_value"
-                parts = mc.rule.split(":", 2)
-                if len(parts) < 2:
-                    continue
-                rule_id, sug_type = parts[0], parts[1]
-                try:
-                    if sug_type == "tighten_timing":
-                        rule = omission_registry.get(rule_id)
-                        if rule:
-                            # 缩紧 20%（保守）
-                            new_due = rule.due_within_secs * 0.8
-                            omission_registry.override_timing(
-                                rule_id, due_within_secs=new_due
-                            )
-                            applied += 1
-                    elif sug_type == "relax_timing":
-                        rule = omission_registry.get(rule_id)
-                        if rule:
-                            # 放宽 20%（保守）
-                            new_due = rule.due_within_secs * 1.2
-                            omission_registry.override_timing(
-                                rule_id, due_within_secs=new_due
-                            )
-                            applied += 1
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        return applied
+        """Apply ACTIVE constraints from ConstraintRegistry to omission RuleRegistry."""
+        return _apply_active_constraints(self.constraint_registry, omission_registry)
 
     def delta_from_baseline(self) -> Optional[Dict[str, float]]:
         """与基线对比的 delta（如果基线已设置）。"""
