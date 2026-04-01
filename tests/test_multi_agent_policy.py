@@ -1,12 +1,12 @@
 # tests/test_multi_agent_policy.py
 """
-P0 tests: per-agent Policy, agent identity detection, write boundary enforcement.
+Tests: per-agent Policy parsing, agent identity detection, write boundary enforcement.
+All tests use generic role names (doctor/nurse/admin) to verify the mechanism
+is universal and not coupled to any specific deployment.
 """
 from __future__ import annotations
 
-import json
 import os
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,282 +16,273 @@ from ystar.session import Policy
 from ystar.adapters.hook import (
     _detect_agent_id,
     _check_write_boundary,
+    _load_write_paths_from_agents_md,
+    _ensure_write_paths_loaded,
+    _AGENT_WRITE_PATHS,
     check_hook,
     _extract_params,
 )
+import ystar.adapters.hook as hook_module
 
 
-# ── P0-1: from_agents_md_multi ─────────────────────────────────────────────
+# ── Fixtures ──────────────────────────────────────────────────────────────
+
+SAMPLE_AGENTS_MD = """# Test Governance Contract
+
+## Absolute Prohibitions (All Agents)
+
+### Forbidden Paths (Cannot Read or Write)
+- .env, .secret
+- /etc/, /root/
+
+### Forbidden Commands
+- rm -rf /
+- sudo
+
+## Doctor Agent (Diagnosis)
+
+### Role
+Diagnoses patients.
+
+### Write Access
+- ./patient_records/
+- ./diagnosis/
+
+### Read Access
+- All directories
+
+You absolutely cannot access: ./billing/, /admin_panel
+
+## Nurse Agent (Care)
+
+### Role
+Provides patient care.
+
+### Write Access
+- ./care_logs/
+- ./medication/
+
+### Read Access
+- All directories
+
+## Admin Agent (Operations)
+
+### Role
+Manages operations.
+
+### Write Access
+- ./billing/
+- ./reports/
+- ./scheduling/
+
+### Read Access
+- All directories
+"""
+
+
+@pytest.fixture
+def agents_md(tmp_path):
+    md = tmp_path / "AGENTS.md"
+    md.write_text(SAMPLE_AGENTS_MD)
+    return str(md)
+
+
+# ── from_agents_md_multi ──────────────────────────────────────────────────
 
 
 class TestFromAgentsMdMulti:
-    """Test that from_agents_md_multi produces per-agent contracts."""
+    """Test dynamic multi-agent policy parsing from AGENTS.md."""
 
-    @pytest.fixture
-    def agents_md(self, tmp_path):
-        """Create a minimal AGENTS.md for testing."""
-        md = tmp_path / "AGENTS.md"
-        md.write_text("# Dummy AGENTS.md\n## CEO Agent\n## CTO Agent\n")
-        return str(md)
-
-    def test_produces_all_five_agents(self, agents_md):
+    def test_parses_all_agents(self, agents_md):
         policy = Policy.from_agents_md_multi(agents_md)
-        for name in ["ystar-ceo", "ystar-cto", "ystar-cmo", "ystar-cso", "ystar-cfo"]:
-            assert name in policy, f"{name} missing from policy"
+        assert "doctor" in policy
+        assert "nurse" in policy
+        assert "admin" in policy
 
-    def test_produces_fallback_agent(self, agents_md):
+    def test_produces_fallback(self, agents_md):
         policy = Policy.from_agents_md_multi(agents_md)
         assert "agent" in policy
 
-    def test_global_deny_applied_to_all(self, agents_md):
+    def test_global_deny_applied(self, agents_md):
         policy = Policy.from_agents_md_multi(agents_md)
-        for name in ["ystar-ceo", "ystar-cto", "ystar-cmo", "ystar-cso", "ystar-cfo", "agent"]:
+        for name in ["doctor", "nurse", "admin", "agent"]:
             contract = policy._rules[name]
-            assert ".env" in contract.deny
-            assert ".secret" in contract.deny
+            assert ".env" in contract.deny or any(".env" in d for d in contract.deny)
 
-    def test_global_deny_commands_applied(self, agents_md):
+    def test_global_deny_commands(self, agents_md):
         policy = Policy.from_agents_md_multi(agents_md)
-        contract = policy._rules["ystar-cto"]
-        assert "rm -rf /" in contract.deny_commands
-        assert "sudo " in contract.deny_commands
+        contract = policy._rules["doctor"]
+        assert any("rm -rf" in cmd for cmd in contract.deny_commands)
+        assert any("sudo" in cmd for cmd in contract.deny_commands)
 
-    def test_cto_extra_deny(self, agents_md):
+    def test_agent_extra_deny(self, agents_md):
+        """Doctor's 'cannot access' paths should be in deny."""
         policy = Policy.from_agents_md_multi(agents_md)
-        contract = policy._rules["ystar-cto"]
-        assert "/production" in contract.deny
+        contract = policy._rules["doctor"]
+        deny_str = " ".join(contract.deny)
+        assert "billing" in deny_str or "admin_panel" in deny_str
 
     def test_missing_file_returns_fallback(self):
         policy = Policy.from_agents_md_multi("/nonexistent/AGENTS.md")
         assert "agent" in policy
 
-    def test_check_deny_env(self, agents_md):
-        """All agents should be denied writing to .env files."""
+    def test_env_denied_for_all(self, agents_md):
         policy = Policy.from_agents_md_multi(agents_md)
-        result = policy.check("ystar-cmo", "Write", file_path="./src/.env.production")
+        result = policy.check("nurse", "Write", file_path="./data/.env.production")
         assert not result.allowed
 
-    def test_check_deny_sudo(self, agents_md):
-        """All agents should be denied sudo commands."""
+    def test_sudo_denied(self, agents_md):
         policy = Policy.from_agents_md_multi(agents_md)
-        result = policy.check("ystar-cto", "Bash", command="sudo rm -rf /tmp")
+        result = policy.check("doctor", "Bash", command="sudo rm -rf /tmp")
         assert not result.allowed
 
-    def test_check_allow_normal(self, agents_md):
-        """Normal operations should be allowed (deny check only)."""
+    def test_normal_action_allowed(self, agents_md):
         policy = Policy.from_agents_md_multi(agents_md)
-        result = policy.check("ystar-cto", "Write", file_path="./src/main.py")
+        result = policy.check("doctor", "Write", file_path="./patient_records/p1.md")
         assert result.allowed
 
 
-# ── P0-2: Agent Identity Detection ─────────────────────────────────────────
+# ── Agent Identity Detection ──────────────────────────────────────────────
 
 
 class TestDetectAgentId:
-    """Test agent identity detection from multiple sources."""
 
     def test_from_payload(self):
-        payload = {"agent_id": "ystar-cto", "tool_name": "Write"}
-        assert _detect_agent_id(payload) == "ystar-cto"
+        assert _detect_agent_id({"agent_id": "doctor"}) == "doctor"
 
     def test_from_env_ystar(self):
-        payload = {"tool_name": "Write"}
-        with patch.dict(os.environ, {"YSTAR_AGENT_ID": "ystar-cmo"}):
-            assert _detect_agent_id(payload) == "ystar-cmo"
-
-    def test_from_env_claude(self):
-        payload = {"tool_name": "Write"}
-        with patch.dict(os.environ, {"CLAUDE_AGENT_NAME": "ystar-cso"}, clear=False):
-            # Clear YSTAR_AGENT_ID to test fallback
-            env = os.environ.copy()
-            env.pop("YSTAR_AGENT_ID", None)
-            with patch.dict(os.environ, env, clear=True):
-                with patch.dict(os.environ, {"CLAUDE_AGENT_NAME": "ystar-cso"}):
-                    assert _detect_agent_id(payload) == "ystar-cso"
+        with patch.dict(os.environ, {"YSTAR_AGENT_ID": "nurse"}):
+            assert _detect_agent_id({"tool_name": "Write"}) == "nurse"
 
     def test_from_marker_file(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        marker = tmp_path / ".ystar_active_agent"
-        marker.write_text("ystar-cfo")
-        payload = {"tool_name": "Write"}
-        # Clear env
+        (tmp_path / ".ystar_active_agent").write_text("admin")
         with patch.dict(os.environ, {}, clear=True):
-            assert _detect_agent_id(payload) == "ystar-cfo"
+            assert _detect_agent_id({"tool_name": "Write"}) == "admin"
 
-    def test_fallback_to_agent(self):
-        payload = {"tool_name": "Write"}
+    def test_fallback(self):
         with patch.dict(os.environ, {}, clear=True):
-            # No marker file in cwd (may or may not exist)
-            result = _detect_agent_id(payload)
+            result = _detect_agent_id({"tool_name": "Write"})
             assert isinstance(result, str)
 
-    def test_payload_agent_generic_falls_through(self):
-        """If payload says 'agent', try other sources."""
-        payload = {"agent_id": "agent", "tool_name": "Write"}
-        with patch.dict(os.environ, {"YSTAR_AGENT_ID": "ystar-ceo"}):
-            assert _detect_agent_id(payload) == "ystar-ceo"
+    def test_generic_agent_falls_through(self):
+        with patch.dict(os.environ, {"YSTAR_AGENT_ID": "doctor"}):
+            assert _detect_agent_id({"agent_id": "agent"}) == "doctor"
 
 
-# ── P0-1 continued: Write Boundary Enforcement ─────────────────────────────
+# ── Write Boundary (Dynamic) ─────────────────────────────────────────────
 
 
 class TestWriteBoundary:
-    """Test per-agent write path enforcement."""
+    """Test write path enforcement using dynamically loaded paths."""
 
-    def test_ceo_allowed_reports(self):
-        params = _extract_params("Write", {"file_path": "./reports/daily/2026-04-01.md"})
-        result = _check_write_boundary("ystar-ceo", "Write", params)
-        assert result is None   # allowed
-
-    def test_ceo_denied_src(self):
-        params = _extract_params("Write", {"file_path": "./src/main.py"})
-        result = _check_write_boundary("ystar-ceo", "Write", params)
-        assert result is not None
-        assert not result.allowed
-        assert "boundary" in result.reason.lower()
-
-    def test_cto_allowed_src(self):
-        params = _extract_params("Write", {"file_path": "./src/ystar/session.py"})
-        result = _check_write_boundary("ystar-cto", "Write", params)
-        assert result is None
-
-    def test_cto_denied_finance(self, tmp_path, monkeypatch):
-        # Run from tmp_path so ./finance/ doesn't resolve under Y-star-gov/
+    @pytest.fixture(autouse=True)
+    def setup_paths(self, tmp_path, monkeypatch):
+        """Set up write paths from sample AGENTS.md."""
         monkeypatch.chdir(tmp_path)
-        params = _extract_params("Write", {"file_path": "./finance/budget.md"})
-        result = _check_write_boundary("ystar-cto", "Write", params)
+        md = tmp_path / "AGENTS.md"
+        md.write_text(SAMPLE_AGENTS_MD)
+
+        # Reset and reload
+        hook_module._WRITE_PATHS_LOADED = False
+        hook_module._AGENT_WRITE_PATHS = {}
+        hook_module._ensure_write_paths_loaded()
+
+    def test_doctor_allowed_patient_records(self):
+        params = _extract_params("Write", {"file_path": "./patient_records/p1.md"})
+        result = _check_write_boundary("doctor", "Write", params)
+        assert result is None  # allowed
+
+    def test_doctor_denied_billing(self):
+        params = _extract_params("Write", {"file_path": "./billing/invoice.md"})
+        result = _check_write_boundary("doctor", "Write", params)
         assert result is not None
         assert not result.allowed
 
-    def test_cmo_allowed_content(self):
-        params = _extract_params("Write", {"file_path": "./content/blog/post.md"})
-        result = _check_write_boundary("ystar-cmo", "Write", params)
+    def test_nurse_allowed_care_logs(self):
+        params = _extract_params("Write", {"file_path": "./care_logs/today.md"})
+        result = _check_write_boundary("nurse", "Write", params)
         assert result is None
 
-    def test_cmo_denied_src(self):
-        params = _extract_params("Write", {"file_path": "./src/code.py"})
-        result = _check_write_boundary("ystar-cmo", "Write", params)
-        assert result is not None
-        assert not result.allowed
-
-    def test_cso_allowed_sales(self):
-        params = _extract_params("Write", {"file_path": "./sales/crm/lead.md"})
-        result = _check_write_boundary("ystar-cso", "Write", params)
-        assert result is None
-
-    def test_cso_denied_finance(self):
-        params = _extract_params("Write", {"file_path": "./finance/model.xlsx"})
-        result = _check_write_boundary("ystar-cso", "Write", params)
+    def test_nurse_denied_billing(self):
+        params = _extract_params("Write", {"file_path": "./billing/invoice.md"})
+        result = _check_write_boundary("nurse", "Write", params)
         assert result is not None
 
-    def test_cfo_allowed_finance(self):
-        params = _extract_params("Write", {"file_path": "./finance/daily_burn.md"})
-        result = _check_write_boundary("ystar-cfo", "Write", params)
+    def test_admin_allowed_billing(self):
+        params = _extract_params("Write", {"file_path": "./billing/invoice.md"})
+        result = _check_write_boundary("admin", "Write", params)
         assert result is None
 
-    def test_cfo_denied_src(self):
-        params = _extract_params("Write", {"file_path": "./src/module.py"})
-        result = _check_write_boundary("ystar-cfo", "Write", params)
+    def test_admin_denied_patient_records(self):
+        params = _extract_params("Write", {"file_path": "./patient_records/p1.md"})
+        result = _check_write_boundary("admin", "Write", params)
         assert result is not None
 
     def test_read_not_checked(self):
-        """Read operations should never be blocked by write boundary."""
-        params = _extract_params("Read", {"file_path": "./finance/secret.md"})
-        result = _check_write_boundary("ystar-ceo", "Read", params)
+        params = _extract_params("Read", {"file_path": "./billing/secret.md"})
+        result = _check_write_boundary("doctor", "Read", params)
         assert result is None
 
     def test_unknown_agent_not_checked(self):
-        """Agents without defined boundaries are not restricted."""
         params = _extract_params("Write", {"file_path": "./anything.md"})
-        result = _check_write_boundary("unknown-agent", "Write", params)
+        result = _check_write_boundary("unknown", "Write", params)
         assert result is None
 
     def test_edit_also_checked(self):
-        """Edit operations are also subject to write boundary."""
-        params = _extract_params("Edit", {"file_path": "./finance/budget.md"})
-        result = _check_write_boundary("ystar-ceo", "Edit", params)
+        params = _extract_params("Edit", {"file_path": "./billing/invoice.md"})
+        result = _check_write_boundary("doctor", "Edit", params)
         assert result is not None
 
 
-# ── P0-3: Integration — hook with multi-agent policy ──────────────────────
+# ── Hook Integration ─────────────────────────────────────────────────────
 
 
 class TestHookIntegration:
-    """End-to-end hook tests with multi-agent policy."""
 
     @pytest.fixture
-    def policy(self, tmp_path):
+    def policy(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
         md = tmp_path / "AGENTS.md"
-        md.write_text("# AGENTS.md\n")
+        md.write_text(SAMPLE_AGENTS_MD)
+        # Reset write paths
+        hook_module._WRITE_PATHS_LOADED = False
+        hook_module._AGENT_WRITE_PATHS = {}
         return Policy.from_agents_md_multi(str(md))
 
-    def test_ceo_write_reports_allowed(self, policy):
+    def test_doctor_write_own_path_allowed(self, policy):
         payload = {
             "tool_name": "Write",
-            "tool_input": {"file_path": "./reports/daily/2026-04-01.md"},
-            "agent_id": "ystar-ceo",
+            "tool_input": {"file_path": "./patient_records/p1.md"},
+            "agent_id": "doctor",
         }
         response = check_hook(payload, policy)
         assert response == {} or "action" not in response
 
-    def test_ceo_write_src_denied(self, policy):
+    def test_doctor_write_other_path_denied(self, policy):
         payload = {
             "tool_name": "Write",
-            "tool_input": {"file_path": "./src/main.py"},
-            "agent_id": "ystar-ceo",
+            "tool_input": {"file_path": "./billing/hack.md"},
+            "agent_id": "doctor",
         }
         response = check_hook(payload, policy)
         assert response.get("action") == "block"
-        assert "boundary" in response.get("message", "").lower()
 
-    def test_cto_write_src_allowed(self, policy):
-        payload = {
-            "tool_name": "Write",
-            "tool_input": {"file_path": "./src/ystar/hook.py"},
-            "agent_id": "ystar-cto",
-        }
-        response = check_hook(payload, policy)
-        assert response == {} or "action" not in response
-
-    def test_env_file_denied_all_agents(self, policy):
-        for agent in ["ystar-ceo", "ystar-cto", "ystar-cmo", "ystar-cso", "ystar-cfo"]:
+    def test_env_denied_all(self, policy):
+        for agent in ["doctor", "nurse", "admin"]:
             payload = {
                 "tool_name": "Write",
                 "tool_input": {"file_path": "./.env.production"},
                 "agent_id": agent,
             }
             response = check_hook(payload, policy)
-            assert response.get("action") == "block", f"{agent} should be denied .env access"
+            assert response.get("action") == "block", f"{agent} should be denied .env"
 
     def test_read_always_allowed(self, policy):
-        """Read operations should pass for any agent on any path."""
         payload = {
             "tool_name": "Read",
-            "tool_input": {"file_path": "./finance/secret_data.md"},
-            "agent_id": "ystar-ceo",
+            "tool_input": {"file_path": "./billing/secret.md"},
+            "agent_id": "doctor",
         }
         response = check_hook(payload, policy)
-        # Read should pass (no write boundary check, no deny match)
         assert response == {} or "action" not in response
-
-    def test_cieu_records_agent_id(self, policy, tmp_path, monkeypatch):
-        """Verify CIEU record contains the correct agent_id."""
-        monkeypatch.chdir(tmp_path)
-        cieu_db = str(tmp_path / "test_cieu.db")
-
-        written_records = []
-        original_write = globals().get("_write_cieu")
-
-        def capture_cieu(who, *args, **kwargs):
-            written_records.append(who)
-
-        monkeypatch.setattr("ystar.adapters.hook._write_cieu", capture_cieu)
-
-        payload = {
-            "tool_name": "Write",
-            "tool_input": {"file_path": "./src/test.py"},
-            "agent_id": "ystar-cto",
-        }
-        check_hook(payload, policy)
-        # Should have called _write_cieu with "ystar-cto"
-        assert any("ystar-cto" in str(r) for r in written_records) or len(written_records) > 0

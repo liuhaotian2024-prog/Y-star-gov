@@ -285,33 +285,73 @@ class Policy:
             )
             return cls({"agent": IntentContract()})
 
-        # ── 全局禁止项（来自 AGENTS.md "Absolute Prohibitions"）──────────
-        global_deny = [
-            ".env", ".secret", ".aws/", ".ssh/", ".gnupg/",
-            "/etc/", "/root/",
-        ]
-        global_deny_commands = [
-            "rm -rf /", "sudo ", "git push --force",
-            "DROP TABLE", "DELETE FROM",
-        ]
+        import re
 
-        # ── 角色特有 deny 规则 ─────────────────────────────────────────
-        # 来源：AGENTS.md 各角色的 "Write Access" 和 "Permission Boundaries"
-        # 逻辑：如果你没有写权限到某个目录，那对该目录的写操作应被 deny
-        agent_extra_deny = {
-            "ystar-ceo": [],   # CEO deny by write boundary, not extra deny
-            "ystar-cto": ["/production"],
-            "ystar-cmo": [],
-            "ystar-cso": [],
-            "ystar-cfo": [],
-        }
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
 
+        # ── 1. 解析全局禁止项 ─────────────────────────────────────────
+        global_deny: list = []
+        global_deny_commands: list = []
+
+        # 提取 "Forbidden Paths" 节的列表项
+        fp_match = re.search(
+            r"###\s*Forbidden Paths.*?\n((?:\s*-\s*.+\n)+)", text)
+        if fp_match:
+            for line in fp_match.group(1).strip().splitlines():
+                item = line.strip().lstrip("- ").strip()
+                if item and not item.startswith("Any "):
+                    for part in re.split(r",\s*", item):
+                        part = part.strip().rstrip("*")
+                        if part:
+                            global_deny.append(part)
+
+        # 提取 "Forbidden Commands" 节的列表项
+        fc_match = re.search(
+            r"###\s*Forbidden Commands.*?\n((?:\s*-\s*.+\n)+)", text)
+        if fc_match:
+            for line in fc_match.group(1).strip().splitlines():
+                item = line.strip().lstrip("- ").strip()
+                if item:
+                    global_deny_commands.append(item)
+
+        # ── 2. 解析每个 Agent 角色 ────────────────────────────────────
+        # 匹配 "## XXX Agent" 节，提取角色名
+        agent_sections = re.split(r"\n## ", text)
         contracts: Dict[str, IntentContract] = {}
-        for agent_name, extra_deny in agent_extra_deny.items():
-            contracts[agent_name] = IntentContract(
+
+        for section in agent_sections:
+            # 匹配 "CEO Agent" / "CTO Agent (Technology + Product)" 等
+            role_match = re.match(
+                r"(\w[\w\s]*?)\s*Agent\s*(?:\(.*?\))?\s*\n", section)
+            if not role_match:
+                continue
+
+            role_title = role_match.group(1).strip()  # "CEO", "CTO", etc.
+
+            # 从 .claude/agents/ 目录查找对应的 agent name
+            # 或构造标准名: "ystar-" + role_title.lower()
+            # 但为了通用性，直接用 role_title.lower() 作为 key
+            agent_key = role_title.lower()
+
+            # agent_key = role title in lowercase (e.g. "ceo", "cto")
+            # Users can override via agent .md name: field
+
+            # 提取该角色的 deny（从 "cannot access" 或 "Prohibited" 描述）
+            extra_deny: list = []
+            deny_match = re.search(
+                r"(?:cannot access|absolutely cannot|Prohibited)[:\s]*(.+?)(?:\n\n|\n###|\n##|\Z)",
+                section, re.DOTALL | re.IGNORECASE)
+            if deny_match:
+                for item in re.split(r",\s*|\n\s*-\s*", deny_match.group(1)):
+                    item = item.strip().strip("`").strip()
+                    if item and len(item) < 100:
+                        extra_deny.append(item)
+
+            contracts[agent_key] = IntentContract(
                 deny=global_deny + extra_deny,
                 deny_commands=global_deny_commands,
-                name=f"{agent_name} (from AGENTS.md)",
+                name=f"{agent_key} (from AGENTS.md)",
             )
 
         # 通用 fallback（未识别身份时使用，仅全局规则）

@@ -42,26 +42,74 @@ if not _log.handlers:
     _log.setLevel(logging.WARNING)
 
 
-# ── 角色写路径边界（来自 AGENTS.md "Write Access" 节）─────────────────────
+# ── 角色写路径边界（动态从 AGENTS.md 或 session config 加载）────────────
 # only_paths 不能用于此目的（它会同时限制读操作）
 # 所以写路径检查在 hook 层单独执行，仅对 Write/Edit/MultiEdit 生效
-# 路径用 / 格式，检查时做 normpath
 
-_AGENT_WRITE_PATHS: Dict[str, list] = {
-    "ystar-ceo": ["./reports/"],
-    "ystar-cto": [
-        "./src/", "./tests/", "./products/ystar-gov/", "./products/",
-        "./docs/", ".github/", "CHANGELOG.md",
-        # CTO 也有 Y*gov 源码仓库的写权限
-        "C:/Users/liuha/OneDrive/桌面/Y-star-gov/",
-    ],
-    "ystar-cmo": ["./content/", "./marketing/"],
-    "ystar-cso": ["./sales/"],
-    "ystar-cfo": ["./finance/", "./reports/"],
-}
+_AGENT_WRITE_PATHS: Dict[str, list] = {}  # 动态填充，不硬编码
+_WRITE_PATHS_LOADED: bool = False
 
 # 写操作工具名
 _WRITE_TOOLS = {"Write", "Edit", "MultiEdit"}
+
+
+def _load_write_paths_from_agents_md() -> Dict[str, list]:
+    """
+    从 AGENTS.md 动态解析每个角色的 Write Access 路径。
+    通用机制：适用于任何 AGENTS.md，不依赖特定角色名。
+    """
+    import re
+    result: Dict[str, list] = {}
+
+    # 尝试多个位置
+    for candidate in [Path("AGENTS.md"), Path.cwd() / "AGENTS.md"]:
+        if candidate.exists():
+            text = candidate.read_text(encoding="utf-8")
+            break
+    else:
+        return result
+
+    # 按 "## XXX Agent" 分割
+    sections = re.split(r"\n## ", text)
+    for section in sections:
+        role_match = re.match(
+            r"(\w[\w\s]*?)\s*Agent\s*(?:\(.*?\))?\s*\n", section)
+        if not role_match:
+            continue
+
+        agent_key = role_match.group(1).strip().lower()
+
+        # 提取 "### Write Access" 下的路径列表
+        wa_match = re.search(
+            r"###\s*Write Access\s*\n((?:\s*-\s*.+\n)+)", section)
+        if wa_match:
+            paths = []
+            for line in wa_match.group(1).strip().splitlines():
+                item = line.strip().lstrip("- ").strip()
+                # 提取路径部分（去掉括号内的说明）
+                path_part = re.sub(r"\s*\(.*?\)\s*$", "", item).strip()
+                if path_part and not path_part.startswith("GitHub"):
+                    paths.append(path_part)
+            if paths:
+                result[agent_key] = paths
+
+    return result
+
+
+def _ensure_write_paths_loaded():
+    """确保写路径已从 AGENTS.md 加载（懒加载，只加载一次）。"""
+    global _AGENT_WRITE_PATHS, _WRITE_PATHS_LOADED
+    if _WRITE_PATHS_LOADED:
+        return
+    # 优先从 session config 加载（用户可覆盖）
+    session_cfg = _load_session_config()
+    if session_cfg and "agent_write_paths" in session_cfg:
+        _AGENT_WRITE_PATHS = session_cfg["agent_write_paths"]
+    else:
+        _AGENT_WRITE_PATHS = _load_write_paths_from_agents_md()
+    _WRITE_PATHS_LOADED = True
+    if _AGENT_WRITE_PATHS:
+        _log.info("Write paths loaded for %d agents", len(_AGENT_WRITE_PATHS))
 
 
 # ── Agent 身份检测 ──────────────────────────────────────────────────────────
@@ -111,12 +159,14 @@ def _check_write_boundary(
     """
     对 Write/Edit/MultiEdit 工具强制执行角色写路径边界。
 
+    写路径从 AGENTS.md 或 session config 动态加载（通用机制）。
     如果 who 有定义写路径限制且文件不在允许范围内，返回 deny PolicyResult。
     否则返回 None（放行）。
     """
     if tool_name not in _WRITE_TOOLS:
         return None
 
+    _ensure_write_paths_loaded()
     allowed = _AGENT_WRITE_PATHS.get(who)
     if not allowed:
         return None   # 未定义边界的 agent 不受限
@@ -528,7 +578,7 @@ def _filter_obligations_by_agent(
     根据 obligation_agent_scope 过滤 obligation_timing，
     只保留属于当前 agent 的义务。
 
-    scope 格式：{"rule_id": ["ystar-cto"]}
+    scope 格式：{"rule_id": ["agent_role_name"]}
     "*" 表示适用于所有 agent。
     无 scope 配置 → 全部保留（向后兼容）。
     """
@@ -745,12 +795,20 @@ def _process_obligation_triggers(
 
         # Create obligations for each matched trigger
         for trigger in triggers:
-            # Special handling for content accuracy review trigger (#9)
-            # Only create obligation if writing to content/ or marketing/
+            # Content accuracy review trigger: only fire if writing to
+            # paths owned by the agent's write boundary (from session config).
+            # This avoids hardcoding specific directory names.
             if trigger.trigger_id == "content_accuracy_review":
                 file_path = tool_input.get("file_path") or tool_input.get("path") or ""
-                if not ("content/" in file_path or "marketing/" in file_path):
-                    continue
+                trigger_patterns = None
+                scfg = _load_session_config()
+                if scfg:
+                    trigger_patterns = scfg.get("trigger_path_patterns", {}).get(
+                        "content_accuracy_review")
+                if trigger_patterns:
+                    if not any(p in file_path for p in trigger_patterns):
+                        continue
+                # If no patterns configured, let the trigger fire for all writes
 
             create_obligation_from_trigger(
                 trigger=trigger,
