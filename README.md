@@ -5,7 +5,7 @@
 [![Tests](https://img.shields.io/badge/tests-343%20passing-brightgreen)]()
 [![check() latency](https://img.shields.io/badge/check()-0.042ms-blue)]()
 
-**v0.46.0 · MIT License · Y* Bridge Labs**
+**v0.47.0 · MIT License · Y* Bridge Labs**
 
 Zero external dependencies. Installs in seconds. Runs anywhere Python runs.
 No supply chain risk. The enforcement layer contains no LLM. Governance cannot be prompt-injected.
@@ -577,7 +577,7 @@ trigger = ObligationTrigger(
 )
 ```
 
-Available in v0.46.0.
+Available in v0.47.0.
 
 ---
 
