@@ -2,7 +2,7 @@
 
 [![Y*gov governed](https://img.shields.io/badge/governed%20by-Y*gov-brightgreen)](https://github.com/liuhaotian2024-prog/Y-star-gov)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-331%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-343%20passing-brightgreen)]()
 [![check() latency](https://img.shields.io/badge/check()-0.042ms-blue)]()
 
 **v0.44.0 · MIT License · Y* Bridge Labs**
@@ -701,7 +701,7 @@ Enterprise licensing · Domain pack development · Research collaboration
 
 **Tests failing:**
 - Run tests: `python -m pytest tests/ -v`
-- Expected: 331/331 passing
+- Expected: 343/343 passing
 - Report failures to: liuhaotian2024@gmail.com
 
 ---

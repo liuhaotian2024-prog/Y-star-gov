@@ -310,3 +310,87 @@ class TestProviderAndScopeEncoding:
             source = f.read()
         assert "build_path_a_handoff" in source
         assert "build_delegation_chain" in source
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# R9: Forbid Direct Constitution Loading & Hardcoded Self-Governance
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _read_source(filepath: str) -> str:
+    """Read file source, stripping comment lines."""
+    with open(filepath, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def _non_comment_lines(source: str) -> list:
+    """Return lines that are not pure comments."""
+    return [
+        line for line in source.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+
+class TestForbidDirectConstitutionLoading:
+    """R9: Architecture tests that forbid legacy constitution access patterns."""
+
+    def test_path_a_no_direct_open_constitution(self):
+        """meta_agent.py must not use open(_PATH_A_AGENTS_MD...) in non-comment lines.
+
+        All constitution access must go through ConstitutionProvider.
+        """
+        filepath = os.path.join(_YSTAR_ROOT, "path_a", "meta_agent.py")
+        lines = _non_comment_lines(_read_source(filepath))
+        matches = [
+            line for line in lines
+            if "open(_PATH_A_AGENTS_MD" in line
+            or "open(self._constitution_path" in line
+        ]
+        assert len(matches) == 0, (
+            f"Path A meta_agent.py still has direct constitution file opens: {matches}"
+        )
+
+    def test_path_b_no_static_constitution_hash(self):
+        """path_b_agent.py must not have _CONSTITUTION_HASH = ... at module level.
+
+        Hash must be computed at runtime in __init__, not at import time.
+        """
+        filepath = os.path.join(_YSTAR_ROOT, "path_b", "path_b_agent.py")
+        source = _read_source(filepath)
+        lines = _non_comment_lines(source)
+        matches = [
+            line for line in lines
+            if "_CONSTITUTION_HASH" in line
+            and "=" in line
+            and "self." not in line
+            # Exclude lines inside class bodies (they start with whitespace)
+            and not line.startswith(" ") and not line.startswith("\t")
+        ]
+        assert len(matches) == 0, (
+            f"Path B still has module-level _CONSTITUTION_HASH assignment: {matches}"
+        )
+
+    def test_path_b_self_gov_uses_policy(self):
+        """run_one_cycle must not have inline deny=['/etc'...] for self-governance.
+
+        Self-governance contract must come from self.policy fields.
+        """
+        filepath = os.path.join(_YSTAR_ROOT, "path_b", "path_b_agent.py")
+        source = _read_source(filepath)
+
+        # Find the run_one_cycle method body
+        in_run_one_cycle = False
+        inline_deny_found = False
+        for line in source.splitlines():
+            if "def run_one_cycle" in line:
+                in_run_one_cycle = True
+                continue
+            if in_run_one_cycle and line.strip().startswith("def "):
+                in_run_one_cycle = False
+            if in_run_one_cycle and 'deny=["/etc"' in line:
+                inline_deny_found = True
+                break
+
+        assert not inline_deny_found, (
+            "run_one_cycle still has hardcoded deny=[\"/etc\"...] — "
+            "should use self.policy.self_governance_deny"
+        )

@@ -26,6 +26,7 @@ from ystar.kernel.dimensions import IntentContract
 from ystar.kernel.engine import check, CheckResult
 from ystar.kernel.contract_provider import ConstitutionProvider
 from ystar.governance.omission_engine import OmissionEngine
+from ystar.governance.omission_models import ObligationRecord, ObligationStatus, Severity as ObligationSeverity
 from ystar.governance.amendment import AmendmentEngine
 
 
@@ -34,14 +35,8 @@ from ystar.governance.amendment import AmendmentEngine
 # access path for all constitution files in Y*gov.
 _CONSTITUTION_PATH = os.path.join(os.path.dirname(__file__), "PATH_B_AGENTS.md")
 
-# N2: Use ConstitutionProvider instead of direct file reading
-_CONSTITUTION_PROVIDER = ConstitutionProvider()
-
-def _compute_constitution_hash() -> str:
-    """Compute SHA-256 hash of PATH_B_AGENTS.md via ConstitutionProvider."""
-    return _CONSTITUTION_PROVIDER.get_hash(_CONSTITUTION_PATH)
-
-_CONSTITUTION_HASH: str = _compute_constitution_hash()
+# N2: ConstitutionProvider is the canonical access path.
+# Hash is computed at runtime in PathBAgent.__init__, NOT at import time.
 
 
 @dataclass
@@ -65,6 +60,19 @@ class PathBPolicy:
     compliance_check_deadline:  float = 300.0
     max_consecutive_ineffective: int = 3
     disconnect_threshold:       int = 3
+    # R3: Self-governance contract fields (extracted from hardcoded IntentContract)
+    self_governance_deny:          List[str] = field(default_factory=lambda: ["/etc", "/root", "~/.clawdbot", "/production"])
+    self_governance_deny_commands: List[str] = field(default_factory=lambda: ["rm -rf", "sudo", "exec(", "eval("])
+    # R4: Constraint derivation policy
+    confidence_base:            float = 0.3
+    confidence_per_evidence:    float = 0.1
+    confidence_cap:             float = 0.95
+    constraint_cost_base:       float = 0.05
+    constraint_cost_severity_factor: float = 0.05
+    cold_start_min_severity:    float = 0.5
+    # R5: Escalation policy
+    escalation_steps:           List[str] = field(default_factory=lambda: ["warn", "downgrade", "freeze", "disconnect"])
+    escalation_thresholds:      Dict[str, Any] = field(default_factory=dict)
 
 
 # ── Disconnect result (Item 6) ───────────────────────────────────────────────
@@ -298,6 +306,7 @@ def observation_to_constraint(
     violation_history: List[ExternalObservation],
     budget:          ConstraintBudget,
     confidence_threshold: float = 0.65,
+    policy:          Optional["PathBPolicy"] = None,
 ) -> Optional[IntentContract]:
     """
     Convert an external observation into a constraint (IntentContract).
@@ -332,27 +341,32 @@ def observation_to_constraint(
     ]
 
     evidence_count = len(similar_violations) + 1  # +1 for current observation
-    confidence = min(0.95, 0.3 + (evidence_count * 0.1))  # More evidence = higher confidence
+    # R4: confidence/cost/cold-start from policy if available
+    _conf_base = getattr(policy, 'confidence_base', 0.3) if policy else 0.3
+    _conf_per  = getattr(policy, 'confidence_per_evidence', 0.1) if policy else 0.1
+    _conf_cap  = getattr(policy, 'confidence_cap', 0.95) if policy else 0.95
+    confidence = min(_conf_cap, _conf_base + (evidence_count * _conf_per))
 
     # Cold-start bypass: if there are REAL violations in the current observation
     # but zero historical observations for this agent (new user), generate
     # constraint directly instead of requiring confidence buildup.
-    # Requires severity >= 0.5 to avoid cold-start on trivial violations.
-    # Cold-start: count PRIOR history, excluding the current observation itself
+    _cold_min_sev = getattr(policy, 'cold_start_min_severity', 0.5) if policy else 0.5
     prior_history = sum(
         1 for obs in violation_history
         if obs.agent_id == observation.agent_id
         and obs.observation_id != observation.observation_id
     )
     cold_start = (prior_history == 0
-                  and observation.severity_score() >= 0.5)
+                  and observation.severity_score() >= _cold_min_sev)
 
     if not cold_start and confidence < confidence_threshold:
         return None  # Not confident enough to constrain
 
-    # Calculate constraint cost based on severity
+    # Calculate constraint cost based on severity (R4: from policy)
     severity = observation.severity_score()
-    constraint_cost = 0.05 + (severity * 0.05)  # Higher severity = higher cost
+    _cost_base = getattr(policy, 'constraint_cost_base', 0.05) if policy else 0.05
+    _cost_sev  = getattr(policy, 'constraint_cost_severity_factor', 0.05) if policy else 0.05
+    constraint_cost = _cost_base + (severity * _cost_sev)
 
     if not budget.can_tighten(constraint_cost):
         return None  # Insufficient budget
@@ -505,8 +519,16 @@ class PathBAgent:
         # F2/F6: Unified policy object
         self.policy = policy or PathBPolicy()
 
-        # Item 2: Constitution hash — loaded at init, verified each cycle
-        self._constitution_hash: str = _CONSTITUTION_HASH
+        # Item 2: Constitution hash — loaded at init via ConstitutionProvider (fail-closed)
+        try:
+            _init_provider = ConstitutionProvider()
+            self._constitution_hash: str = _init_provider.get_hash(_CONSTITUTION_PATH)
+            if not self._constitution_hash:
+                raise RuntimeError("ConstitutionProvider returned empty hash for PATH_B_AGENTS.md")
+        except Exception as _e:
+            raise RuntimeError(
+                f"Path B fail-closed: cannot load constitution hash — {_e}"
+            ) from _e
 
         # History tracking
         self._observation_history: List[ExternalObservation] = []
@@ -518,8 +540,8 @@ class PathBAgent:
         # Active constraints (one per external agent)
         self._active_constraints: Dict[str, IntentContract] = {}
 
-        # Item 3: Obligation / Inconclusive / Human Gate
-        self._obligations: Dict[str, Dict[str, Any]] = {}   # agent_id -> obligation
+        # Item 3: Obligation / Inconclusive / Human Gate (R6: formal ObligationRecord)
+        self._obligations: Dict[str, ObligationRecord] = {}   # agent_id -> ObligationRecord
         self._inconclusive_count: int = 0
         self._human_review_required: bool = False
         # Item 6: Frozen sessions
@@ -572,12 +594,12 @@ class PathBAgent:
             except Exception:
                 current_hash = None  # Provider failed — do not fall back
         else:
-            # F3: Deprecated fallback — direct file loading
-            import logging as _logging
-            _logging.getLogger("ystar.path_b").warning(
-                "Direct constitution loading is deprecated; use constitution_provider"
-            )
-            current_hash = _compute_constitution_hash()
+            # F3: Fail-closed — no deprecated fallback, use ConstitutionProvider
+            try:
+                _cycle_provider = ConstitutionProvider()
+                current_hash = _cycle_provider.get_hash(_CONSTITUTION_PATH)
+            except Exception:
+                current_hash = None
         if self._constitution_hash and current_hash and current_hash != self._constitution_hash:
             # Check if there's an approved amendment for this document
             amendment_authorized = False
@@ -617,12 +639,13 @@ class PathBAgent:
         # Item 4: Update allowed dimensions from observed violations
         budget.update_allowed_dimensions(self._observation_history)
 
-        # Step 3: Derive constraint
+        # Step 3: Derive constraint (R4: pass policy for configurable derivation)
         constraint = observation_to_constraint(
             observation,
             [o for o in self._observation_history if o.agent_id == observation.agent_id],
             budget,
             self.confidence_threshold,
+            policy=self.policy,
         )
 
         if not constraint:
@@ -634,13 +657,11 @@ class PathBAgent:
 
         cycle.constraint = constraint
 
-        # Step 4: Check Path B's own contract
-        # Path B must verify it's not exceeding its own authority
-        # F2: Self-governance contract uses same forbidden paths/commands pattern
+        # Step 4: Check Path B's own contract (R3: from policy, not hardcoded)
         path_b_contract = IntentContract(
             name="path_b:self_governance",
-            deny=["/etc", "/root", "~/.clawdbot", "/production"],
-            deny_commands=["rm -rf", "sudo", "exec(", "eval("],
+            deny=list(self.policy.self_governance_deny),
+            deny_commands=list(self.policy.self_governance_deny_commands),
         )
 
         proposed_action = {
@@ -834,14 +855,25 @@ class PathBAgent:
         deadline_secs: float = 300,
         cycle_id: str = "",
     ) -> None:
-        """Create an obligation for an external agent with a deadline."""
-        self._obligations[agent_id] = {
-            "type": obligation_type,
-            "created_at": time.time(),
-            "deadline": time.time() + deadline_secs,
-            "cycle_id": cycle_id,
-            "status": "pending",  # pending / fulfilled / hard_overdue
-        }
+        """Create an obligation for an external agent with a deadline (R6: formal ObligationRecord)."""
+        ob = ObligationRecord(
+            entity_id=agent_id,
+            actor_id="path_b_agent",
+            obligation_type=obligation_type,
+            trigger_event_id=cycle_id,
+            required_event_types=["verify_compliance", "compliance_confirmed"],
+            due_at=time.time() + deadline_secs,
+            status=ObligationStatus.PENDING,
+            severity=ObligationSeverity.MEDIUM,
+            notes=f"Path B obligation: {obligation_type} for agent {agent_id}",
+        )
+        self._obligations[agent_id] = ob
+        # Also register with OmissionStore if available
+        if self.omission_store:
+            try:
+                self.omission_store.add_obligation(ob)
+            except Exception:
+                pass
         self._write_cieu(
             ExternalGovernanceCycle(
                 observation=ExternalObservation(agent_id=agent_id)
@@ -855,21 +887,23 @@ class PathBAgent:
         """
         Check for HARD_OVERDUE obligations and auto-disconnect.
 
-        Item 3: HARD_OVERDUE obligations trigger automatic disconnect.
+        Item 3 + R6: Uses formal ObligationRecord lifecycle.
         """
         now = time.time()
         for agent_id, obl in list(self._obligations.items()):
-            if obl["status"] != "pending":
+            if obl.status != ObligationStatus.PENDING:
                 continue
-            if now > obl["deadline"]:
-                obl["status"] = "hard_overdue"
+            if obl.is_overdue(now):
+                obl.status = ObligationStatus.HARD_OVERDUE
+                obl.hard_violation_at = now
+                obl.updated_at = now
                 self._write_cieu(
                     ExternalGovernanceCycle(
                         observation=ExternalObservation(agent_id=agent_id)
                     ),
                     "OBLIGATION_HARD_OVERDUE",
                     [],
-                    reason=f"obligation '{obl['type']}' exceeded deadline",
+                    reason=f"obligation '{obl.obligation_type}' exceeded deadline",
                 )
                 # Auto-disconnect on HARD_OVERDUE
                 self.disconnect_external_agent(agent_id, reason="hard_overdue")
@@ -953,48 +987,49 @@ class PathBAgent:
         """
         T7: Intermediate actions before full disconnect.
 
-        Escalation ladder:
-          1. warn           — CIEU record, no enforcement change
-          2. downgrade      — contract permissions reduced
-          3. freeze         — session frozen
-          4. disconnect     — full disconnect
+        R5: Escalation ladder is driven by self.policy.escalation_steps (swappable).
+        Default: warn -> downgrade -> freeze -> disconnect
 
         Returns ExternalGovernanceResult with the action taken.
         """
         actions_taken: List[str] = []
+        steps = self.policy.escalation_steps
 
-        # Step 1: warn
-        self.execute_action(ExternalGovernanceAction.APPLY_CONSTRAINT, agent_id,
-                            {"reason": f"warn:{reason}"})
-        actions_taken.append("warned")
+        for step in steps:
+            if step == "warn":
+                self.execute_action(ExternalGovernanceAction.APPLY_CONSTRAINT, agent_id,
+                                    {"reason": f"warn:{reason}"})
+                actions_taken.append("warned")
 
-        # Step 2: downgrade contract
-        existing = self._active_constraints.get(agent_id)
-        if existing:
-            downgraded = IntentContract(
-                name=f"path_b:downgraded:{agent_id[:8]}",
-                deny=existing.deny or [],
-                deny_commands=existing.deny_commands or [],
-                only_paths=[], only_domains=[],
-            )
-            self._active_constraints[agent_id] = downgraded
-            self.execute_action(ExternalGovernanceAction.DOWNGRADE_CONTRACT, agent_id,
-                                {"reason": reason})
-            actions_taken.append("downgraded")
+            elif step == "downgrade":
+                existing = self._active_constraints.get(agent_id)
+                if existing:
+                    downgraded = IntentContract(
+                        name=f"path_b:downgraded:{agent_id[:8]}",
+                        deny=existing.deny or [],
+                        deny_commands=existing.deny_commands or [],
+                        only_paths=[], only_domains=[],
+                    )
+                    self._active_constraints[agent_id] = downgraded
+                    self.execute_action(ExternalGovernanceAction.DOWNGRADE_CONTRACT, agent_id,
+                                        {"reason": reason})
+                    actions_taken.append("downgraded")
 
-        # Step 3: freeze session
-        self._frozen_sessions[agent_id] = True
-        self.execute_action(ExternalGovernanceAction.FREEZE_SESSION, agent_id,
-                            {"reason": reason})
-        actions_taken.append("frozen")
+            elif step == "freeze":
+                self._frozen_sessions[agent_id] = True
+                self.execute_action(ExternalGovernanceAction.FREEZE_SESSION, agent_id,
+                                    {"reason": reason})
+                actions_taken.append("frozen")
 
-        # Step 4: disconnect
-        result = self.disconnect_external_agent(agent_id, reason=reason)
-        actions_taken.append("disconnected")
+            elif step == "disconnect":
+                self.disconnect_external_agent(agent_id, reason=reason)
+                actions_taken.append("disconnected")
 
+        last_action = ExternalGovernanceAction.DISCONNECT_AGENT if "disconnected" in actions_taken else ExternalGovernanceAction.FREEZE_SESSION
         return ExternalGovernanceResult(
-            status="disconnected", agent_id=agent_id,
-            action=ExternalGovernanceAction.DISCONNECT_AGENT,
+            status="disconnected" if "disconnected" in actions_taken else "frozen",
+            agent_id=agent_id,
+            action=last_action,
             details=f"escalation_steps={actions_taken}",
         )
 

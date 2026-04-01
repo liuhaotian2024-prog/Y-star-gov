@@ -110,12 +110,13 @@ def suggestion_to_contract(
         "target":           str(suggestion.suggested_value)[:80],
     }
 
-    # 读取宪法文本 hash（用于 IntentContract.hash 溯源）
+    # 读取宪法文本 hash（用于 IntentContract.hash 溯源）— via ConstitutionProvider
     constitution_hash = None
     try:
-        with open(_PATH_A_AGENTS_MD, 'rb') as fh:
-            import hashlib
-            constitution_hash = "sha256:" + hashlib.sha256(fh.read()).hexdigest()[:16]
+        _provider = ConstitutionProvider()
+        _bundle = _provider.resolve(_PATH_A_AGENTS_MD)
+        if _bundle.source_hash:
+            constitution_hash = "sha256:" + _bundle.source_hash[:16]
     except Exception:
         pass
 
@@ -281,12 +282,15 @@ class PathAAgent:
         self.explorer      = CombinatorialExplorer(planner.graph, self.causal_engine)
         # BUG 2 FIX: Initialize omission_engine from omission_store
         self.omission_engine = OmissionEngine(store=self.omission_store, cieu_store=self.cieu_store) if self.omission_store else None
-        # 加载路径A宪法文本
+        # 加载路径A宪法文本 — via ConstitutionProvider (fail-closed: no direct file fallback)
         self._constitution_path = _PATH_A_AGENTS_MD
         try:
-            import hashlib as _hl
-            with open(_PATH_A_AGENTS_MD, 'rb') as _cf:
-                self._constitution_hash = 'sha256:' + _hl.sha256(_cf.read()).hexdigest()[:16]
+            _init_provider = ConstitutionProvider()
+            _init_bundle = _init_provider.resolve(_PATH_A_AGENTS_MD)
+            if _init_bundle.source_hash:
+                self._constitution_hash = 'sha256:' + _init_bundle.source_hash[:16]
+            else:
+                self._constitution_hash = 'sha256:unavailable'
         except Exception:
             self._constitution_hash = 'sha256:unavailable'
         # 注册进 DelegationChain（委托深度=1，父=governance_loop）
@@ -316,7 +320,7 @@ class PathAAgent:
 
 
     def _load_constitution_hash(self) -> str:
-        # Constitution provider is the primary path (F3)
+        # Constitution provider is the ONLY path — fail-closed (no direct file fallback)
         if self._constitution_provider is not None:
             try:
                 h = self._constitution_provider(self._constitution_path)
@@ -324,25 +328,15 @@ class PathAAgent:
                     return h
             except Exception:
                 pass
-            # If provider is set but failed, do NOT fall back — provider is authoritative
-            return 'sha256:unavailable'
-        # Deprecated fallback: direct file reading
-        import logging as _logging
-        _logging.getLogger("ystar.path_a").warning(
-            "Direct constitution loading is deprecated; use constitution_provider"
-        )
-        try:
-            import hashlib
-            with open(self._constitution_path, 'rb') as f:
-                return 'sha256:' + hashlib.sha256(f.read()).hexdigest()[:16]
-        except Exception:
-            return 'sha256:unavailable'
+        # Fail-closed: if provider is absent or fails, return unavailable
+        return 'sha256:unavailable'
 
     def constitution_summary(self) -> str:
         try:
-            with open(self._constitution_path) as f:
-                n = sum(1 for _ in f)
-            return (f'PATH_A: {n} lines  hash={self._constitution_hash}  '
+            _provider = ConstitutionProvider()
+            _bundle = _provider.resolve(self._constitution_path)
+            return (f'PATH_A: hash={self._constitution_hash}  '
+                    f'valid={_bundle.is_valid()}  '
                     f'depth={self._delegation_depth}  parent={self._parent_id}')
         except Exception:
             return 'PATH_A: unavailable'
