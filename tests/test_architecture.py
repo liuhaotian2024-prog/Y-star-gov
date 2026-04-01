@@ -522,3 +522,31 @@ class TestProviderSovereignty:
             assert bundle2.previous_hash == bundle1.source_hash
         finally:
             os.unlink(tmp_path)
+
+
+class TestCausalFoundationGeneralized:
+    """CausalEngine must be domain-agnostic (configurable DAG)."""
+
+    def test_default_dag_is_swoh(self):
+        """Default DAG uses S/W/O/H governance variables."""
+        from ystar.governance.causal_engine import CausalEngine
+        engine = CausalEngine()
+        assert 'S' in engine._equations
+        assert 'H' in engine._equations
+
+    def test_custom_dag_accepted(self):
+        """CausalEngine accepts a custom DAG for non-governance domains."""
+        from ystar.governance.causal_engine import CausalEngine
+        custom_dag = {'A': ['B'], 'B': ['C']}
+        engine = CausalEngine(dag_edges=custom_dag)
+        assert 'A' in engine._equations
+        assert 'B' in engine._equations
+        assert 'C' in engine._equations
+        assert engine._equations['B'].parents == ['A']
+
+    def test_governance_loop_extractions_exist(self):
+        """GovernanceLoop must delegate to extracted causal_feedback and proposal_submission."""
+        source_path = os.path.join(_YSTAR_ROOT, "governance", "governance_loop.py")
+        source = _read_source(source_path)
+        assert "causal_feedback" in source, "GovernanceLoop must import from causal_feedback"
+        assert "proposal_submission" in source, "GovernanceLoop must import from proposal_submission"

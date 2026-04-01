@@ -92,9 +92,10 @@ class CausalState:
 
 @dataclass
 class CausalObservation:
-    """一次完整的循环观测（用于构建 SCM）。
-    # TODO: This dataclass references PathA in its original docstring but is a Foundation-layer
-    # construct. It should be generalized to support any governance loop cycle, not just PathA.
+    """One complete cycle observation (for building the SCM).
+
+    Foundation-layer construct — used by any governance cycle (Path A, Path B,
+    GovernanceLoop), not specific to any single line.
     """
     state_before: CausalState
     state_after:  CausalState
@@ -155,32 +156,38 @@ class CausalEngine:
     #   S → W → O → H, with W → H as a direct effect.
     # The H→S edge is cross-temporal (H_t causes S_{t+1}) and is handled
     # by conditioning on S as an observed exogenous input for each cycle.
-    _DAG_EDGES = {
+    # Default Y*gov governance DAG (S→W→O→H).
+    # Override via dag_edges parameter for non-governance domains.
+    DEFAULT_DAG_EDGES = {
         'S': ['W'],        # Suggestions cause Wiring decisions
         'W': ['O', 'H'],   # Wiring causes Obligation fulfillment AND Health
         'O': ['H'],        # Obligations cause Health
         # H has no children within a single cycle (H→S is cross-temporal)
     }
 
-    def __init__(self, confidence_threshold: float = 0.65):
+    def __init__(
+        self,
+        confidence_threshold: float = 0.65,
+        dag_edges: Optional[Dict[str, list]] = None,
+    ):
         self.confidence_threshold = confidence_threshold
         self._observations: List[CausalObservation] = []
 
-        # Pearl Level 2: Causal DAG
-        self._causal_graph = CausalGraph(self._DAG_EDGES)
+        # Pearl Level 2: Causal DAG (configurable for non-governance domains)
+        effective_edges = dag_edges if dag_edges is not None else self.DEFAULT_DAG_EDGES
+        self._causal_graph = CausalGraph(effective_edges)
 
         # Pearl Level 2: Backdoor adjustment
         self._adjuster = BackdoorAdjuster(self._causal_graph)
 
-        # Pearl Level 3: Structural equations (within-cycle DAG)
-        # S is exogenous within a cycle (determined by previous cycle's H).
-        # Only W, O, H have structural equations with endogenous parents.
-        self._equations: Dict[str, StructuralEquation] = {
-            'S': StructuralEquation('S', []),     # Exogenous within cycle
-            'W': StructuralEquation('W', ['S']),
-            'O': StructuralEquation('O', ['W']),
-            'H': StructuralEquation('H', ['O', 'W']),
-        }
+        # Pearl Level 3: Structural equations (derived from DAG)
+        all_vars: Set[str] = set(effective_edges.keys())
+        for children in effective_edges.values():
+            all_vars.update(children)
+        self._equations: Dict[str, StructuralEquation] = {}
+        for var in sorted(all_vars):
+            parents = [p for p, children in effective_edges.items() if var in children]
+            self._equations[var] = StructuralEquation(var, parents)
         # Initialize with domain defaults
         for eq in self._equations.values():
             eq._set_domain_defaults()
