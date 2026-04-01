@@ -29,7 +29,120 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+import logging
+import sys
+
 from ystar.session import Policy, PolicyResult
+
+_log = logging.getLogger("ystar.hook")
+if not _log.handlers:
+    _h = logging.StreamHandler(sys.stderr)
+    _h.setFormatter(logging.Formatter("[Y*hook] %(levelname)s %(message)s"))
+    _log.addHandler(_h)
+    _log.setLevel(logging.WARNING)
+
+
+# ── 角色写路径边界（来自 AGENTS.md "Write Access" 节）─────────────────────
+# only_paths 不能用于此目的（它会同时限制读操作）
+# 所以写路径检查在 hook 层单独执行，仅对 Write/Edit/MultiEdit 生效
+# 路径用 / 格式，检查时做 normpath
+
+_AGENT_WRITE_PATHS: Dict[str, list] = {
+    "ystar-ceo": ["./reports/"],
+    "ystar-cto": [
+        "./src/", "./tests/", "./products/ystar-gov/", "./products/",
+        "./docs/", ".github/", "CHANGELOG.md",
+        # CTO 也有 Y*gov 源码仓库的写权限
+        "C:/Users/liuha/OneDrive/桌面/Y-star-gov/",
+    ],
+    "ystar-cmo": ["./content/", "./marketing/"],
+    "ystar-cso": ["./sales/"],
+    "ystar-cfo": ["./finance/", "./reports/"],
+}
+
+# 写操作工具名
+_WRITE_TOOLS = {"Write", "Edit", "MultiEdit"}
+
+
+# ── Agent 身份检测 ──────────────────────────────────────────────────────────
+
+def _detect_agent_id(hook_payload: Dict[str, Any]) -> str:
+    """
+    从多个来源检测当前操作的 agent 身份。
+
+    优先级：
+    1. hook_payload 里的 agent_id 字段
+    2. 环境变量 YSTAR_AGENT_ID
+    3. 环境变量 CLAUDE_AGENT_NAME（Claude Code 可能设置）
+    4. .ystar_active_agent 文件（agent 在 session start 时写入）
+    5. 回退到 "agent"
+    """
+    # 1. payload
+    aid = hook_payload.get("agent_id", "")
+    if aid and aid != "agent":
+        return aid
+
+    # 2. env: YSTAR_AGENT_ID
+    aid = os.environ.get("YSTAR_AGENT_ID", "")
+    if aid:
+        return aid
+
+    # 3. env: CLAUDE_AGENT_NAME
+    aid = os.environ.get("CLAUDE_AGENT_NAME", "")
+    if aid:
+        return aid
+
+    # 4. marker file
+    marker = Path(".ystar_active_agent")
+    if marker.exists():
+        try:
+            content = marker.read_text(encoding="utf-8").strip()
+            if content:
+                return content
+        except Exception:
+            pass
+
+    return "agent"
+
+
+def _check_write_boundary(
+    who: str, tool_name: str, params: dict
+) -> Optional[PolicyResult]:
+    """
+    对 Write/Edit/MultiEdit 工具强制执行角色写路径边界。
+
+    如果 who 有定义写路径限制且文件不在允许范围内，返回 deny PolicyResult。
+    否则返回 None（放行）。
+    """
+    if tool_name not in _WRITE_TOOLS:
+        return None
+
+    allowed = _AGENT_WRITE_PATHS.get(who)
+    if not allowed:
+        return None   # 未定义边界的 agent 不受限
+
+    file_path = params.get("file_path", "")
+    if not file_path:
+        return None
+
+    # 归一化路径（处理 Windows 反斜杠）
+    norm_target = os.path.normpath(os.path.abspath(file_path))
+
+    for ap in allowed:
+        norm_allowed = os.path.normpath(os.path.abspath(ap))
+        if norm_target == norm_allowed or norm_target.startswith(norm_allowed + os.sep):
+            return None   # 在允许范围内
+
+    return PolicyResult(
+        allowed=False,
+        reason=(
+            f"Write boundary violation: agent '{who}' cannot write to '{file_path}'. "
+            f"Allowed write paths: {allowed}"
+        ),
+        who=who,
+        what=tool_name,
+        violations=[],
+    )
 
 
 # ── 工具名 → Y* 参数字段的映射 ────────────────────────────────────────────
@@ -201,14 +314,36 @@ def check_hook(
     """
     tool_name  = hook_payload.get("tool_name", "")
     tool_input = hook_payload.get("tool_input", {})
-    who        = agent_id or hook_payload.get("agent_id", "agent")
+
+    # ── P0-2: 检测 agent 身份 ──────────────────────────────────────
+    who = agent_id or _detect_agent_id(hook_payload)
     session_id_payload = hook_payload.get("session_id", "")
 
-    # 若 agent_id 未在 Policy 里注册，回退到第一个已注册的角色
+    # 若 agent_id 未在 Policy 里注册，回退到 "agent" fallback
     if who not in policy:
-        registered = list(policy._rules.keys())
-        if registered:
-            who = registered[0]
+        if "agent" in policy:
+            who = "agent"
+        else:
+            registered = list(policy._rules.keys())
+            if registered:
+                who = registered[0]
+
+    # ── P0-1: 写路径边界检查（仅 Write/Edit/MultiEdit）──────────────
+    params_early = _extract_params(tool_name, tool_input)
+    write_deny = _check_write_boundary(who, tool_name, params_early)
+    if write_deny is not None:
+        # 写入 CIEU 记录（deny）
+        cieu_db = ".ystar_cieu.db"
+        session_cfg_early = _load_session_config()
+        if session_cfg_early:
+            cieu_db = session_cfg_early.get("cieu_db", cieu_db)
+        contract = policy._rules.get(who)
+        _write_cieu(who, tool_name, params_early, write_deny,
+                    session_id_payload or "unknown",
+                    contract.hash if contract else "", cieu_db)
+        _log.warning("DENY write boundary: %s → %s (%s)",
+                     who, params_early.get("file_path", "?"), write_deny.reason)
+        return _result_to_response(write_deny)
 
     # ── 尝试完整治理路径（有 session 配置时自动升级）────────────────
     session_cfg = _load_session_config()
@@ -220,8 +355,9 @@ def check_hook(
                 session_cfg,
             )
             return response
-        except Exception:
-            pass   # 完整路径失败 → 静默降级到轻量路径
+        except Exception as exc:
+            # P0-3: 不再静默降级 — 记录错误以便诊断
+            _log.error("Full governance path failed, degrading to light path: %s", exc)
 
     # ── 轻量路径（无 session 或完整路径失败）────────────────────────
     params   = _extract_params(tool_name, tool_input)
@@ -242,6 +378,9 @@ def check_hook(
             session_id_payload or "unknown",
             result
         )
+
+    # ── Orchestrator: feed advanced governance subsystems ─────────────────
+    _run_orchestrator(who, tool_name, params, result, session_cfg)
 
     return _result_to_response(result)
 
@@ -298,8 +437,8 @@ def _check_hook_full(
     cieu_db = session_cfg.get("cieu_db", ".ystar_cieu.db")
     configure_auto_persist(cieu_db)
 
-    # 从 session 合约里读取 obligation_timing，配置 omission engine
-    _setup_omission_from_contract(session_cfg, cieu_db)
+    # 从 session 合约里读取 obligation_timing，配置 omission engine（按角色过滤）
+    _setup_omission_from_contract(session_cfg, cieu_db, agent_id=who)
 
     # ── tool_name → EventType（含委托类事件）───────────────────────────
     _EVENT_MAP = {
@@ -362,35 +501,75 @@ def _check_hook_full(
         # ── NEW: Process DENY triggers (Trigger #7: Failure Case Documentation) ──
         _process_obligation_triggers(tool_name, tool_input, who, session_id, decision)
 
+        # ── Orchestrator: feed advanced governance subsystems (DENY path) ────
+        _run_orchestrator(who, tool_name, params, decision, session_cfg)
+
         return {"action": "block", "message": message}
 
     # ── NEW: Process ALLOW triggers (full path) ──────────────────────────────
     _process_obligation_triggers(tool_name, tool_input, who, session_id, decision)
 
+    # ── Orchestrator: feed advanced governance subsystems (ALLOW path) ────
+    _run_orchestrator(who, tool_name, params, decision, session_cfg)
+
     return {}
 
 
 # 缓存：避免每次 hook 都重建 omission adapter
-_omission_session_id: Optional[str] = None
+_omission_cache_key: Optional[str] = None
+
+
+def _filter_obligations_by_agent(
+    session_cfg: Dict[str, Any],
+    contract_dict: dict,
+    agent_id: str,
+) -> dict:
+    """
+    根据 obligation_agent_scope 过滤 obligation_timing，
+    只保留属于当前 agent 的义务。
+
+    scope 格式：{"rule_id": ["ystar-cto"]}
+    "*" 表示适用于所有 agent。
+    无 scope 配置 → 全部保留（向后兼容）。
+    """
+    scope = session_cfg.get("obligation_agent_scope")
+    if not scope:
+        return contract_dict   # 无 scope → 向后兼容，全部保留
+
+    timing = contract_dict.get("obligation_timing", {})
+    if not timing:
+        return contract_dict
+
+    filtered = {}
+    for rule_id, timeout in timing.items():
+        agents = scope.get(rule_id, ["*"])
+        if "*" in agents or agent_id in agents:
+            filtered[rule_id] = timeout
+
+    result = dict(contract_dict)
+    result["obligation_timing"] = filtered
+    return result
 
 
 def _setup_omission_from_contract(
     session_cfg: Dict[str, Any],
     cieu_db: str,
+    agent_id: str = "agent",
 ) -> None:
     """
     从 session 合约的 obligation_timing 配置 omission engine。
 
-    只在 session_id 变化时重新初始化（同一 session 复用同一 engine）。
-    这是时限来源链条的关键一环。
+    v0.49: 支持 obligation_agent_scope — 只注册属于当前 agent 的义务。
+    缓存 key = session_id + agent_id，不同 agent 可以有不同的义务集。
 
     omission 违规事件同时写入 CIEUStore，形成统一的因果日志。
     """
-    global _omission_session_id
+    global _omission_cache_key
 
     session_id = session_cfg.get("session_id", "")
-    if session_id and session_id == _omission_session_id:
-        return   # 同一 session，已经配置过
+    cache_key = f"{session_id}:{agent_id}"
+    if cache_key and cache_key == _omission_cache_key:
+        return   # 同一 session + agent，已经配置过
 
     try:
         from ystar.domains.openclaw.adapter import configure_omission_governance
@@ -404,6 +583,17 @@ def _setup_omission_from_contract(
 
         # 从 session 合约里构建 IntentContract（含 obligation_timing）
         contract_dict = session_cfg.get("contract") or {}
+
+        # ── P1-2: 按角色过滤义务 ──────────────────────────────────────
+        contract_dict = _filter_obligations_by_agent(
+            session_cfg, contract_dict, agent_id
+        )
+        n_total = len(session_cfg.get("contract", {}).get("obligation_timing", {}))
+        n_active = len(contract_dict.get("obligation_timing", {}))
+        if n_total != n_active:
+            _log.info("Obligation scoping: %s gets %d/%d obligations",
+                      agent_id, n_active, n_total)
+
         try:
             contract = IntentContract.from_dict(contract_dict)
         except Exception:
@@ -469,10 +659,45 @@ def _setup_omission_from_contract(
         except Exception:
             pass
 
-        _omission_session_id = session_id
+        _omission_cache_key = cache_key
 
+    except Exception as exc:
+        _log.error("Omission engine setup failed: %s", exc)
+
+
+# ── Orchestrator Integration ──────────────────────────────────────────────
+
+
+def _run_orchestrator(
+    who: str,
+    tool_name: str,
+    params: dict,
+    check_result: Any,
+    session_cfg: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Feed the Orchestrator after each hook call.
+
+    The orchestrator coordinates:
+      - InterventionEngine scan→pulse chain (every ~10 calls)
+      - GovernanceLoop meta-learning cycle (every ~50 calls)
+      - Path A self-governance (when health is degraded)
+      - CausalEngine advisory (on high-risk tools)
+
+    All failures are silently caught — the orchestrator never blocks the hook.
+    """
+    try:
+        from ystar.adapters.orchestrator import get_orchestrator
+        orch = get_orchestrator()
+        orch.on_hook_call(
+            agent_id=who,
+            tool_name=tool_name,
+            params=params,
+            check_result=check_result,
+            session_cfg=session_cfg,
+        )
     except Exception:
-        pass   # omission 配置失败不影响主路径
+        pass  # Orchestrator failure never blocks the hook
 
 
 # ── ObligationTrigger Integration ──────────────────────────────────────────

@@ -1,4 +1,17 @@
 {
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Users\\liuha\\AppData\\Local\\Programs\\Python\\Python314\\python.exe -c \"import json,sys;from ystar import Policy;from ystar.adapters.hook import check_hook;p=json.loads(sys.stdin.read());policy=Policy.from_agents_md('AGENTS.md',confirm=False) if __import__('pathlib').Path('AGENTS.md').exists() else Policy({});r=check_hook(p,policy);print(json.dumps(r))\""
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "defaultMode": "bypassPermissions",
     "allow": [

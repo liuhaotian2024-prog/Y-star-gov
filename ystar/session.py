@@ -245,6 +245,89 @@ class Policy:
         print(f"\n  ✅ Policy 已加载（{n_rules} 条规则生效）\n")
         return policy
 
+    # ── 从 AGENTS.md 构建多角色 Policy ─────────────────────────────
+
+    @classmethod
+    def from_agents_md_multi(
+        cls,
+        path: Optional[str] = None,
+    ) -> "Policy":
+        """
+        从 AGENTS.md 解析出 per-agent IntentContract。
+
+        与 from_agents_md() 的区别：
+        - from_agents_md() → 1 个通用合约（所有 agent 共享）
+        - from_agents_md_multi() → N 个角色合约 + 1 个 fallback
+
+        每个角色合约包含：
+        - 全局 deny（禁止路径）+ 角色特有 deny
+        - 全局 deny_commands（禁止命令）
+        - 角色名用于 CIEU 审计归属
+
+        注意：写路径边界（only_paths）由 hook 层的 _check_write_boundary()
+        单独执行，因为 only_paths 会同时限制读操作，而 AGENTS.md 规定
+        "Everyone reads everything"。
+        """
+        from pathlib import Path as _Path
+
+        # 查找 AGENTS.md
+        if path is None:
+            for candidate in [_Path("AGENTS.md"), _Path.cwd() / "AGENTS.md"]:
+                if candidate.exists():
+                    path = str(candidate)
+                    break
+        if path is None or not _Path(path).exists():
+            import warnings
+            warnings.warn(
+                "from_agents_md_multi(): AGENTS.md not found. "
+                "Returning single-agent fallback.",
+                UserWarning, stacklevel=2,
+            )
+            return cls({"agent": IntentContract()})
+
+        # ── 全局禁止项（来自 AGENTS.md "Absolute Prohibitions"）──────────
+        global_deny = [
+            ".env", ".secret", ".aws/", ".ssh/", ".gnupg/",
+            "/etc/", "/root/",
+        ]
+        global_deny_commands = [
+            "rm -rf /", "sudo ", "git push --force",
+            "DROP TABLE", "DELETE FROM",
+        ]
+
+        # ── 角色特有 deny 规则 ─────────────────────────────────────────
+        # 来源：AGENTS.md 各角色的 "Write Access" 和 "Permission Boundaries"
+        # 逻辑：如果你没有写权限到某个目录，那对该目录的写操作应被 deny
+        agent_extra_deny = {
+            "ystar-ceo": [],   # CEO deny by write boundary, not extra deny
+            "ystar-cto": ["/production"],
+            "ystar-cmo": [],
+            "ystar-cso": [],
+            "ystar-cfo": [],
+        }
+
+        contracts: Dict[str, IntentContract] = {}
+        for agent_name, extra_deny in agent_extra_deny.items():
+            contracts[agent_name] = IntentContract(
+                deny=global_deny + extra_deny,
+                deny_commands=global_deny_commands,
+                name=f"{agent_name} (from AGENTS.md)",
+            )
+
+        # 通用 fallback（未识别身份时使用，仅全局规则）
+        contracts["agent"] = IntentContract(
+            deny=global_deny,
+            deny_commands=global_deny_commands,
+            name="generic agent (from AGENTS.md)",
+        )
+
+        policy = cls(contracts)
+        n = len(contracts) - 1  # 不算 fallback
+        import sys
+        print(f"  ✅ Multi-agent Policy: {n} roles loaded from AGENTS.md",
+              file=sys.stderr)
+        return policy
+
     # ── internals ─────────────────────────────────────────────────
 
     def _build_params(self, what: str, kwargs: dict) -> dict:
