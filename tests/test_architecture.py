@@ -394,3 +394,131 @@ class TestForbidDirectConstitutionLoading:
             "run_one_cycle still has hardcoded deny=[\"/etc\"...] — "
             "should use self.policy.self_governance_deny"
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# R10: Foundation Sovereignty — Scope, Compiler, Provider Authority Tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestScopeProtocolSovereignty:
+    """Scope encoding is the single authority for prefix logic."""
+
+    def test_engine_uses_split_scopes(self):
+        """engine.py must import split_scopes, not decode inline."""
+        filepath = os.path.join(_YSTAR_ROOT, "kernel", "engine.py")
+        source = _read_source(filepath)
+        assert "split_scopes" in source, (
+            "engine.py must use split_scopes() from scope_encoding"
+        )
+        # Must NOT have the old inline pattern
+        for old_pattern in ['p[7:]', 'p[9:]', 'p[16:]']:
+            assert old_pattern not in source, (
+                f"engine.py still has inline '{old_pattern}' — use scope_encoding decode functions"
+            )
+
+    def test_scope_decode_roundtrip(self):
+        """Encode → decode roundtrip must be lossless."""
+        from ystar.kernel.scope_encoding import (
+            encode_module_scope, decode_module_scope,
+            encode_external_scope, decode_external_scope,
+            encode_external_domain, decode_external_domain,
+        )
+        modules = ["causal_engine", "omission_engine"]
+        encoded = encode_module_scope(modules)
+        assert decode_module_scope(encoded) == modules
+
+        ext_encoded = [encode_external_scope("agent_42")]
+        assert decode_external_scope(ext_encoded) == ["agent_42"]
+
+        dom_encoded = [encode_external_domain("finance")]
+        assert decode_external_domain(dom_encoded) == ["finance"]
+
+    def test_split_scopes_mixed(self):
+        """split_scopes correctly separates a mixed list."""
+        from ystar.kernel.scope_encoding import split_scopes
+        mixed = ["module:x", "external:a", "external_domain:d", "/tmp"]
+        m, e, d, p = split_scopes(mixed)
+        assert m == ["x"]
+        assert e == ["a"]
+        assert d == ["d"]
+        assert p == ["/tmp"]
+
+    def test_validate_scope(self):
+        """validate_scope rejects empty and malformed scopes."""
+        from ystar.kernel.scope_encoding import validate_scope
+        assert validate_scope("module:causal_engine") is True
+        assert validate_scope("external:agent_42") is True
+        assert validate_scope("external_domain:finance") is True
+        assert validate_scope("/etc/hosts") is True
+        assert validate_scope("module:") is False
+        assert validate_scope("") is False
+
+
+class TestCompilerSovereignty:
+    """CompiledContractBundle has full audit fields."""
+
+    def test_bundle_has_timestamp(self):
+        """CompiledContractBundle must include compiled_at timestamp."""
+        from ystar.kernel.compiler import CompiledContractBundle
+        from ystar.kernel.dimensions import IntentContract
+        bundle = CompiledContractBundle(
+            contract=IntentContract(name="test"),
+            source_hash="abc",
+            source_ref="test.md",
+        )
+        assert bundle.compiled_at > 0, "compiled_at must auto-populate"
+
+    def test_bundle_has_amendment_fields(self):
+        """CompiledContractBundle must track amendment_version and previous_hash."""
+        from ystar.kernel.compiler import CompiledContractBundle
+        from ystar.kernel.dimensions import IntentContract
+        bundle = CompiledContractBundle(
+            contract=IntentContract(name="test"),
+            source_hash="abc",
+            source_ref="test.md",
+            previous_hash="old_hash",
+            amendment_version=2,
+        )
+        assert bundle.previous_hash == "old_hash"
+        assert bundle.amendment_version == 2
+
+
+class TestProviderSovereignty:
+    """ConstitutionProvider has version tracking and hash verification."""
+
+    def test_provider_has_resolve_latest(self):
+        """ConstitutionProvider must expose resolve_latest()."""
+        from ystar.kernel.contract_provider import ConstitutionProvider
+        provider = ConstitutionProvider()
+        assert hasattr(provider, "resolve_latest")
+
+    def test_provider_has_verify_hash(self):
+        """ConstitutionProvider must expose verify_hash()."""
+        from ystar.kernel.contract_provider import ConstitutionProvider
+        provider = ConstitutionProvider()
+        assert hasattr(provider, "verify_hash")
+
+    def test_provider_has_get_version(self):
+        """ConstitutionProvider must expose get_version()."""
+        from ystar.kernel.contract_provider import ConstitutionProvider
+        provider = ConstitutionProvider()
+        assert hasattr(provider, "get_version")
+
+    def test_provider_version_increments(self):
+        """Each resolve after invalidation must increment version."""
+        import tempfile, os
+        from ystar.kernel.contract_provider import ConstitutionProvider
+        provider = ConstitutionProvider()
+        # Create a temp constitution file
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+            f.write("# Test Constitution\n- rule: be good\n")
+            tmp_path = f.name
+        try:
+            bundle1 = provider.resolve(tmp_path)
+            assert bundle1.version == 1
+            provider.invalidate_cache(tmp_path)
+            bundle2 = provider.resolve(tmp_path)
+            assert bundle2.version == 2
+            assert bundle2.previous_hash == bundle1.source_hash
+        finally:
+            os.unlink(tmp_path)

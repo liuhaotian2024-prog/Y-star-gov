@@ -38,6 +38,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from ystar.kernel.dimensions import IntentContract
+from ystar.kernel.scope_encoding import split_scopes
 
 
 # ── Result types ─────────────────────────────────────────────────────────────
@@ -402,18 +403,8 @@ def check(
     # GAP-1 (meta-agent): recognize "module:" prefix for module scope constraints
     if contract.only_paths:
         # Separate module, external, external_domain, and filesystem path constraints
-        module_constraints = [p[7:] for p in contract.only_paths if p.startswith("module:")]
-        external_constraints = [p[9:] for p in contract.only_paths if p.startswith("external:")]
-        # T17: external_domain prefix for domain-specific external governance
-        external_domain_constraints = [
-            p[16:] for p in contract.only_paths if p.startswith("external_domain:")
-        ]
-        path_constraints = [
-            p for p in contract.only_paths
-            if not p.startswith("module:")
-            and not p.startswith("external:")
-            and not p.startswith("external_domain:")
-        ]
+        module_constraints, external_constraints, external_domain_constraints, path_constraints = \
+            split_scopes(contract.only_paths)
 
         # Item 5: Check external agent scope (same pattern as module: prefix)
         if external_constraints:

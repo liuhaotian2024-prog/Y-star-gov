@@ -16,7 +16,7 @@ This centralizes:
 """
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from ystar.kernel.compiler import CompiledContractBundle, compile_constitution
 
@@ -38,6 +38,8 @@ class ConstitutionProvider:
     def __init__(self, compiler=None) -> None:
         self._cache: Dict[str, CompiledContractBundle] = {}
         self._compiler = compiler  # reserved for future custom compiler injection
+        self._version_counter: Dict[str, int] = {}
+        self._hash_history: Dict[str, List[str]] = {}
 
     def resolve(self, source_ref: str) -> CompiledContractBundle:
         """
@@ -49,8 +51,22 @@ class ConstitutionProvider:
             return self._cache[source_ref]
 
         bundle = compile_constitution(source_ref)
+        # Track version and hash history
+        prev_hash = self._hash_history.get(source_ref, [""])[-1] if source_ref in self._hash_history else ""
+        self._version_counter[source_ref] = self._version_counter.get(source_ref, 0) + 1
+        bundle.version = self._version_counter[source_ref]
+        bundle.previous_hash = prev_hash
+        self._hash_history.setdefault(source_ref, []).append(bundle.source_hash)
+
         self._cache[source_ref] = bundle
         return bundle
+
+    def resolve_latest(self, source_ref: str) -> CompiledContractBundle:
+        """
+        Force re-read and return the latest constitution, bypassing cache.
+        """
+        self._cache.pop(source_ref, None)
+        return self.resolve(source_ref)
 
     def get_hash(self, source_ref: str) -> str:
         """
@@ -61,6 +77,19 @@ class ConstitutionProvider:
         """
         bundle = self.resolve(source_ref)
         return bundle.source_hash
+
+    def verify_hash(self, source_ref: str, expected_hash: str) -> bool:
+        """
+        Verify that the current constitution hash matches an expected value.
+
+        Useful for detecting tampering or drift between cached and on-disk state.
+        """
+        current = self.get_hash(source_ref)
+        return current != "" and current == expected_hash
+
+    def get_version(self, source_ref: str) -> int:
+        """Return the current version number for a constitution reference."""
+        return self._version_counter.get(source_ref, 0)
 
     def invalidate_cache(self, source_ref: Optional[str] = None) -> None:
         """

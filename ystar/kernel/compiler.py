@@ -21,6 +21,7 @@ Pipeline:
 from __future__ import annotations
 
 import hashlib
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
@@ -37,6 +38,13 @@ class CompiledContractBundle:
     confidence: float = 1.0
     diagnostics: Optional[dict] = None
     compile_method: str = ""  # "llm", "regex", "manual", "policy"
+    compiled_at: float = 0.0  # epoch timestamp of compilation
+    previous_hash: str = ""   # hash of the previous version (audit trail)
+    amendment_version: int = 0  # which amendment produced this bundle (0 = original)
+
+    def __post_init__(self):
+        if self.compiled_at == 0.0:
+            self.compiled_at = time.time()
 
     def is_valid(self) -> bool:
         """Check if compilation produced a usable contract."""
