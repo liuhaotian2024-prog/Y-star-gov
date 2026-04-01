@@ -38,6 +38,7 @@ class CompiledContractBundle:
     confidence: float = 1.0
     diagnostics: Optional[dict] = None
     compile_method: str = ""  # "llm", "regex", "manual", "policy"
+    source_type: str = ""     # "constitution", "policy", "nl", "manual"
     compiled_at: float = 0.0  # epoch timestamp of compilation
     previous_hash: str = ""   # hash of the previous version (audit trail)
     amendment_version: int = 0  # which amendment produced this bundle (0 = original)
@@ -119,6 +120,7 @@ def compile_source(
         confidence=confidence,
         diagnostics=diagnostics,
         compile_method=compile_method,
+        source_type="nl",
     )
 
 
@@ -150,6 +152,7 @@ def compile_constitution(file_path: str) -> CompiledContractBundle:
         )
 
     bundle = compile_source(content, source_ref=file_path)
+    bundle.source_type = "constitution"
     # Override source_hash with binary hash for constitution integrity
     try:
         with open(file_path, "rb") as f:

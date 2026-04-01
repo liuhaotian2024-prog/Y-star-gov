@@ -91,6 +91,18 @@ class ConstitutionProvider:
         """Return the current version number for a constitution reference."""
         return self._version_counter.get(source_ref, 0)
 
+    def resolve_by_hash(self, expected_hash: str) -> Optional[CompiledContractBundle]:
+        """
+        Find a cached bundle whose source_hash matches expected_hash.
+
+        Searches all cached constitutions. Returns None if no match found.
+        Useful for auditing: given a hash, retrieve the constitution that produced it.
+        """
+        for bundle in self._cache.values():
+            if bundle.source_hash == expected_hash:
+                return bundle
+        return None
+
     def invalidate_cache(self, source_ref: Optional[str] = None) -> None:
         """
         Invalidate cached constitution (after amendment).

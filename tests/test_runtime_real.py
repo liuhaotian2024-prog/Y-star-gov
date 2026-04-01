@@ -299,6 +299,147 @@ class TestRealAmendmentLifecycle:
         finally:
             os.unlink(db_path)
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Test 5: Runtime Authority Proof — Compiler/Provider/Scope Sovereignty
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestRuntimeAuthorityProof:
+    """P0 closure: prove sovereignty via real runtime paths, not just structure."""
+
+    def test_compiler_authority_path(self):
+        """compile_source → bundle has source_type, timestamp, hash; compile_constitution sets constitution type."""
+        from ystar.kernel.compiler import compile_source, compile_constitution
+        import tempfile, os
+
+        # NL source
+        bundle_nl = compile_source("Never access /secret.", source_ref="policy_001")
+        assert bundle_nl.source_type == "nl"
+        assert bundle_nl.compiled_at > 0
+        assert bundle_nl.source_hash != ""
+        assert bundle_nl.is_valid()
+
+        # Constitution source
+        fd, tmp = tempfile.mkstemp(suffix=".md")
+        os.close(fd)
+        try:
+            with open(tmp, "w") as f:
+                f.write("# Constitution\n- rule: no external access\n")
+            bundle_const = compile_constitution(tmp)
+            assert bundle_const.source_type == "constitution"
+            assert bundle_const.compiled_at > 0
+            assert bundle_const.source_hash != ""
+        finally:
+            os.unlink(tmp)
+
+    def test_provider_authority_path(self):
+        """Provider: resolve → version 1, invalidate → resolve → version 2, resolve_by_hash finds it, verify_hash works."""
+        from ystar.kernel.contract_provider import ConstitutionProvider
+        import tempfile, os
+
+        provider = ConstitutionProvider()
+        fd, tmp = tempfile.mkstemp(suffix=".md")
+        os.close(fd)
+        try:
+            with open(tmp, "w") as f:
+                f.write("# Auth Constitution\n- rule: be safe\n")
+
+            # First resolve
+            b1 = provider.resolve(tmp)
+            assert b1.version == 1
+            assert b1.previous_hash == ""
+            assert provider.get_version(tmp) == 1
+
+            # resolve_by_hash finds it
+            found = provider.resolve_by_hash(b1.source_hash)
+            assert found is not None
+            assert found.source_ref == tmp
+
+            # verify_hash
+            assert provider.verify_hash(tmp, b1.source_hash) is True
+            assert provider.verify_hash(tmp, "wrong_hash") is False
+
+            # Invalidate + re-resolve = version 2
+            provider.invalidate_cache(tmp)
+            b2 = provider.resolve(tmp)
+            assert b2.version == 2
+            assert b2.previous_hash == b1.source_hash
+
+            # resolve_latest forces re-read = version 3
+            b3 = provider.resolve_latest(tmp)
+            assert b3.version == 3
+
+            # resolve_by_hash still finds NOT found for bogus hash
+            assert provider.resolve_by_hash("nonexistent") is None
+
+        finally:
+            os.unlink(tmp)
+
+    def test_scope_authority_in_engine(self):
+        """Engine check() correctly enforces module/external/external_domain scopes via centralized split_scopes."""
+        from ystar.kernel.dimensions import IntentContract
+        from ystar.kernel.engine import check
+
+        # Module scope: only allow module:causal_engine
+        contract = IntentContract(
+            name="module_scope_test",
+            only_paths=["module:causal_engine"],
+        )
+        # Matching module
+        result = check(
+            {"module_id": "causal_engine"},
+            {},
+            contract,
+        )
+        assert result.passed
+
+        # Non-matching module
+        result_fail = check(
+            {"module_id": "omission_engine"},
+            {},
+            contract,
+        )
+        assert not result_fail.passed
+
+        # External scope
+        contract_ext = IntentContract(
+            name="external_scope_test",
+            only_paths=["external:agent_42"],
+        )
+        result_ext = check(
+            {"external_agent_id": "agent_42"},
+            {},
+            contract_ext,
+        )
+        assert result_ext.passed
+
+        result_ext_fail = check(
+            {"external_agent_id": "rogue_agent"},
+            {},
+            contract_ext,
+        )
+        assert not result_ext_fail.passed
+
+        # External domain scope
+        contract_dom = IntentContract(
+            name="domain_scope_test",
+            only_paths=["external_domain:finance"],
+        )
+        result_dom = check(
+            {"external_domain": "finance"},
+            {},
+            contract_dom,
+        )
+        assert result_dom.passed
+
+        result_dom_fail = check(
+            {"external_domain": "military"},
+            {},
+            contract_dom,
+        )
+        assert not result_dom_fail.passed
+
+
     def test_amendment_invalid_transitions(self):
         """Verify the state machine rejects invalid transitions."""
         from ystar.governance.amendment import AmendmentEngine, AmendmentProposal
