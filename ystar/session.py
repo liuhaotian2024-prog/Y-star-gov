@@ -321,21 +321,20 @@ class Policy:
         contracts: Dict[str, IntentContract] = {}
 
         for section in agent_sections:
-            # 匹配 "CEO Agent" / "CTO Agent (Technology + Product)" 等
+            # Match any "XXX Agent" header - role names are user-defined
+            # Examples: "CEO Agent", "Sales Agent", "Support Agent", etc.
             role_match = re.match(
                 r"(\w[\w\s]*?)\s*Agent\s*(?:\(.*?\))?\s*\n", section)
             if not role_match:
                 continue
 
-            role_title = role_match.group(1).strip()  # "CEO", "CTO", etc.
+            role_title = role_match.group(1).strip()  # Extract role name
 
-            # 从 .claude/agents/ 目录查找对应的 agent name
-            # 或构造标准名: "ystar-" + role_title.lower()
-            # 但为了通用性，直接用 role_title.lower() 作为 key
+            # Convert to lowercase key for policy lookup
+            # No hardcoded roles - any user-defined role name is valid
             agent_key = role_title.lower()
 
-            # agent_key = role title in lowercase (e.g. "ceo", "cto")
-            # Users can override via agent .md name: field
+            # Users can override the agent_key via agent .md name: field
 
             # 提取该角色的 deny（从 "cannot access" 或 "Prohibited" 描述）
             extra_deny: list = []
