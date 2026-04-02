@@ -14,16 +14,20 @@ import pytest
 
 from ystar.session import Policy
 from ystar.adapters.hook import (
+    check_hook,
+    _extract_params,
+)
+from ystar.adapters.identity_detector import (
     _detect_agent_id,
+)
+from ystar.adapters.boundary_enforcer import (
     _check_write_boundary,
     _load_write_paths_from_agents_md,
     _ensure_write_paths_loaded,
     _AGENT_WRITE_PATHS,
-    check_hook,
-    _extract_params,
     _extract_write_paths_from_bash,
 )
-import ystar.adapters.hook as hook_module
+import ystar.adapters.boundary_enforcer as boundary_module
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
@@ -185,9 +189,9 @@ class TestWriteBoundary:
         md.write_text(SAMPLE_AGENTS_MD)
 
         # Reset and reload
-        hook_module._WRITE_PATHS_LOADED = False
-        hook_module._AGENT_WRITE_PATHS = {}
-        hook_module._ensure_write_paths_loaded()
+        boundary_module._WRITE_PATHS_LOADED = False
+        boundary_module._AGENT_WRITE_PATHS = {}
+        boundary_module._ensure_write_paths_loaded()
 
     def test_doctor_allowed_patient_records(self):
         params = _extract_params("Write", {"file_path": "./patient_records/p1.md"})
@@ -247,8 +251,8 @@ class TestHookIntegration:
         md = tmp_path / "AGENTS.md"
         md.write_text(SAMPLE_AGENTS_MD)
         # Reset write paths
-        hook_module._WRITE_PATHS_LOADED = False
-        hook_module._AGENT_WRITE_PATHS = {}
+        boundary_module._WRITE_PATHS_LOADED = False
+        boundary_module._AGENT_WRITE_PATHS = {}
         return Policy.from_agents_md_multi(str(md))
 
     def test_doctor_write_own_path_allowed(self, policy):
@@ -376,8 +380,8 @@ class TestBashHookIntegration:
         md = tmp_path / "AGENTS.md"
         md.write_text(SAMPLE_AGENTS_MD)
         # Reset write paths
-        hook_module._WRITE_PATHS_LOADED = False
-        hook_module._AGENT_WRITE_PATHS = {}
+        boundary_module._WRITE_PATHS_LOADED = False
+        boundary_module._AGENT_WRITE_PATHS = {}
         return Policy.from_agents_md_multi(str(md))
 
     def test_bash_redirect_allowed_path(self, policy):

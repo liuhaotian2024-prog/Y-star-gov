@@ -1080,6 +1080,51 @@ class PathAAgent:
         self._history.append(cycle)
         return cycle
 
+    def pull_observations(self) -> List[Any]:
+        """
+        P1-3: Pull observations from GovernanceLoop instead of waiting for push.
+
+        Path A sovereignty: actively pull latest observations from governance_loop
+        to decide whether intervention is needed, rather than passively receiving
+        suggestions from tighten().
+
+        Returns:
+            List of GovernanceObservation objects from governance_loop
+        """
+        if not hasattr(self.gloop, '_observations'):
+            return []
+        return list(self.gloop._observations)
+
+    def evaluate_suggestion(self, suggestion: GovernanceSuggestion) -> bool:
+        """
+        P1-3: Path A autonomously decides whether to execute a suggestion.
+
+        Decision criteria:
+        - confidence >= policy.auto_confidence_threshold (default 0.65)
+        - suggestion_type in supported types (wire, tighten, observe, etc.)
+        - no conflicting human review gate
+
+        Args:
+            suggestion: GovernanceSuggestion to evaluate
+
+        Returns:
+            True if suggestion should be executed, False otherwise
+        """
+        # Reject low-confidence suggestions
+        if suggestion.confidence < self.policy.auto_confidence_threshold:
+            return False
+
+        # Reject if human review is pending
+        if self._human_review_required:
+            return False
+
+        # Accept only known suggestion types
+        supported_types = {"wire", "tighten", "observe", "relax", "rewire", "review"}
+        if suggestion.suggestion_type not in supported_types:
+            return False
+
+        return True
+
     def run_until_stable(self) -> List[MetaAgentCycle]:
         """运行多轮直到系统稳定或达到最大轮数。"""
         results = []

@@ -1244,3 +1244,158 @@ def test_action_scope_strict_subset():
     # Verify the specific exclusion
     assert "governance_loop.observe" not in child_scope
     assert "governance_loop.observe" in parent_scope
+
+
+# ── P1-3: Path A Pull Model Tests ─────────────────────────────────────────────
+
+def test_path_a_pulls_observations():
+    """Test that Path A can pull observations from GovernanceLoop."""
+    from ystar.governance.governance_loop import GovernanceLoop, GovernanceObservation
+    from ystar.governance.reporting import ReportEngine
+    from ystar.governance.omission_store import OmissionStore
+
+    # Setup
+    store = OmissionStore()
+    report_engine = ReportEngine(omission_store=store)
+    gloop = GovernanceLoop(report_engine=report_engine)
+
+    # Add an observation
+    obs = GovernanceObservation(
+        period_label="test_period",
+        obligation_fulfillment_rate=0.9,
+        omission_detection_rate=0.1,
+    )
+    gloop._observations.append(obs)
+
+    # Setup PathA agent
+    mock_cieu = Mock()
+    mock_cieu.write_dict = Mock(return_value=True)
+    mock_planner = Mock()
+    mock_planner.graph = ModuleGraph()
+
+    agent = PathAAgent(
+        governance_loop=gloop,
+        cieu_store=mock_cieu,
+        planner=mock_planner,
+    )
+
+    # P1-3: Pull observations
+    observations = agent.pull_observations()
+
+    assert len(observations) == 1
+    assert observations[0].period_label == "test_period"
+    assert observations[0].obligation_fulfillment_rate == 0.9
+
+
+def test_path_a_rejects_low_confidence():
+    """Test that Path A rejects suggestions with confidence below threshold."""
+    from ystar.governance.governance_loop import GovernanceLoop, GovernanceSuggestion
+    from ystar.governance.reporting import ReportEngine
+    from ystar.governance.omission_store import OmissionStore
+
+    # Setup
+    store = OmissionStore()
+    report_engine = ReportEngine(omission_store=store)
+    gloop = GovernanceLoop(report_engine=report_engine)
+
+    mock_cieu = Mock()
+    mock_cieu.write_dict = Mock(return_value=True)
+    mock_planner = Mock()
+    mock_planner.graph = ModuleGraph()
+
+    agent = PathAAgent(
+        governance_loop=gloop,
+        cieu_store=mock_cieu,
+        planner=mock_planner,
+        auto_confidence_threshold=0.7,
+    )
+
+    # Low confidence suggestion
+    low_conf = GovernanceSuggestion(
+        suggestion_type="wire",
+        target_rule_id="test_rule",
+        suggested_value="test_value",
+        confidence=0.5,  # Below threshold
+        rationale="test",
+    )
+
+    # High confidence suggestion
+    high_conf = GovernanceSuggestion(
+        suggestion_type="wire",
+        target_rule_id="test_rule",
+        suggested_value="test_value",
+        confidence=0.8,  # Above threshold
+        rationale="test",
+    )
+
+    # P1-3: Evaluate suggestions
+    assert agent.evaluate_suggestion(low_conf) is False, "Should reject low confidence"
+    assert agent.evaluate_suggestion(high_conf) is True, "Should accept high confidence"
+
+
+def test_path_a_rejects_unknown_suggestion_type():
+    """Test that Path A rejects suggestions with unknown types."""
+    from ystar.governance.governance_loop import GovernanceLoop, GovernanceSuggestion
+    from ystar.governance.reporting import ReportEngine
+    from ystar.governance.omission_store import OmissionStore
+
+    store = OmissionStore()
+    report_engine = ReportEngine(omission_store=store)
+    gloop = GovernanceLoop(report_engine=report_engine)
+
+    mock_cieu = Mock()
+    mock_cieu.write_dict = Mock(return_value=True)
+    mock_planner = Mock()
+    mock_planner.graph = ModuleGraph()
+
+    agent = PathAAgent(
+        governance_loop=gloop,
+        cieu_store=mock_cieu,
+        planner=mock_planner,
+    )
+
+    # Unknown suggestion type
+    unknown_type = GovernanceSuggestion(
+        suggestion_type="unknown_action_type",
+        target_rule_id="test_rule",
+        suggested_value="test_value",
+        confidence=0.9,
+        rationale="test",
+    )
+
+    assert agent.evaluate_suggestion(unknown_type) is False, "Should reject unknown type"
+
+
+def test_path_a_rejects_during_human_review():
+    """Test that Path A rejects all suggestions when human review is required."""
+    from ystar.governance.governance_loop import GovernanceLoop, GovernanceSuggestion
+    from ystar.governance.reporting import ReportEngine
+    from ystar.governance.omission_store import OmissionStore
+
+    store = OmissionStore()
+    report_engine = ReportEngine(omission_store=store)
+    gloop = GovernanceLoop(report_engine=report_engine)
+
+    mock_cieu = Mock()
+    mock_cieu.write_dict = Mock(return_value=True)
+    mock_planner = Mock()
+    mock_planner.graph = ModuleGraph()
+
+    agent = PathAAgent(
+        governance_loop=gloop,
+        cieu_store=mock_cieu,
+        planner=mock_planner,
+    )
+
+    # Set human review required
+    agent._human_review_required = True
+
+    suggestion = GovernanceSuggestion(
+        suggestion_type="wire",
+        target_rule_id="test_rule",
+        suggested_value="test_value",
+        confidence=0.9,
+        rationale="test",
+    )
+
+    assert agent.evaluate_suggestion(suggestion) is False, "Should reject during human review"

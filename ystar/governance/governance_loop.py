@@ -230,6 +230,7 @@ class GovernanceLoop:
         causal_engine:        Optional[Any] = None,   # CausalEngine（可選）— Pearl L2-3
         amendment_engine:     Optional[Any] = None,   # AmendmentEngine（可選）
         suggestion_policy:    Optional[GovernanceSuggestionPolicy] = None,  # N7
+        experience_bridge:    Optional[Any] = None,   # P1-4: ExperienceBridge（可选）
     ) -> None:
         self.report_engine        = report_engine
         self.constraint_registry  = constraint_registry
@@ -237,6 +238,7 @@ class GovernanceLoop:
         self._causal_engine       = causal_engine       # Pearl integration point
         self._amendment_engine    = amendment_engine     # Amendment system integration
         self._suggestion_policy   = suggestion_policy or GovernanceSuggestionPolicy()  # N7
+        self._experience_bridge   = experience_bridge   # P1-4: Path B experience bridge
         self._observations:       List[GovernanceObservation] = []
         self._baseline:           Optional[GovernanceObservation] = None
 
@@ -444,9 +446,22 @@ class GovernanceLoop:
         """
         从 ReportEngine 生成当前观测，加入观测历史。
         这是 P1 的核心：把 reporting 输出接进 meta-learning 输入。
+
+        P1-4: If experience_bridge is present, merge its metrics into observation.
         """
         report = self.report_engine.daily_report(since=since)
         obs    = report_to_observation(report)
+
+        # P1-4: Merge experience_bridge metrics if available
+        if self._experience_bridge is not None:
+            try:
+                bridge_metrics = self._experience_bridge.generate_observation_metrics()
+                # Merge into obs.raw_kpis so downstream consumers see combined data
+                if bridge_metrics:
+                    obs.raw_kpis.update(bridge_metrics)
+            except Exception:
+                pass  # Fail-soft: bridge failure does not block observation
+
         self._observations.append(obs)
         return obs
 
@@ -644,6 +659,23 @@ class GovernanceLoop:
         # Connection 2: DimensionDiscovery — new dimension suggestions
         dim_suggestions = self._run_dimension_discovery()
         suggestions = suggestions + dim_suggestions
+
+        # P1-4: Merge experience_bridge suggestion candidates if available
+        if self._experience_bridge is not None:
+            try:
+                bridge_output = self._experience_bridge.generate_output()
+                # Convert BridgeSuggestionCandidate to GovernanceSuggestion
+                for cand in bridge_output.suggestion_candidates:
+                    suggestions.append(GovernanceSuggestion(
+                        suggestion_type=cand.suggestion_type,
+                        target_rule_id=cand.target,
+                        suggested_value=cand.rationale[:100],
+                        confidence=cand.confidence,
+                        rationale=f"[Path B Gap: {cand.source_gap}] {cand.rationale}",
+                        observation_ref=cand.source_gap,
+                    ))
+            except Exception:
+                pass  # Fail-soft: bridge suggestion failure does not block tighten
 
         # ── Pearl Integration 1: CausalEngine weights suggestions ──────────
         if self._causal_engine is not None and suggestions:

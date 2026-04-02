@@ -57,6 +57,88 @@ def _compute_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _try_structured_parse(text: str) -> Optional[Dict]:
+    """
+    Try to parse structured YAML/markdown constitution format.
+
+    Looks for patterns like:
+        ## Intent Contracts
+        - function: func_name
+          deny: ["/path", "keyword"]
+          only_paths: ["/allowed"]
+
+    Returns contract_dict if successful, None otherwise.
+    """
+    import re
+
+    # Look for "## Intent Contracts" section
+    intent_section_match = re.search(
+        r'##\s+Intent\s+Contracts?\s*\n(.*?)(?=\n##|\Z)',
+        text,
+        re.DOTALL | re.IGNORECASE
+    )
+
+    if not intent_section_match:
+        return None
+
+    section = intent_section_match.group(1)
+
+    # Try to extract YAML-like list items
+    contract_dict: Dict[str, Any] = {}
+
+    # Extract deny list
+    deny_match = re.search(r'deny:\s*\[(.*?)\]', section, re.DOTALL)
+    if deny_match:
+        deny_items = [
+            item.strip().strip('"\'')
+            for item in deny_match.group(1).split(',')
+            if item.strip()
+        ]
+        contract_dict['deny'] = deny_items
+
+    # Extract only_paths list
+    only_paths_match = re.search(r'only_paths:\s*\[(.*?)\]', section, re.DOTALL)
+    if only_paths_match:
+        paths = [
+            item.strip().strip('"\'')
+            for item in only_paths_match.group(1).split(',')
+            if item.strip()
+        ]
+        contract_dict['only_paths'] = paths
+
+    # Extract deny_commands list
+    deny_commands_match = re.search(r'deny_commands:\s*\[(.*?)\]', section, re.DOTALL)
+    if deny_commands_match:
+        cmds = [
+            item.strip().strip('"\'')
+            for item in deny_commands_match.group(1).split(',')
+            if item.strip()
+        ]
+        contract_dict['deny_commands'] = cmds
+
+    # Extract only_domains list
+    only_domains_match = re.search(r'only_domains:\s*\[(.*?)\]', section, re.DOTALL)
+    if only_domains_match:
+        domains = [
+            item.strip().strip('"\'')
+            for item in only_domains_match.group(1).split(',')
+            if item.strip()
+        ]
+        contract_dict['only_domains'] = domains
+
+    # Extract invariant list
+    invariant_match = re.search(r'invariant:\s*\[(.*?)\]', section, re.DOTALL)
+    if invariant_match:
+        invs = [
+            item.strip().strip('"\'')
+            for item in invariant_match.group(1).split(',')
+            if item.strip()
+        ]
+        contract_dict['invariant'] = invs
+
+    return contract_dict if contract_dict else None
+
+
 def compile_source(
     source_text: str,
     source_ref: str = "",
@@ -84,27 +166,40 @@ def compile_source(
     # Try LLM-based translation first
     contract = None
     try:
-        from ystar.kernel.nl_to_contract import translate_nl
-        result = translate_nl(source_text, api_call_fn=api_call_fn)
-        if result is not None:
-            contract = result
-            compile_method = "llm"
-            confidence = 0.85
-            diagnostics["llm_used"] = True
+        from ystar.kernel.nl_to_contract import translate_to_contract
+        contract_dict, method, conf = translate_to_contract(source_text, api_call_fn=api_call_fn)
+        if contract_dict:
+            contract = IntentContract(**contract_dict)
+            compile_method = method
+            confidence = conf
+            diagnostics["translation_used"] = True
     except Exception as e:
         diagnostics["llm_error"] = str(e)
 
-    # Fall back to regex-based prefill
+    # Try structured YAML/markdown parsing (for test constitutions and structured docs)
     if contract is None:
         try:
-            from ystar.kernel.prefill import prefill
-            prefill_result = prefill(policy_text=source_text)
-            contract = prefill_result.contract
-            compile_method = "regex"
-            confidence = 0.5
-            diagnostics["prefill_warnings"] = prefill_result.warnings
+            contract_dict = _try_structured_parse(source_text)
+            if contract_dict:
+                contract = IntentContract(**contract_dict)
+                compile_method = "structured"
+                confidence = 0.7
+                diagnostics["structured_parse"] = True
         except Exception as e:
-            diagnostics["prefill_error"] = str(e)
+            diagnostics["structured_error"] = str(e)
+
+    # Fall back to regex-based extraction if structured parsing failed
+    if contract is None:
+        try:
+            from ystar.kernel.nl_to_contract import _try_regex_translation
+            contract_dict = _try_regex_translation(source_text)
+            if contract_dict:
+                contract = IntentContract(**contract_dict)
+                compile_method = "regex"
+                confidence = 0.5
+                diagnostics["regex_fallback"] = True
+        except Exception as e:
+            diagnostics["regex_error"] = str(e)
 
     # Last resort: empty contract
     if contract is None:

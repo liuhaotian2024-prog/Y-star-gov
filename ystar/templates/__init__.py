@@ -190,6 +190,9 @@ def get_template(name: str, **overrides) -> TemplateResult:
     """
     Get a built-in template by name, with optional overrides.
 
+    P1-8: If a corresponding domain pack exists, delegate to it for richer governance.
+    Otherwise fall back to the built-in TEMPLATE_DICTS.
+
     Example::
 
         policy = Policy({
@@ -197,6 +200,12 @@ def get_template(name: str, **overrides) -> TemplateResult:
             "finance": get_template("finance", amount_limit=5000),
         })
     """
+    # P1-8: Check if a domain pack exists with this name
+    domain_contract = _try_get_from_domain_pack(name, overrides)
+    if domain_contract is not None:
+        return domain_contract
+
+    # Fall back to built-in template dicts
     if name not in TEMPLATE_DICTS:
         available = ", ".join(sorted(TEMPLATE_DICTS))
         raise KeyError(f"Template '{name}' not found. Available: {available}")
@@ -213,6 +222,80 @@ def get_template_dict(name: str) -> Dict[str, Any]:
         raise KeyError(f"Template '{name}' not found. Available: {available}")
     return {k: v for k, v in TEMPLATE_DICTS[name].items()
             if not k.startswith("_")}
+
+
+def _try_get_from_domain_pack(name: str, overrides: dict) -> TemplateResult | None:
+    """
+    P1-8: Try to get template from domain pack if available.
+
+    If a domain pack exists with domain_name == name, use its constitutional
+    contract as the base, then merge role-specific contract if 'role' is in overrides.
+
+    Args:
+        name: Template/domain name
+        overrides: User-provided overrides (may include 'role')
+
+    Returns:
+        TemplateResult if domain pack found, None otherwise
+    """
+    try:
+        # Import dynamically to avoid circular dependency
+        import importlib
+        from ystar.domains import DomainPack
+
+        # Try to import the domain pack module
+        try:
+            module = importlib.import_module(f"ystar.domains.{name}")
+        except ImportError:
+            return None
+
+        # Find DomainPack subclass in this module
+        pack_class = None
+        for attr_name in dir(module):
+            attr = getattr(module, attr_name)
+            if (isinstance(attr, type) and
+                issubclass(attr, DomainPack) and
+                attr is not DomainPack):
+                pack_class = attr
+                break
+
+        if pack_class is None:
+            return None
+
+        # Instantiate the pack
+        try:
+            pack = pack_class()
+        except Exception:
+            # Some packs need config, skip
+            return None
+
+        # Get constitutional contract as base
+        constitution = pack.constitutional_contract()
+
+        # If role is specified, also get role-specific contract and merge
+        role = overrides.get("role")
+        if role:
+            role_contract = pack.make_contract(role, context=overrides)
+            # Merge: constitutional + role-specific (role wins for conflicts)
+            from ystar import IntentContract
+            merged = IntentContract(
+                deny = list(set(constitution.deny) | set(role_contract.deny)),
+                deny_commands = list(set(constitution.deny_commands) | set(role_contract.deny_commands)),
+                only_paths = role_contract.only_paths or constitution.only_paths,
+                only_domains = role_contract.only_domains or constitution.only_domains,
+                invariant = list(set(constitution.invariant) | set(role_contract.invariant)),
+                optional_invariant = list(set(constitution.optional_invariant) | set(role_contract.optional_invariant)),
+                field_deny = {**constitution.field_deny, **role_contract.field_deny},
+                value_range = {**constitution.value_range, **role_contract.value_range},
+            )
+            return TemplateResult(contract=merged, higher_order=None)
+        else:
+            # Just use constitutional contract
+            return TemplateResult(contract=constitution, higher_order=None)
+
+    except Exception:
+        # Any error in domain pack loading, fall back to templates
+        return None
 
 
 TEMPLATES = list(TEMPLATE_DICTS.keys())

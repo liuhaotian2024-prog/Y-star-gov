@@ -15,6 +15,7 @@ Commands:
   ystar doctor         Diagnose environment integrity
   ystar verify         Verify CIEU cryptographic integrity
   ystar seal           Seal CIEU session with Merkle root
+  ystar domain         Discover and use domain packs (list|describe|init)
   ystar version        Show version
 
 Quick start (3 steps to integrate with OpenClaw):
@@ -38,6 +39,7 @@ from ystar.cli.quality_cmd import (
     _cmd_check, _cmd_simulate, _cmd_quality,
     _cmd_pretrain, _cmd_policy_builder,
 )
+from ystar.cli.domain_cmd import main_domain_cmd
 
 # Backward compatibility: these were previously defined inline
 from ystar.cli.init_cmd import (
@@ -185,12 +187,15 @@ def _print_baseline_report(wr_result, sim_result, g_result) -> None:
 
 def _cmd_baseline(args: list) -> None:
     """Capture a governance baseline snapshot to .ystar_baseline.json."""
-    import json, pathlib, time as _t
+    import json, pathlib
 
     db_path = ".ystar_cieu.db"
+    omission_db = ".ystar_cieu_omission.db"
+
     try:
         cfg = json.load(open(".ystar_session.json", encoding="utf-8"))
         db_path = cfg.get("cieu_db", db_path)
+        omission_db = db_path.replace(".db", "_omission.db")
     except Exception:
         pass
 
@@ -199,41 +204,35 @@ def _cmd_baseline(args: list) -> None:
         print("  Run 'ystar setup' first.")
         sys.exit(1)
 
+    # Generate full Report using ReportEngine
     from ystar.governance.cieu_store import CIEUStore
-    store = CIEUStore(db_path)
-    total = store.count()
+    from ystar.governance.omission_store import OmissionStore, InMemoryOmissionStore
+    from ystar.governance.reporting import ReportEngine
 
-    # Query deny rate and agent stats
-    import sqlite3
-    conn = sqlite3.connect(db_path)
-    deny_count = conn.execute(
-        "SELECT COUNT(*) FROM cieu_events WHERE decision='deny'"
-    ).fetchone()[0]
-    agent_rows = conn.execute(
-        "SELECT DISTINCT agent_id FROM cieu_events WHERE agent_id != ''"
-    ).fetchall()
-    agents = [r[0] for r in agent_rows]
-    conn.close()
+    cieu_store = CIEUStore(db_path)
 
-    snapshot = {
-        "captured_at": _t.time(),
-        "captured_iso": _t.strftime("%Y-%m-%dT%H:%M:%S"),
-        "cieu_db": db_path,
-        "total_events": total,
-        "deny_count": deny_count,
-        "deny_rate": round(deny_count / total, 4) if total else 0,
-        "agent_count": len(agents),
-        "agents": agents,
-    }
+    if pathlib.Path(omission_db).exists():
+        omission_store = OmissionStore(db_path=omission_db)
+    else:
+        omission_store = InMemoryOmissionStore()
 
+    engine = ReportEngine(
+        omission_store=omission_store,
+        cieu_store=cieu_store,
+    )
+
+    report = engine.baseline_report(label="baseline")
+
+    # Save full report as baseline
     out = pathlib.Path(".ystar_baseline.json")
-    out.write_text(json.dumps(snapshot, indent=2, ensure_ascii=False), encoding="utf-8")
+    out.write_text(report.to_json(indent=2), encoding="utf-8")
 
     print()
     print(f"  Baseline captured → {out}")
-    print(f"  Total events:  {total}")
-    print(f"  Deny rate:     {snapshot['deny_rate']:.1%}")
-    print(f"  Agents:        {len(agents)}")
+    print(f"  Total events:  {report.cieu.total_events}")
+    print(f"  Deny rate:     {report.cieu.deny_rate:.1%}")
+    print(f"  Obligations:   {report.obligations.created_total}")
+    print(f"  Omissions:     {report.omissions.total_violations}")
     print()
     print("  Run 'ystar delta' later to see changes.")
     print()
@@ -241,58 +240,106 @@ def _cmd_baseline(args: list) -> None:
 
 def _cmd_delta(args: list) -> None:
     """Compare current governance state against the last baseline."""
-    import json, pathlib, time as _t
+    import json, pathlib
 
     baseline_path = pathlib.Path(".ystar_baseline.json")
     if not baseline_path.exists():
         print("  No baseline found. Run 'ystar baseline' first.")
         sys.exit(1)
 
-    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-    db_path = baseline.get("cieu_db", ".ystar_cieu.db")
+    # Load baseline Report object
+    baseline_data = json.loads(baseline_path.read_text(encoding="utf-8"))
+
+    # Detect if it's old format (simple dict) or new format (Report object)
+    if "meta" not in baseline_data:
+        print("  Old baseline format detected. Please run 'ystar baseline' again to update.")
+        sys.exit(1)
+
+    # Reconstruct baseline Report from saved JSON
+    from ystar.governance.reporting import Report
+    from dataclasses import fields
+
+    def _dict_to_report(data: dict) -> Report:
+        """Convert saved JSON dict back to Report object."""
+        from ystar.governance.reporting import (
+            ArtifactIntegrity, ObligationMetrics, OmissionMetrics,
+            InterventionMetrics, ChainClosureMetrics, CIEUMetrics, CausalMetrics
+        )
+
+        meta = data.get("meta", {})
+        report = Report(
+            report_type=meta.get("report_type", "baseline"),
+            period_label=meta.get("period_label", ""),
+            period_start=meta.get("period_start"),
+            period_end=meta.get("period_end"),
+        )
+
+        # Reconstruct integrity
+        report.integrity = ArtifactIntegrity(
+            report_version=meta.get("report_version", "2.0"),
+            generated_at_iso=meta.get("generated_at_iso", ""),
+            ystar_version=meta.get("ystar_version", ""),
+            report_confidence_level=meta.get("report_confidence_level", "full"),
+        )
+
+        # Reconstruct metrics (simplified - just load KPIs, metrics objects are optional)
+        report.kpis = data.get("kpis", {})
+
+        # For delta comparison, we mainly need the KPIs
+        # Optionally reconstruct full metric objects if needed for other operations
+        oblig_data = data.get("obligations", {})
+        report.obligations.created_total = oblig_data.get("obligations_created_total", 0)
+        report.obligations.fulfilled_total = oblig_data.get("obligations_fulfilled_total", 0)
+
+        cieu_data = data.get("cieu", {})
+        report.cieu.total_events = cieu_data.get("cieu_total_events", 0)
+        report.cieu.deny_count = cieu_data.get("deny_count", 0)
+
+        omiss_data = data.get("omissions", {})
+        report.omissions.total_violations = omiss_data.get("omission_total_violations", 0)
+
+        return report
+
+    baseline_report = _dict_to_report(baseline_data)
+
+    # Generate current Report
+    db_path = ".ystar_cieu.db"
+    omission_db = ".ystar_cieu_omission.db"
+
+    try:
+        cfg = json.load(open(".ystar_session.json", encoding="utf-8"))
+        db_path = cfg.get("cieu_db", db_path)
+        omission_db = db_path.replace(".db", "_omission.db")
+    except Exception:
+        pass
 
     if not pathlib.Path(db_path).exists():
         print(f"  CIEU database not found: {db_path}")
         sys.exit(1)
 
     from ystar.governance.cieu_store import CIEUStore
-    import sqlite3
+    from ystar.governance.omission_store import OmissionStore, InMemoryOmissionStore
+    from ystar.governance.reporting import ReportEngine
 
-    store = CIEUStore(db_path)
-    total_now = store.count()
-    conn = sqlite3.connect(db_path)
-    deny_now = conn.execute(
-        "SELECT COUNT(*) FROM cieu_events WHERE decision='deny'"
-    ).fetchone()[0]
+    cieu_store = CIEUStore(db_path)
 
-    # New events since baseline
-    new_events = conn.execute(
-        "SELECT COUNT(*) FROM cieu_events WHERE created_at > ?",
-        (baseline["captured_at"],)
-    ).fetchone()[0]
+    if pathlib.Path(omission_db).exists():
+        omission_store = OmissionStore(db_path=omission_db)
+    else:
+        omission_store = InMemoryOmissionStore()
 
-    # New violations since baseline
-    new_denies = conn.execute(
-        "SELECT COUNT(*) FROM cieu_events WHERE decision='deny' AND created_at > ?",
-        (baseline["captured_at"],)
-    ).fetchone()[0]
+    engine = ReportEngine(
+        omission_store=omission_store,
+        cieu_store=cieu_store,
+    )
 
-    conn.close()
+    current_report = engine.baseline_report(label="current")
 
-    deny_rate_now = round(deny_now / total_now, 4) if total_now else 0
-    deny_rate_before = baseline.get("deny_rate", 0)
+    # Use render_delta_table from report_render.py
+    from ystar.products.report_render import render_delta_table
 
     print()
-    print(f"  Y*gov Governance Delta")
-    print(f"  Baseline: {baseline.get('captured_iso', '?')}")
-    print(f"  Current:  {_t.strftime('%Y-%m-%dT%H:%M:%S')}")
-    print()
-    print(f"  {'Metric':<25} {'Baseline':>10} {'Now':>10} {'Delta':>10}")
-    print(f"  {'-'*25} {'-'*10} {'-'*10} {'-'*10}")
-    print(f"  {'Total events':<25} {baseline['total_events']:>10} {total_now:>10} {'+' + str(new_events):>10}")
-    print(f"  {'Deny count':<25} {baseline['deny_count']:>10} {deny_now:>10} {'+' + str(new_denies):>10}")
-    print(f"  {'Deny rate':<25} {deny_rate_before:>10.1%} {deny_rate_now:>10.1%} {deny_rate_now - deny_rate_before:>+10.1%}")
-    print(f"  {'Agents':<25} {baseline['agent_count']:>10} {baseline['agent_count']:>10} {'--':>10}")
+    print(render_delta_table(current_report, baseline_report))
     print()
 
 
@@ -378,11 +425,14 @@ def main() -> None:
     elif cmd == "delta":
         _cmd_delta(rest)
 
+    elif cmd == "domain":
+        main_domain_cmd(rest)
+
     else:
         print(f"Unknown command: {cmd}\n")
         print("Available commands: demo, setup, hook-install, doctor, verify, report,")
         print("                    seal, policy-builder, audit, check, init, version,")
-        print("                    simulate, quality, baseline, delta")
+        print("                    simulate, quality, baseline, delta, domain")
         sys.exit(1)
 
 

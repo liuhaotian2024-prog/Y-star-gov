@@ -116,6 +116,71 @@ class ConstitutionProvider:
                 return bundle
         return None
 
+    def resolve_for_agent(
+        self,
+        agent_id: str,
+        delegation_chain=None,
+        fallback_source_ref: Optional[str] = None,
+    ) -> CompiledContractBundle:
+        """
+        Resolve constitution for a specific agent, optionally using delegation chain routing.
+
+        This method enables per-agent constitution routing in multi-agent systems:
+        - If delegation_chain is provided, finds the agent's link and extracts its constitution source_ref
+        - If the agent is not in the chain or no chain provided, falls back to fallback_source_ref
+        - If no fallback provided, raises ValueError
+
+        Args:
+            agent_id: The agent identifier (e.g., "agent_a", "ceo", "cto")
+            delegation_chain: Optional DelegationChain containing agent-specific constitutions
+            fallback_source_ref: Default constitution path if agent not found in chain
+
+        Returns:
+            CompiledContractBundle for the resolved constitution
+
+        Raises:
+            ValueError: If agent not found in chain and no fallback provided
+
+        Example:
+            provider = ConstitutionProvider()
+            chain = DelegationChain()
+            chain.append(make_link("org", "ceo", contract, constitution_source="ceo/CONSTITUTION.md"))
+            bundle = provider.resolve_for_agent("ceo", delegation_chain=chain)
+        """
+        source_ref = None
+
+        # Try to find agent in delegation chain
+        if delegation_chain is not None:
+            for link in delegation_chain.links:
+                # Check if this link's actor matches the agent_id
+                if link.actor == agent_id:
+                    # Try to extract constitution_source_ref from the link
+                    # DelegationContract may have a constitution_source_ref attribute
+                    ref = getattr(link, "constitution_source_ref", "")
+                    # Only use if non-empty
+                    if ref and ref.strip():
+                        source_ref = ref
+                        break
+
+                # Also check if agent is the principal (could be delegating)
+                if link.principal == agent_id:
+                    ref = getattr(link, "constitution_source_ref", "")
+                    if ref and ref.strip():
+                        source_ref = ref
+                        break
+
+        # Fallback if not found in chain
+        if source_ref is None or not source_ref.strip():
+            if fallback_source_ref is not None:
+                source_ref = fallback_source_ref
+            else:
+                raise ValueError(
+                    f"Agent '{agent_id}' not found in delegation chain and no fallback provided"
+                )
+
+        # Use existing resolve() to get the bundle
+        return self.resolve(source_ref)
+
     def invalidate_cache(self, source_ref: Optional[str] = None) -> None:
         """
         Invalidate cached constitution (after amendment).

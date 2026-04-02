@@ -1783,6 +1783,7 @@ class DelegationContract:
         nonce:              cryptographic nonce (UUID4) — prevents replay attacks;
                             must be unique per grant and verified before use
         hash:               SHA-256 hash of the DelegationContract (tamper-evident)
+        constitution_source_ref: file path to the actor's constitution (for provider routing)
 
     Design principles:
         1. Constraints can only shrink: the actor's contract is a strict subset of the principal's
@@ -1803,6 +1804,7 @@ class DelegationContract:
     nonce:            str                        = ""   # UUID4 anti-replay nonce
     hash:             str                        = ""
     content_hash:     str                        = ""
+    constitution_source_ref: str                 = ""   # path to actor's constitution (for provider routing)
 
     def __post_init__(self):
         import uuid
