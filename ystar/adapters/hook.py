@@ -36,6 +36,7 @@ from __future__ import annotations
 import logging
 import sys
 import time
+import uuid
 from typing import Any, Dict, Optional
 
 from ystar.session import Policy, PolicyResult
@@ -692,20 +693,23 @@ def _setup_omission_from_contract(
         # Record CIEU event for observability
         if cieu_store is not None:
             try:
-                cieu_store.log(
-                    agent_id=agent_id,
-                    event_type="omission_setup_complete",
-                    details={
-                        "session_id": session_id,
-                        "agent_id": agent_id,
+                cieu_store.write({
+                    "event_id": str(uuid.uuid4()),
+                    "seq_global": int(time.time() * 1_000_000),
+                    "session_id": session_id,
+                    "agent_id": agent_id,
+                    "event_type": "omission_setup_complete",
+                    "created_at": time.time(),
+                    "decision": "allow",
+                    "passed": 1,
+                    "params": {
                         "n_rules_enabled": n_rules_final,
                         "n_entities": n_entities,
                         "n_obligations": n_obligations,
                         "n_timing_overrides": n_active,
                         "store_type": store.__class__.__name__,
                     },
-                    timestamp=time.time(),
-                )
+                })
             except Exception as e:
                 _log.warning("Failed to log omission_setup_complete to CIEU: %s", e)
 
@@ -718,12 +722,17 @@ def _setup_omission_from_contract(
             if cieu_db:
                 from ystar.governance.cieu_store import CIEUStore
                 fail_store = CIEUStore(cieu_db)
-                fail_store.log(
-                    agent_id=agent_id,
-                    event_type="omission_setup_failed",
-                    details={"error": str(exc), "session_id": session_id},
-                    timestamp=time.time(),
-                )
+                fail_store.write({
+                    "event_id": str(uuid.uuid4()),
+                    "seq_global": int(time.time() * 1_000_000),
+                    "session_id": session_cfg.get("session_id", ""),
+                    "agent_id": agent_id,
+                    "event_type": "omission_setup_failed",
+                    "created_at": time.time(),
+                    "decision": "deny",
+                    "passed": 0,
+                    "params": {"error": str(exc)},
+                })
         except Exception:
             pass
 
@@ -808,20 +817,29 @@ def _process_obligation_triggers(
 
         # Create obligations for each matched trigger
         for trigger in triggers:
-            # Content accuracy review trigger: only fire if writing to
-            # paths owned by the agent's write boundary (from session config).
-            # This avoids hardcoding specific directory names.
-            if trigger.trigger_id == "content_accuracy_review":
+            # Generic path pattern matching for Write/Edit triggers
+            # Check if this trigger requires path pattern matching
+            scfg = _load_session_config()
+            trigger_patterns = None
+            if scfg:
+                trigger_patterns = scfg.get("trigger_path_patterns", {}).get(
+                    trigger.trigger_id)
+
+            # If trigger has path patterns configured, verify file path matches
+            if trigger_patterns and tool_name in ("Write", "Edit"):
                 file_path = tool_input.get("file_path") or tool_input.get("path") or ""
-                trigger_patterns = None
-                scfg = _load_session_config()
-                if scfg:
-                    trigger_patterns = scfg.get("trigger_path_patterns", {}).get(
-                        "content_accuracy_review")
-                if trigger_patterns:
-                    if not any(p in file_path for p in trigger_patterns):
-                        continue
-                # If no patterns configured, let the trigger fire for all writes
+                if not any(p in file_path for p in trigger_patterns):
+                    continue  # Skip this trigger, path doesn't match
+
+            # Special handling for pre_commit_test trigger
+            if trigger.trigger_id == "pre_commit_test":
+                # Only fire if command contains "git commit"
+                command = tool_input.get("command", "")
+                if "git commit" not in command:
+                    continue
+                # Check if pytest was run recently (within last 120 seconds)
+                # This is a simplified check - in production would query CIEU DB
+                # For now, create the obligation and let omission engine track it
 
             create_obligation_from_trigger(
                 trigger=trigger,

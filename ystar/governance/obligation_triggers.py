@@ -239,6 +239,8 @@ def get_trigger_registry() -> TriggerRegistry:
     global _global_registry
     if _global_registry is None:
         _global_registry = TriggerRegistry()
+        # Auto-register default triggers on first access
+        register_default_triggers(_global_registry)
     return _global_registry
 
 
@@ -499,6 +501,77 @@ def register_default_triggers(
         verification_method="file_modified",
         verification_target="content/",  # Check if writing to content/ or marketing/
         verification_hint="corresponding _code_review.md file exists",
+        enabled=True,
+        deduplicate=True,
+        deny_closure_on_open=False,
+    ))
+
+    # ── Directive #015 Additional Triggers ─────────────────────────────────
+
+    # Trigger: Pre-Commit Test
+    registry.register(ObligationTrigger(
+        trigger_id="pre_commit_test",
+        trigger_tool_pattern=r"Bash",
+        trigger_param_filter={"command": ["git commit"]},
+        obligation_type="pre_commit_test_required",
+        description="Before git commit, pytest must pass",
+        target_agent="caller",
+        deadline_seconds=60,  # 1 minute
+        severity="HARD",
+        grace_period_secs=0,  # No grace - must be immediate
+        hard_overdue_secs=60,  # Block immediately after deadline
+        escalate_to_hard=True,
+        escalate_to_actor=escalation_target,
+        fulfillment_event="bash_exec",
+        verification_method="command_contains",
+        verification_target="pytest",
+        verification_hint="pytest command executed successfully before commit",
+        enabled=True,
+        deduplicate=True,
+        deny_closure_on_open=False,
+    ))
+
+    # Trigger: Thinking Discipline Check
+    registry.register(ObligationTrigger(
+        trigger_id="thinking_discipline_check",
+        trigger_tool_pattern=r".*",  # Any tool completion
+        trigger_param_filter=None,
+        obligation_type="thinking_discipline_required",
+        description="After task completion, apply 4-question thinking DNA",
+        target_agent="caller",
+        deadline_seconds=300,  # 5 minutes
+        severity="SOFT",
+        grace_period_secs=60,  # 1 minute grace
+        hard_overdue_secs=600,  # 10 minutes before blocking
+        escalate_to_hard=False,  # Soft obligation, don't escalate
+        escalate_to_actor=escalation_target,
+        fulfillment_event="file_write",
+        verification_method="file_modified",
+        verification_target="reports/",
+        verification_hint="work report includes thinking DNA questions",
+        enabled=False,  # Disabled by default - too noisy, enable per session
+        deduplicate=True,
+        deny_closure_on_open=False,
+    ))
+
+    # Trigger: Cross-Review Critical File
+    registry.register(ObligationTrigger(
+        trigger_id="cross_review_critical_file",
+        trigger_tool_pattern=r"(Write|Edit)",
+        trigger_param_filter=None,  # Will check file path pattern
+        obligation_type="cross_review_required",
+        description="Critical file changes require cross-agent review",
+        target_agent="*",  # Any other agent can review
+        deadline_seconds=600,  # 10 minutes
+        severity="SOFT",
+        grace_period_secs=120,  # 2 minute grace
+        hard_overdue_secs=1800,  # 30 minutes before blocking
+        escalate_to_hard=True,
+        escalate_to_actor=escalation_target,
+        fulfillment_event="file_write",
+        verification_method="file_modified",
+        verification_target="",  # Checked against trigger_path_patterns
+        verification_hint="review comment added or file re-checked",
         enabled=True,
         deduplicate=True,
         deny_closure_on_open=False,

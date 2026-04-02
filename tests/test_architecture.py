@@ -549,4 +549,157 @@ class TestCausalFoundationGeneralized:
         source_path = os.path.join(_YSTAR_ROOT, "governance", "governance_loop.py")
         source = _read_source(source_path)
         assert "causal_feedback" in source, "GovernanceLoop must import from causal_feedback"
+
+
+def test_governance_pipeline_e2e():
+    """
+    End-to-end integration test for governance pipeline.
+
+    Verifies data flow from session config through to GovernanceLoop suggestions:
+    1. Session config with obligation_timing
+    2. OmissionStore contains registered obligations
+    3. ReportEngine produces non-zero KPIs
+    4. GovernanceLoop produces suggestions when health is degraded
+
+    This test prevents the "wired but not flowing" failure mode where
+    interfaces exist but data never propagates through the pipeline.
+    """
+    import tempfile
+    import os
+    import json
+    from ystar.session import Policy
+    from ystar.kernel.dimensions import IntentContract
+
+    # Create a minimal session config with obligation_timing
+    session_cfg = {
+        "session_id": "test_e2e",
+        "cieu_db": tempfile.mktemp(suffix=".db"),
+        "contract": {
+            "dimensions": [
+                {
+                    "name": "delegation",
+                    "rules": [
+                        {
+                            "id": "rule_test_delegation",
+                            "kind": "obligation",
+                            "condition": "action == 'test_action'",
+                            "message": "Test obligation",
+                        }
+                    ]
+                }
+            ],
+            "obligation_timing": {
+                "rule_test_delegation": {
+                    "postcondition_timeout_secs": 60.0,
+                    "soft_deadline_secs": 30.0,
+                }
+            }
+        }
+    }
+
+    try:
+        # Step 1: Verify contract parses correctly
+        contract_dict = session_cfg["contract"]
+        contract = IntentContract.from_dict(contract_dict)
+        assert contract is not None, "Contract should parse"
+
+        # Step 2: Setup omission adapter with timing
+        from ystar.adapters.omission_adapter import create_adapter
+        from ystar.governance.omission_store import OmissionStore
+        from ystar.governance.omission_rules import reset_registry
+        from ystar.domains.openclaw.accountability_pack import apply_openclaw_accountability_pack
+
+        omission_db = tempfile.mktemp(suffix="_omission.db")
+        store = OmissionStore(db_path=omission_db)
+        registry = reset_registry()
+        apply_openclaw_accountability_pack(registry, contract=contract)
+
+        adapter = create_adapter(store=store, registry=registry)
+
+        # Step 3: Simulate a delegation event to trigger obligation
+        import time
+        now = time.time()
+        spawn_event = {
+            "event_type": "subagent_spawn",
+            "agent_id": "test_parent_agent",
+            "session_id": "test_e2e",
+            "child_agent_id": "test_child_agent",
+            "task_description": "test delegation task",
+            "task_ticket_id": "task_001",
+            "timestamp": now,
+        }
+
+        # Ingest the event - this should create obligations based on accountability_pack
+        adapter.ingest_raw(spawn_event)
+
+        # Verify obligation was created
+        obligations = store.list_obligations()
+        assert len(obligations) > 0, f"Obligation should be created in store from delegation event. Got {len(obligations)} obligations."
+
+        # Step 4: Create ReportEngine and verify it reads from store
+        from ystar.governance.reporting import ReportEngine
+        engine = ReportEngine(omission_store=store)
+        report = engine.baseline_report()
+
+        assert report.obligations is not None, "Report should have obligation data"
+        total_obs = (report.obligations.created_total + report.obligations.pending_total +
+                     report.obligations.fulfilled_total + report.obligations.expired_total)
+        assert total_obs > 0, f"Report should show registered obligations. Got: created={report.obligations.created_total}, pending={report.obligations.pending_total}"
+
+        # Step 5: Create GovernanceLoop and verify observation
+        from ystar.governance.governance_loop import GovernanceLoop
+        gloop = GovernanceLoop(report_engine=engine)
+
+        obs = gloop.observe_from_report_engine()
+        assert obs is not None, "Observation should be created"
+
+        # Step 6: Simulate time passing to make obligation overdue
+        import time
+        adapter.engine.scan(now=time.time() + 100.0)  # Force overdue
+
+        # Step 7: Re-observe and verify non-zero KPIs
+        report2 = engine.baseline_report()
+        obs2 = gloop.observe_from_report_engine()
+
+        # At least ONE KPI should be non-zero (we have overdue obligations)
+        has_nonzero = any([
+            obs2.hard_overdue_rate > 0,
+            obs2.omission_detection_rate > 0,
+            obs2.obligation_expiry_rate > 0,
+        ])
+        assert has_nonzero, f"At least one KPI should be non-zero. KPIs: {obs2.raw_kpis}"
+
+        # Step 8: Run tighten() and verify suggestions are generated
+        result = gloop.tighten()
+
+        # With degraded health and non-zero KPIs, we should get SOME output
+        # (suggestions OR recommended action OR health != "unknown")
+        assert result.overall_health != "unknown", "Health should be assessed"
+
+        # If health is degraded and we have omission data, suggestion policy
+        # should produce at least one suggestion OR a recommended action
+        if result.overall_health in ("degraded", "critical"):
+            has_output = (
+                len(result.governance_suggestions) > 0 or
+                result.recommended_action != ""
+            )
+            assert has_output, (
+                f"Degraded health with omission data should produce suggestions or action. "
+                f"Health: {result.overall_health}, Suggestions: {len(result.governance_suggestions)}, "
+                f"Action: {result.recommended_action}"
+            )
+
+        # Cleanup
+        if os.path.exists(session_cfg["cieu_db"]):
+            os.unlink(session_cfg["cieu_db"])
+        if os.path.exists(omission_db):
+            os.unlink(omission_db)
+
+    except Exception as e:
+        # Cleanup on error
+        if os.path.exists(session_cfg["cieu_db"]):
+            os.unlink(session_cfg["cieu_db"])
+        if 'omission_db' in locals() and os.path.exists(omission_db):
+            os.unlink(omission_db)
+        raise
         assert "proposal_submission" in source, "GovernanceLoop must import from proposal_submission"

@@ -340,6 +340,10 @@ from ystar import (
 ## CLI Reference
 
 ```bash
+ystar demo
+    5-second demonstration of governance in action.
+    Shows interception and CIEU recording with simulated events.
+
 ystar setup [--yes]
     Initialize .ystar_session.json in current directory.
 
@@ -355,6 +359,10 @@ ystar doctor
     7-point health check. Exit 0 = healthy, 1 = issues found.
     Checks: session config, hook registration, CIEU database,
             AGENTS.md, hook self-test.
+
+ystar check <events.jsonl>
+    Run policy check on JSONL events file.
+    Validates events against configured contract.
 
 ystar report [--db <path>] [--format text|json]
     CIEU summary: total decisions, deny rate, by-agent breakdown.
