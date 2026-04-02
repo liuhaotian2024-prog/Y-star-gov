@@ -97,19 +97,30 @@ def _load_write_paths_from_agents_md() -> Dict[str, list]:
 
 
 def _ensure_write_paths_loaded():
-    """确保写路径已从 AGENTS.md 加载（懒加载，只加载一次）。"""
+    """确保写路径已从 session config 或 AGENTS.md 加载（懒加载，只加载一次）。
+
+    优先级（路径统一架构 — Directive #024补充）：
+    1. .ystar_session.json 中的 agent_write_paths（最权威，init生成）
+    2. AGENTS.md 动态解析（回退方案）
+    """
     global _AGENT_WRITE_PATHS, _WRITE_PATHS_LOADED
     if _WRITE_PATHS_LOADED:
         return
-    # 优先从 session config 加载（用户可覆盖）
+    # 1. 优先从 session config 加载（单一真相源）
     session_cfg = _load_session_config()
     if session_cfg and "agent_write_paths" in session_cfg:
         _AGENT_WRITE_PATHS = session_cfg["agent_write_paths"]
+        _log.info("Write paths loaded from session config for %d agents",
+                  len(_AGENT_WRITE_PATHS))
     else:
+        # 2. 回退：从 AGENTS.md 动态解析
         _AGENT_WRITE_PATHS = _load_write_paths_from_agents_md()
+        if _AGENT_WRITE_PATHS:
+            _log.info("Write paths loaded from AGENTS.md for %d agents",
+                      len(_AGENT_WRITE_PATHS))
+        else:
+            _log.warning("No write paths loaded — no session config or AGENTS.md found")
     _WRITE_PATHS_LOADED = True
-    if _AGENT_WRITE_PATHS:
-        _log.info("Write paths loaded for %d agents", len(_AGENT_WRITE_PATHS))
 
 
 # ── Agent 身份检测 ──────────────────────────────────────────────────────────
@@ -296,6 +307,37 @@ def _result_to_response(result: PolicyResult) -> Dict[str, Any]:
     }
 
 
+# ── CIEU Boot Record ─────────────────────────────────────────────────────
+# Directive #024: 第一次被调用时写一条 HOOK_BOOT 记录
+# 如果 CIEU 里没有 HOOK_BOOT → hook 从未被激活
+
+_HOOK_BOOTED: bool = False
+
+
+def _write_boot_record(who: str, session_id: str, cieu_db: str) -> None:
+    """第一次hook调用时写一条boot记录，证明hook在运行。"""
+    global _HOOK_BOOTED
+    if _HOOK_BOOTED:
+        return
+    _HOOK_BOOTED = True
+    try:
+        from ystar.governance.cieu_store import CIEUStore
+        store = CIEUStore(cieu_db)
+        store.write_dict({
+            "session_id":    session_id,
+            "agent_id":      who,
+            "event_type":    "HOOK_BOOT",
+            "decision":      "info",
+            "passed":        True,
+            "violations":    [],
+            "params":        {"boot_time": time.time(), "message": "Y*gov hook activated"},
+            "contract_hash": "",
+        })
+        _log.info("HOOK_BOOT record written — CIEU is alive")
+    except Exception as e:
+        _log.error("Failed to write HOOK_BOOT record: %s", e)
+
+
 # ── 主入口：纯翻译函数 ────────────────────────────────────────────────────
 
 def _load_session_config(search_dirs: Optional[list] = None) -> Optional[Dict[str, Any]]:
@@ -368,6 +410,11 @@ def check_hook(
     # ── P0-2: 检测 agent 身份 ──────────────────────────────────────
     who = agent_id or _detect_agent_id(hook_payload)
     session_id_payload = hook_payload.get("session_id", "")
+
+    # ── Directive #024: CIEU Boot Record（首次调用时写入）──────────
+    session_cfg_boot = _load_session_config()
+    cieu_db_boot = session_cfg_boot.get("cieu_db", ".ystar_cieu.db") if session_cfg_boot else ".ystar_cieu.db"
+    _write_boot_record(who, session_id_payload or "unknown", cieu_db_boot)
 
     # 若 agent_id 未在 Policy 里注册，回退到 "agent" fallback
     if who not in policy:
