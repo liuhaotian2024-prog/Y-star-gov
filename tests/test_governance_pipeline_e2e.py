@@ -229,7 +229,7 @@ def test_report_engine_produces_kpis(temp_session_dir):
     # Step 2: Create ReportEngine and generate report
     from ystar.governance.reporting import ReportEngine
 
-    report_engine = ReportEngine(store=store, cieu_store=cieu_store)
+    report_engine = ReportEngine(omission_store=store, cieu_store=cieu_store)
     kpis = report_engine.baseline_report()
 
     # Step 3: Verify KPIs are non-zero
@@ -296,7 +296,7 @@ def test_governance_loop_produces_suggestions(temp_session_dir):
     from ystar.governance.reporting import ReportEngine
     from ystar.governance.governance_loop import GovernanceLoop
 
-    report_engine = ReportEngine(store=store, cieu_store=cieu_store)
+    report_engine = ReportEngine(omission_store=store, cieu_store=cieu_store)
     gov_loop = GovernanceLoop(
         report_engine=report_engine,
         cieu_store=cieu_store,
@@ -348,7 +348,7 @@ def test_full_governance_pipeline_smoke():
         from ystar.governance.reporting import ReportEngine
         from ystar.governance.governance_loop import GovernanceLoop
 
-        report_engine = ReportEngine(store=store, cieu_store=cieu_store)
+        report_engine = ReportEngine(omission_store=store, cieu_store=cieu_store)
         gov_loop = GovernanceLoop(
             report_engine=report_engine,
             cieu_store=cieu_store,

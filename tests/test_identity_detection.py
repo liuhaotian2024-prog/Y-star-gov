@@ -34,9 +34,13 @@ class TestAgentIdentityDetection:
         result = _detect_agent_id({})
         assert result == "test_agent"
 
-    def test_priority_3_env_claude(self, monkeypatch):
+    def test_priority_3_env_claude(self, monkeypatch, tmp_path):
         """Priority 3: CLAUDE_AGENT_NAME env var (Claude Code standard)."""
+        # Clear YSTAR_AGENT_ID to ensure CLAUDE_AGENT_NAME is checked
+        monkeypatch.delenv("YSTAR_AGENT_ID", raising=False)
         monkeypatch.setenv("CLAUDE_AGENT_NAME", "claude_agent")
+        # Change to temp directory to avoid reading .ystar_active_agent from other repos
+        monkeypatch.chdir(tmp_path)
         result = _detect_agent_id({})
         assert result == "claude_agent"
 

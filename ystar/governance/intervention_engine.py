@@ -379,7 +379,29 @@ class InterventionEngine:
 
     # ── 主入口 2：Obligation-First Gate（在 enforce() 之前调用）───────────────
 
+    @staticmethod
+    def _validate_agent_identity(actor_id: str) -> Optional[str]:
+        """
+        [Constitutional Rule] Validate agent identity is specific, not generic.
 
+        Generic identities that should be rejected:
+        - 'agent' (default/placeholder)
+        - 'main' (bootstrap/temporary)
+        - 'test_agent' (should only be used in test mode)
+        - Any 32-char hex string (session IDs, not agent identities)
+
+        Returns: None if valid, error message if invalid.
+        """
+        FORBIDDEN_IDENTITIES = {"agent", "main", "test_agent", "unknown", ""}
+
+        if not actor_id or actor_id in FORBIDDEN_IDENTITIES:
+            return f"DENIED: agent_id='{actor_id}' is generic/placeholder. Use specific agent identity."
+
+        # Block raw session IDs (32-char hex strings like a8fbbc96648c1ac26)
+        if len(actor_id) == 32 and all(c in "0123456789abcdef" for c in actor_id.lower()):
+            return f"DENIED: agent_id='{actor_id}' appears to be a session ID, not an agent identity."
+
+        return None
 
     def gate_check(
         self,
@@ -391,6 +413,7 @@ class InterventionEngine:
         检查该 actor 是否允许执行 action_type。
 
         规则：
+        - [NEW] 如果 actor_id 是 generic placeholder → DENY（必须有明确身份）
         - 如果 action_type 是义务履行类事件 → ALLOW（永远放行）
         - 如果 actor 有 HARD_OVERDUE obligation + action 是高风险 → DENY/REDIRECT
         - 其他情况 → ALLOW
@@ -398,6 +421,19 @@ class InterventionEngine:
         设计意图：不让 actor 一边拖着 hard_overdue 义务不做，
                    一边继续执行 spawn/write/exec 等高影响动作。
         """
+        # [Constitutional Rule #1] Agent identity must be specific
+        identity_error = self._validate_agent_identity(actor_id)
+        if identity_error:
+            result = GateCheckResult(
+                decision=GateDecision.DENY,
+                actor_id=actor_id,
+                action_type=action_type,
+                blocking_omission_type=identity_error,
+                suggested_action="Use specific agent identity (e.g., ystar-ceo, path_a_agent)",
+            )
+            self._record_gate_check(result, entity_id)
+            return result
+
         # 义务履行动作永远允许
         if self.gating_policy.allows(action_type):
             result = GateCheckResult(
@@ -707,6 +743,54 @@ class InterventionEngine:
         )
 
     # ── 私有：CIEU 写入 ───────────────────────────────────────────────────────
+
+    def _record_gate_check(
+        self,
+        result: GateCheckResult,
+        entity_id: Optional[str] = None,
+    ) -> None:
+        """
+        Record gate check result to CIEU for audit trail.
+        Only records DENY decisions (ALLOW would spam the log).
+        """
+        if self.cieu_store is None:
+            return
+        if result.decision == GateDecision.ALLOW:
+            return  # Don't spam CIEU with every successful gate check
+
+        try:
+            record = {
+                "event_id":   str(uuid.uuid4()),
+                "seq_global": int(self._now() * 1_000_000),
+                "created_at": self._now(),
+                "session_id": entity_id or "gate_check",
+                "agent_id":   result.actor_id,
+                "event_type": f"intervention_gate:{result.decision.value}",
+                "decision":   result.decision.value,
+                "passed":     result.decision == GateDecision.ALLOW,
+                "violations": [{
+                    "dimension":  "agent_identity_governance",
+                    "field":      "actor_id",
+                    "message":    result.blocking_omission_type or "Gate check failed",
+                    "actual":     result.actor_id,
+                    "constraint": "specific_agent_identity_required",
+                    "severity":   1.0,  # Critical violation
+                }],
+                "drift_detected": True,
+                "drift_details":  f"gate_decision={result.decision.value}",
+                "drift_category": "identity_violation",
+                "task_description": (
+                    f"Gate: {result.decision.value} | "
+                    f"action={result.action_type} | actor={result.actor_id}"
+                ),
+                "evidence_grade": "governance",
+            }
+            self.cieu_store.write_dict(record)
+        except Exception as e:
+            _log.error(
+                "Failed to write gate check to CIEU (actor=%s, action=%s): %s",
+                result.actor_id, result.action_type, e
+            )
 
     def _write_pulse_to_cieu(self, pulse: InterventionPulse) -> None:
         if self.cieu_store is None:

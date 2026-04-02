@@ -16,7 +16,10 @@ def test_cli_reference_completeness():
     # Extract commands from _cli.py docstring (module docstring)
     cli_content = cli_path.read_text(encoding="utf-8")
     cli_docstring = cli_content.split('"""')[1]  # Get first docstring
-    cli_commands = set(re.findall(r'ystar\s+([a-z-]+)', cli_docstring))
+    # Match "ystar <command>" but exclude "ystar ystar" (which appears in docstring as pip install)
+    cli_commands = set(re.findall(r'^\s*ystar\s+([a-z-]+)', cli_docstring, re.MULTILINE))
+    # Filter out spurious matches
+    cli_commands = {cmd for cmd in cli_commands if cmd != "ystar"}
 
     # Extract commands from README CLI Reference section
     readme_content = readme_path.read_text(encoding="utf-8")

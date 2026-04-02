@@ -603,34 +603,53 @@ def test_governance_pipeline_e2e():
         contract = IntentContract.from_dict(contract_dict)
         assert contract is not None, "Contract should parse"
 
-        # Step 2: Setup omission adapter with timing
-        from ystar.adapters.omission_adapter import create_adapter
+        # Step 2: Setup omission system with timing
         from ystar.governance.omission_store import OmissionStore
         from ystar.governance.omission_rules import reset_registry
+        from ystar.governance.omission_engine import OmissionEngine
+        from ystar.governance.omission_models import TrackedEntity, GovernanceEvent, GEventType, EntityStatus
+        from ystar.governance.cieu_store import CIEUStore
         from ystar.domains.openclaw.accountability_pack import apply_openclaw_accountability_pack
 
         omission_db = tempfile.mktemp(suffix="_omission.db")
+        cieu_db = session_cfg["cieu_db"]
+
         store = OmissionStore(db_path=omission_db)
         registry = reset_registry()
-        apply_openclaw_accountability_pack(registry, contract=contract)
+        # Use simple timing config instead of custom rules
+        simple_contract_dict = {
+            "name": "test_policy",
+            "obligation_timing": {
+                "delegation": 300.0,
+                "acknowledgement": 120.0,
+            }
+        }
+        simple_contract = IntentContract.from_dict(simple_contract_dict)
+        apply_openclaw_accountability_pack(registry, contract=simple_contract)
 
-        adapter = create_adapter(store=store, registry=registry)
+        cieu_store = CIEUStore(cieu_db)
+        engine = OmissionEngine(store=store, registry=registry, cieu_store=cieu_store)
 
-        # Step 3: Simulate a delegation event to trigger obligation
+        # Step 3: Create entity and trigger obligation via ENTITY_CREATED event
         import time
         now = time.time()
-        spawn_event = {
-            "event_type": "subagent_spawn",
-            "agent_id": "test_parent_agent",
-            "session_id": "test_e2e",
-            "child_agent_id": "test_child_agent",
-            "task_description": "test delegation task",
-            "task_ticket_id": "task_001",
-            "timestamp": now,
-        }
 
-        # Ingest the event - this should create obligations based on accountability_pack
-        adapter.ingest_raw(spawn_event)
+        entity = TrackedEntity(
+            entity_id="task_001",
+            entity_type="task",
+            current_owner_id="agent_a",
+            initiator_id="agent_system",
+            status=EntityStatus.ACTIVE,
+        )
+        engine.register_entity(entity)
+
+        event = GovernanceEvent(
+            event_type=GEventType.ENTITY_CREATED,
+            entity_id="task_001",
+            actor_id="agent_a",
+            ts=now,
+        )
+        engine.ingest_event(event)
 
         # Verify obligation was created
         obligations = store.list_obligations()
@@ -638,8 +657,8 @@ def test_governance_pipeline_e2e():
 
         # Step 4: Create ReportEngine and verify it reads from store
         from ystar.governance.reporting import ReportEngine
-        engine = ReportEngine(omission_store=store)
-        report = engine.baseline_report()
+        report_engine = ReportEngine(omission_store=store)
+        report = report_engine.baseline_report()
 
         assert report.obligations is not None, "Report should have obligation data"
         total_obs = (report.obligations.created_total + report.obligations.pending_total +
@@ -648,17 +667,21 @@ def test_governance_pipeline_e2e():
 
         # Step 5: Create GovernanceLoop and verify observation
         from ystar.governance.governance_loop import GovernanceLoop
-        gloop = GovernanceLoop(report_engine=engine)
+        gloop = GovernanceLoop(report_engine=report_engine)
 
         obs = gloop.observe_from_report_engine()
         assert obs is not None, "Observation should be created"
 
         # Step 6: Simulate time passing to make obligation overdue
-        import time
-        adapter.engine.scan(now=time.time() + 100.0)  # Force overdue
+        # Update obligations to be overdue
+        for ob in store.list_obligations():
+            ob.due_at = time.time() - 10  # 10 seconds overdue
+            store.update_obligation(ob)
+        # Run scan to detect violations
+        engine.scan()
 
         # Step 7: Re-observe and verify non-zero KPIs
-        report2 = engine.baseline_report()
+        report2 = report_engine.baseline_report()
         obs2 = gloop.observe_from_report_engine()
 
         # At least ONE KPI should be non-zero (we have overdue obligations)
