@@ -202,6 +202,43 @@ class TestSerialization:
         assert restored.terminal_actor == chain.terminal_actor
         assert restored.validate() == []
 
+    def test_delegation_contract_hash_survives_roundtrip(self):
+        """FIX-6: hash must be preserved through to_dict/from_dict cycle."""
+        c = make_contract(deny=["/etc"], deny_commands=["sudo"])
+        link = make_link("org", "agent_a", c)
+        original_hash = link.hash
+        original_nonce = link.nonce
+        assert original_hash, "hash should be set after construction"
+
+        # Round-trip through dict serialization
+        d = link.to_dict()
+        restored = DelegationContract.from_dict(d)
+
+        assert restored.hash == original_hash, (
+            f"Hash changed after roundtrip: {original_hash!r} → {restored.hash!r}"
+        )
+        assert restored.nonce == original_nonce
+        assert restored.verify_hash(), "verify_hash() should pass after roundtrip"
+
+    def test_delegation_chain_roundtrip_preserves_hashes(self):
+        """FIX-6: all link hashes must survive chain round-trip."""
+        c1 = make_contract(deny=["/etc"])
+        c2 = make_contract(deny=["/root"])
+        chain = DelegationChain()
+        chain.append(make_link("board", "ceo", c1))
+        chain.append(make_link("ceo", "cto", c2))
+
+        original_hashes = [lk.hash for lk in chain.links]
+
+        d = chain.to_dict()
+        restored = DelegationChain.from_dict(d)
+
+        for i, lk in enumerate(restored.links):
+            assert lk.hash == original_hashes[i], (
+                f"Link[{i}] hash mismatch after roundtrip"
+            )
+            assert lk.verify_hash()
+
     def test_intent_contract_hash_stable(self):
         c = make_contract(deny=["/etc"], value_range={"amount": {"max": 1000}})
         h1 = c.hash

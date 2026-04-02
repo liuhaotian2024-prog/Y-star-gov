@@ -1931,6 +1931,7 @@ class DelegationContract:
             liability_scope  = d.get("liability_scope", ""),
             grant_id         = d.get("grant_id", ""),
             nonce            = d.get("nonce", ""),
+            hash             = d.get("hash", ""),
             content_hash     = d.get("content_hash", ""),
         )
 
@@ -2207,12 +2208,16 @@ class DelegationChain:
     @classmethod
     def from_dict(cls, d: dict) -> "DelegationChain":
         """从 dict 反序列化（从 session.json 加载委托链）。"""
+        import logging
+        _log = logging.getLogger("ystar.dimensions")
         chain = cls()
-        for lk_dict in d.get("links", []):
+        for i, lk_dict in enumerate(d.get("links", [])):
             try:
                 chain.links.append(DelegationContract.from_dict(lk_dict))
-            except Exception:
-                pass
+            except Exception as exc:
+                _log.warning(
+                    "DelegationChain.from_dict: skipped link[%d]: %s", i, exc
+                )
         return chain
 
 

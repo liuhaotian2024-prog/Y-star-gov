@@ -339,6 +339,30 @@ class TestExtractWritePathsFromBash:
         paths = _extract_write_paths_from_bash("ls -la && cat file.txt")
         assert len(paths) == 0
 
+    def test_msys_path_conversion(self):
+        """Test MSYS-style paths (/c/Users/...) are converted to Windows format."""
+        paths = _extract_write_paths_from_bash("echo test > /c/Users/me/output.txt")
+        # Should convert /c/Users/me/output.txt → C:\Users\me\output.txt (on Windows)
+        # or C:/Users/me/output.txt (normalized)
+        assert any("Users" in p and "output.txt" in p for p in paths)
+        # Should NOT start with /c/ after normalization
+        for p in paths:
+            if "output.txt" in p:
+                assert not p.startswith("/c/"), f"MSYS path not converted: {p}"
+
+    def test_windows_backslash_path(self):
+        """Test Windows paths with backslashes are normalized."""
+        paths = _extract_write_paths_from_bash(r"echo test > C:\Users\me\output.txt")
+        assert any("output.txt" in p for p in paths)
+
+    def test_mixed_slash_normalization(self):
+        """Test paths with mixed slashes are normalized consistently."""
+        paths = _extract_write_paths_from_bash("cp src.txt ./subdir/deep/../output.txt")
+        # deep/.. should be resolved by normpath
+        found = [p for p in paths if "output.txt" in p]
+        assert len(found) == 1
+        assert ".." not in found[0], f"Path not normalized: {found[0]}"
+
 
 # ── Bash Hook Integration ───────────────────────────────────────────────
 

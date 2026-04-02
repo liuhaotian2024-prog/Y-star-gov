@@ -454,8 +454,21 @@ def _extract_write_paths_from_bash(command: str) -> list:
             if args:
                 paths.append(args[-1].strip('\'"'))
 
+    # 归一化路径：处理 MSYS/Cygwin 格式 (/c/Users/... → C:\Users\...)
+    # 以及 Windows 反斜杠/正斜杠混用
+    normalized = []
+    for p in paths:
+        p = p.strip()
+        if not p:
+            continue
+        # MSYS 路径转换: /c/path → C:\path, /d/path → D:\path
+        if len(p) >= 3 and p[0] == '/' and p[1].isalpha() and p[2] == '/':
+            p = p[1].upper() + ':' + p[2:]
+        p = os.path.normpath(p)
+        normalized.append(p)
+
     # 去重并返回
-    return list(set(paths))
+    return list(set(normalized))
 
 
 # ── 工具名 → Y* 参数字段的映射 ────────────────────────────────────────────
@@ -832,8 +845,9 @@ def _check_hook_full(
         chain_data = session_cfg.get("delegation_chain") if session_cfg else None
         if chain_data:
             delegation_chain = _DC.from_dict(chain_data)
-    except Exception:
-        pass
+            _log.info("Delegation chain loaded: %d links", len(delegation_chain.links))
+    except Exception as exc:
+        _log.warning("Failed to load delegation chain from session: %s", exc)
 
     state = SessionState(
         session_id      = session_id,
