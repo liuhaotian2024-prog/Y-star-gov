@@ -363,8 +363,26 @@ def check(
                 severity=1.0,
             )
         ])
-    # Expired and stale: let normal check proceed, CIEU will record status
-    # These are audit modes, not blocking modes
+
+    # Expired and stale: record violations but don't block (audit mode)
+    if eff_status == "expired":
+        violations.append(Violation(
+            dimension="contract_status",
+            field="contract",
+            message="Contract has expired (past valid_until)",
+            actual="expired",
+            constraint="active contract expected",
+            severity=0.6,
+        ))
+    elif eff_status == "stale":
+        violations.append(Violation(
+            dimension="contract_status",
+            field="contract",
+            message="Contract legitimacy score has decayed below minimum threshold",
+            actual="stale",
+            constraint="active contract expected",
+            severity=0.3,
+        ))
 
     # ── FIX-4: type safety pre-check ─────────────────────────────────────────
     for k in _validate_param_types(params):
@@ -750,8 +768,12 @@ def check(
                     # elapsed_seconds is not numeric — skip check
                     pass
 
+    # Only violations with severity >= 0.7 cause passed=False
+    # Lower severity violations (expired=0.6, stale=0.3) are audit-only
+    blocking_violations = [v for v in violations if v.severity >= 0.7]
+
     return CheckResult(
-        passed     = len(violations) == 0,
+        passed     = len(blocking_violations) == 0,
         violations = violations,
         contract   = contract,
     )

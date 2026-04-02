@@ -102,6 +102,7 @@ class OmissionEngine:
         cieu_store: Any = None,          # CIEUStore | NullCIEUStore | None
         now_fn: Optional[Any] = None,    # Callable[[], float]
         causal_notify_fn: Optional[Any] = None,  # GAP 5: Callable[[dict], None]
+        trigger_registry: Any = None,    # TriggerRegistry | None
     ) -> None:
         self.store    = store
         self.registry = registry or get_registry()
@@ -112,6 +113,16 @@ class OmissionEngine:
         self._now     = now_fn or time.time
         # GAP 5 FIX: Push model — notify causal engine of violations
         self._causal_notify_fn = causal_notify_fn
+        # P2-2: Automatic obligation trigger activation
+        # Import here to avoid circular dependency
+        if trigger_registry is None:
+            try:
+                from ystar.governance.obligation_triggers import get_trigger_registry
+                self.trigger_registry = get_trigger_registry()
+            except ImportError:
+                self.trigger_registry = None
+        else:
+            self.trigger_registry = trigger_registry
 
     # ── 主入口 1：注入单个事件 ───────────────────────────────────────────────
 
@@ -121,7 +132,8 @@ class OmissionEngine:
           1. 存入 store
           2. 检查是否 fulfill 了任何 pending obligation
           3. 检查是否触发了新的 obligation（通过 rule matching）
-          4. 返回 EngineResult
+          4. P2-2: 检查是否匹配 ObligationTrigger（自动触发）
+          5. 返回 EngineResult
         """
         result = EngineResult()
 
@@ -135,6 +147,13 @@ class OmissionEngine:
         # 3. 触发新 obligation（rule matching）
         new_obs = self._trigger_obligations(ev)
         result.new_obligations.extend(new_obs)
+
+        # 4. P2-2: Automatic obligation trigger activation
+        # When a tool_call event is ingested with ALLOW decision,
+        # check if it matches any ObligationTriggers
+        if ev.event_type == "tool_call":
+            trigger_obs = self._match_and_create_trigger_obligations(ev)
+            result.new_obligations.extend(trigger_obs)
 
         return result
 
@@ -371,7 +390,102 @@ class OmissionEngine:
                 fulfilled.append(ob)
         return fulfilled
 
-    # ── 私有：trigger ─────────────────────────────────────────────────────────
+    # ── 私有：trigger (ObligationTrigger framework) ──────────────────────────
+
+    def _match_and_create_trigger_obligations(self, ev: GovernanceEvent) -> List[ObligationRecord]:
+        """
+        P2-2: Automatic obligation trigger activation.
+
+        When a tool_call event is ingested:
+          1. Extract tool_name, tool_input, decision from payload
+          2. Match against registered ObligationTriggers
+          3. Create obligations for each matched trigger (with deduplication)
+
+        Only fires for ALLOW decisions (denied tools don't create obligations).
+        """
+        if self.trigger_registry is None:
+            return []
+
+        # Extract tool call information from event payload
+        payload = ev.payload or {}
+        tool_name = payload.get("tool_name")
+        tool_input = payload.get("tool_input", {})
+        decision = payload.get("decision", "ALLOW")
+
+        # Only fire triggers for ALLOW decisions
+        # (DENY triggers are special and handled by hook layer)
+        if decision != "ALLOW":
+            return []
+
+        if not tool_name:
+            return []
+
+        # Match triggers
+        try:
+            from ystar.governance.obligation_triggers import match_triggers
+            triggers = match_triggers(
+                registry=self.trigger_registry,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                agent_id=ev.actor_id,
+                check_result=None,  # We already filtered by ALLOW above
+            )
+        except ImportError:
+            return []
+
+        # Create obligations for each matched trigger
+        new_obs = []
+        for trigger in triggers:
+            # Determine target actor
+            target_actor = trigger.get_target_actor(ev.actor_id)
+
+            # Deduplication: check if same obligation type already pending
+            if trigger.deduplicate:
+                if self.store.has_pending_obligation(
+                    entity_id=ev.entity_id,
+                    obligation_type=trigger.obligation_type,
+                    actor_id=target_actor,
+                ):
+                    continue  # Skip duplicate
+
+            # Calculate deadline
+            due_at = ev.ts + trigger.deadline_seconds
+
+            # Map severity string to Severity enum
+            severity = Severity.HIGH if trigger.severity == "HARD" else Severity.MEDIUM
+
+            # Build escalation policy from trigger
+            escalation_policy = EscalationPolicy(
+                escalate_after_secs=trigger.deadline_seconds * 2 if trigger.escalate_to_hard else None,
+                escalate_to=trigger.escalate_to_actor,
+                actions=[EscalationAction.ESCALATE] if trigger.escalate_to_hard else [],
+                deny_closure_on_open=trigger.deny_closure_on_open,
+            )
+
+            # Create obligation record
+            ob = ObligationRecord(
+                entity_id=ev.entity_id,
+                actor_id=target_actor,
+                obligation_type=trigger.obligation_type,
+                trigger_event_id=ev.event_id,
+                required_event_types=[trigger.fulfillment_event],
+                due_at=due_at,
+                grace_period_secs=trigger.grace_period_secs,
+                hard_overdue_secs=trigger.hard_overdue_secs,
+                status=ObligationStatus.PENDING,
+                violation_code=f"trigger_{trigger.trigger_id}_violation",
+                severity=severity,
+                escalation_policy=escalation_policy,
+                notes=f"auto-triggered by tool_call:{tool_name} (trigger_id={trigger.trigger_id})",
+            )
+
+            # Save to store
+            self.store.add_obligation(ob)
+            new_obs.append(ob)
+
+        return new_obs
+
+    # ── 私有：trigger (rule-based) ────────────────────────────────────────────
 
     def _trigger_obligations(self, ev: GovernanceEvent) -> List[ObligationRecord]:
         """
@@ -619,6 +733,7 @@ class OmissionEngine:
                     f"Omission: {ob.obligation_type} | "
                     f"entity={ob.entity_id} | actor={ob.actor_id}"
                 ),
+                "evidence_grade": "governance",  # [P2-3] omission 是治理级证据
             }
             ok = self.cieu_store.write_dict(cieu_record)
             if ok:
@@ -654,6 +769,7 @@ class OmissionEngine:
                     f"Restoration: {ob.obligation_type} | "
                     f"entity={ob.entity_id} | actor={ob.actor_id}"
                 ),
+                "evidence_grade": "governance",  # [P2-3] restoration 是治理级证据
             }
             self.cieu_store.write_dict(cieu_record)
         except Exception:
