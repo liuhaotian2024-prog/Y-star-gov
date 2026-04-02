@@ -127,7 +127,7 @@ class TestStructureExistence:
 
     def test_architecture_freeze_exists(self):
         """ARCHITECTURE_FREEZE_v1.md must exist."""
-        assert os.path.exists(os.path.join(_PROJECT_ROOT, "ARCHITECTURE_FREEZE_v1.md"))
+        assert os.path.exists(os.path.join(_PROJECT_ROOT, "docs/development/ARCHITECTURE_FREEZE_v1.md"))
 
     def test_path_a_directory_exists(self):
         """path_a/ directory must exist with meta_agent.py."""
