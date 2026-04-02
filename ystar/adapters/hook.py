@@ -1,5 +1,9 @@
 # Layer: Foundation
 """
+Runtime Ingress Controller — the single entry point for all tool-call governance.
+
+Despite the filename 'hook.py', this module is the runtime ingress controller, not a thin adapter.
+
 ystar.adapters.hook  —  OpenClaw hook 纯翻译层  v0.48.0
 =========================================================
 

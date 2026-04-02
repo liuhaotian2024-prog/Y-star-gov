@@ -1,3 +1,4 @@
+# STATUS: LEGACY — not on the main governance runtime path
 # ystar — Human Intent to Machine Predicate
 # Copyright (C) 2026 Haotian Liu
 # MIT License

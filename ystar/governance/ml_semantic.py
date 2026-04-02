@@ -1,3 +1,4 @@
+# STATUS: LEGACY — not on the main governance runtime path
 """
 ystar.governance.ml_semantic  —  Semantic Inquiry & Verification
 Physical sub-module of metalearning.py (was 2858 lines → 6 focused modules).
