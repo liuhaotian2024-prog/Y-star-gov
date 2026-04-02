@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from typing import Any, Dict, Optional
 
 from ystar.session import Policy, PolicyResult
@@ -555,7 +556,15 @@ def _setup_omission_from_contract(
 
         # 配置带合约时限的 omission registry
         registry = reset_registry()
+        n_builtin_rules = len(registry.all_enabled())
         apply_openclaw_accountability_pack(registry, contract=contract)
+
+        # [P0-INSTRUMENTATION] Log obligation timing configuration
+        _log.info("Omission setup: %d builtin rules configured", n_builtin_rules)
+        if contract and hasattr(contract, 'obligation_timing'):
+            timing_config = getattr(contract, 'obligation_timing', {})
+            if timing_config:
+                _log.info("Contract obligation_timing: %d entries", len(timing_config))
 
         # 配置持久化 store
         try:
@@ -576,6 +585,63 @@ def _setup_omission_from_contract(
         adapter = create_adapter(store=store, registry=registry,
                                  cieu_store=cieu_store)
         configure_omission_governance(adapter=adapter)
+
+        # ── P0 FIX: Register obligations from contract timing ────────────────
+        # Root cause: store was created but nobody added ObligationRecords to it.
+        # This caused scan() to return 0 violations → GovernanceLoop produced 0 output.
+        try:
+            from ystar.governance.omission_models import ObligationRecord, ObligationStatus
+
+            obligation_timing_config = contract_dict.get("obligation_timing", {})
+            if obligation_timing_config:
+                now = time.time()
+                n_registered = 0
+
+                # Map obligation keys to rule IDs (same as accountability_pack.py)
+                _KEY_TO_RULE = {
+                    "delegation": "rule_a_delegation",
+                    "acknowledgement": "rule_b_acknowledgement",
+                    "status_update": "rule_c_status_update",
+                    "result_publication": "rule_d_result_publication",
+                    "upstream_notification": "rule_e_upstream_notification",
+                    "escalation": "rule_f_escalation",
+                    "closure": "rule_g_closure",
+                    "ack": "rule_b_acknowledgement",
+                    "complete": "rule_c_status_update",
+                    "completion": "rule_c_status_update",
+                    "notify": "rule_e_upstream_notification",
+                    "close": "rule_g_closure",
+                }
+
+                for key, due_within_secs in obligation_timing_config.items():
+                    rule_id = _KEY_TO_RULE.get(key)
+                    if rule_id and isinstance(due_within_secs, (int, float)) and due_within_secs > 0:
+                        # Get timing from registry (already configured by accountability_pack)
+                        rule = registry.get(rule_id)
+                        grace = 0.0
+                        hard_overdue = due_within_secs
+                        if rule:
+                            grace = rule.grace_period_secs
+                            hard_overdue = rule.hard_overdue_secs or due_within_secs
+
+                        # Create obligation record
+                        ob = ObligationRecord(
+                            entity_id=session_id,
+                            actor_id=agent_id,
+                            obligation_type=rule_id,
+                            due_at=now + due_within_secs,
+                            grace_period_secs=grace,
+                            hard_overdue_secs=hard_overdue,
+                            status=ObligationStatus.PENDING,
+                            notes=f"Initial obligation from contract timing: {key}",
+                        )
+                        store.add_obligation(ob)
+                        n_registered += 1
+
+                if n_registered > 0:
+                    _log.info("Registered %d initial obligations from contract timing", n_registered)
+        except Exception as e:
+            _log.warning("Failed to register initial obligations: %s", e)
 
         # ── 关键1：启用 obligation-first gate ────────────────────────────
         # OmissionEngine 检测到违规 → InterventionEngine 产生 INTERRUPT_GATE 脉冲
@@ -615,10 +681,51 @@ def _setup_omission_from_contract(
         except Exception:
             pass
 
+        # ── P0-INSTRUMENTATION: Log setup completion ────────────────────────
+        n_rules_final = len(registry.all_enabled())
+        n_entities = len(store.list_entities()) if store else 0
+        n_obligations = len(store.pending_obligations()) if store else 0
+
+        _log.info("Omission setup complete: %d rules, %d entities, %d obligations",
+                  n_rules_final, n_entities, n_obligations)
+
+        # Record CIEU event for observability
+        if cieu_store is not None:
+            try:
+                cieu_store.log(
+                    agent_id=agent_id,
+                    event_type="omission_setup_complete",
+                    details={
+                        "session_id": session_id,
+                        "agent_id": agent_id,
+                        "n_rules_enabled": n_rules_final,
+                        "n_entities": n_entities,
+                        "n_obligations": n_obligations,
+                        "n_timing_overrides": n_active,
+                        "store_type": store.__class__.__name__,
+                    },
+                    timestamp=time.time(),
+                )
+            except Exception as e:
+                _log.warning("Failed to log omission_setup_complete to CIEU: %s", e)
+
         _omission_cache_key = cache_key
 
     except Exception as exc:
         _log.error("Omission engine setup failed: %s", exc)
+        # Log failure to CIEU for debugging
+        try:
+            if cieu_db:
+                from ystar.governance.cieu_store import CIEUStore
+                fail_store = CIEUStore(cieu_db)
+                fail_store.log(
+                    agent_id=agent_id,
+                    event_type="omission_setup_failed",
+                    details={"error": str(exc), "session_id": session_id},
+                    timestamp=time.time(),
+                )
+        except Exception:
+            pass
 
 
 # ── Orchestrator Integration ──────────────────────────────────────────────

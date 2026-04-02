@@ -103,23 +103,75 @@ class Orchestrator:
             _log.error("Orchestrator initialization failed: %s", e, exc_info=True)
 
     def _init_from_session(self, session_cfg: Dict[str, Any]) -> None:
-        """Wire up subsystem references from the existing adapter singletons."""
-        # 1. InterventionEngine — from adapter module singleton
-        try:
-            from ystar.domains.openclaw.adapter import get_intervention_engine
-            self._intervention_engine = get_intervention_engine()
-        except Exception as e:
-            _log.warning("Failed to initialize InterventionEngine: %s", e)
+        """
+        Wire up subsystem references from the existing adapter singletons.
 
-        # 2. OmissionAdapter — for scan forwarding
+        P0-FIX: If adapters are not yet configured (singletons return None),
+        configure them here. This fixes the race condition where orchestrator
+        tries to access adapters before hook.py has configured them.
+        """
+        # 0. Extract session config values
+        cieu_db = session_cfg.get("cieu_db", ".ystar_cieu.db")
+        contract_dict = session_cfg.get("contract", {})
+
+        # 1. Configure OmissionAdapter if not already configured
         try:
-            from ystar.domains.openclaw.adapter import get_omission_adapter
+            from ystar.domains.openclaw.adapter import get_omission_adapter, configure_omission_governance
+            from ystar.governance.omission_store import OmissionStore
+            from ystar.adapters.omission_adapter import create_adapter
+            from ystar.governance.omission_rules import reset_registry
+            from ystar.domains.openclaw.accountability_pack import apply_openclaw_accountability_pack
+            from ystar.kernel.dimensions import IntentContract
+
             self._omission_adapter = get_omission_adapter()
+            if self._omission_adapter is None:
+                # Adapters not configured yet — configure them now
+                _log.info("Orchestrator: configuring OmissionAdapter (not yet initialized by hook)")
+
+                # Build IntentContract from session config
+                try:
+                    contract = IntentContract.from_dict(contract_dict)
+                except Exception as e:
+                    _log.warning("Failed to parse IntentContract: %s", e)
+                    contract = None
+
+                # Configure omission registry with accountability pack
+                registry = reset_registry()
+                apply_openclaw_accountability_pack(registry, contract=contract)
+
+                # Create OmissionStore with same DB path as CIEU
+                omission_db = cieu_db.replace(".db", "_omission.db") if cieu_db else ".ystar_omission.db"
+                store = OmissionStore(db_path=omission_db)
+
+                # Create CIEUStore for omission logging
+                try:
+                    from ystar.governance.cieu_store import CIEUStore
+                    cieu_store_for_omission = CIEUStore(cieu_db)
+                except Exception:
+                    cieu_store_for_omission = None
+
+                # Create and configure adapter
+                adapter = create_adapter(store=store, registry=registry, cieu_store=cieu_store_for_omission)
+                configure_omission_governance(adapter=adapter)
+                self._omission_adapter = adapter
         except Exception as e:
-            _log.warning("Failed to initialize OmissionAdapter: %s", e)
+            _log.warning("Failed to initialize OmissionAdapter: %s", e, exc_info=True)
+            self._omission_adapter = None
+
+        # 2. Configure InterventionEngine if not already configured
+        try:
+            from ystar.domains.openclaw.adapter import get_intervention_engine, configure_intervention_engine
+
+            self._intervention_engine = get_intervention_engine()
+            if self._intervention_engine is None and self._omission_adapter is not None:
+                _log.info("Orchestrator: configuring InterventionEngine (not yet initialized by hook)")
+                configure_intervention_engine()
+                self._intervention_engine = get_intervention_engine()
+        except Exception as e:
+            _log.warning("Failed to initialize InterventionEngine: %s", e, exc_info=True)
+            self._intervention_engine = None
 
         # 3. CIEUStore — for reading accumulated records
-        cieu_db = session_cfg.get("cieu_db", ".ystar_cieu.db")
         try:
             from ystar.governance.cieu_store import CIEUStore
             self._cieu_store = CIEUStore(cieu_db)
@@ -130,7 +182,7 @@ class Orchestrator:
         try:
             self._governance_loop = self._build_governance_loop()
         except Exception as e:
-            _log.warning("Failed to initialize GovernanceLoop: %s", e)
+            _log.warning("Failed to initialize GovernanceLoop: %s", e, exc_info=True)
 
     def _build_governance_loop(self) -> Optional[Any]:
         """
