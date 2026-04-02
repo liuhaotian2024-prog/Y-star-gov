@@ -11,6 +11,9 @@ Commands:
   ystar quality        Evaluate contract quality (coverage/FP rate)
   ystar check          Run policy check on JSONL events file
   ystar report         Generate governance report
+  ystar baseline       Capture current governance state as baseline
+  ystar delta          Compare current state against baseline
+  ystar trend          Show 7-day CIEU event trend (total/deny/rate)
   ystar demo           5-second wow moment -- governance in action
   ystar doctor         Diagnose environment integrity
   ystar verify         Verify CIEU cryptographic integrity
@@ -343,6 +346,85 @@ def _cmd_delta(args: list) -> None:
     print()
 
 
+def _cmd_trend(args: list) -> None:
+    """Show CIEU event trend over the last 7 days (by-day breakdown)."""
+    import json, pathlib
+    from datetime import datetime, timedelta
+
+    db_path = ".ystar_cieu.db"
+
+    try:
+        cfg = json.load(open(".ystar_session.json", encoding="utf-8"))
+        db_path = cfg.get("cieu_db", db_path)
+    except Exception:
+        pass
+
+    if not pathlib.Path(db_path).exists():
+        print(f"  No CIEU database found at {db_path}")
+        print("  Run 'ystar setup' first.")
+        sys.exit(1)
+
+    from ystar.governance.cieu_store import CIEUStore
+
+    cieu_store = CIEUStore(db_path)
+
+    # Query last 7 days
+    now = datetime.now()
+    start_time = (now - timedelta(days=7)).timestamp()
+
+    # Group by day
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    query = """
+        SELECT
+            date(created_at, 'unixepoch') as day,
+            COUNT(*) as total,
+            SUM(CASE WHEN decision = 'deny' THEN 1 ELSE 0 END) as deny_count
+        FROM cieu_events
+        WHERE created_at >= ?
+        GROUP BY day
+        ORDER BY day ASC
+    """
+
+    cursor.execute(query, (start_time,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
+        print()
+        print("  No CIEU events in the last 7 days.")
+        print()
+        return
+
+    print()
+    print("  Y*gov CIEU Trend (Last 7 Days)")
+    print("  " + "-" * 60)
+    print(f"  {'Date':<12} {'Total Events':<15} {'Denies':<10} {'Deny Rate':<12} {'Trend':<8}")
+    print("  " + "-" * 60)
+
+    prev_deny_rate = None
+    for day, total, deny_count in rows:
+        deny_rate = deny_count / total if total > 0 else 0.0
+
+        # Trend indicator
+        if prev_deny_rate is None:
+            trend = "-"
+        elif abs(deny_rate - prev_deny_rate) < 0.01:
+            trend = "→"
+        elif deny_rate > prev_deny_rate:
+            trend = "↑"
+        else:
+            trend = "↓"
+
+        print(f"  {day:<12} {total:<15} {deny_count:<10} {deny_rate:<12.1%} {trend:<8}")
+        prev_deny_rate = deny_rate
+
+    print("  " + "-" * 60)
+    print()
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  Entry point (ONE main(), dispatches to cli/* modules)
 # ══════════════════════════════════════════════════════════════════════
@@ -425,6 +507,9 @@ def main() -> None:
     elif cmd == "delta":
         _cmd_delta(rest)
 
+    elif cmd == "trend":
+        _cmd_trend(rest)
+
     elif cmd == "domain":
         main_domain_cmd(rest)
 
@@ -432,7 +517,7 @@ def main() -> None:
         print(f"Unknown command: {cmd}\n")
         print("Available commands: demo, setup, hook-install, doctor, verify, report,")
         print("                    seal, policy-builder, audit, check, init, version,")
-        print("                    simulate, quality, baseline, delta, domain")
+        print("                    simulate, quality, baseline, delta, trend, domain")
         sys.exit(1)
 
 
