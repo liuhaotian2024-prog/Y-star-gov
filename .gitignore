@@ -8,6 +8,8 @@ __pycache__/
 dist/
 build/
 .eggs/
+*.whl
+*.zip
 
 # Y*gov runtime files
 .ystar_cieu.db

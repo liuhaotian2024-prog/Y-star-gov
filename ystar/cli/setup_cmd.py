@@ -136,16 +136,24 @@ def _cmd_hook_install() -> None:
         "from ystar import Policy;"
         "from ystar.adapters.hook import check_hook;"
         "p=json.loads(sys.stdin.read());"
-        "policy=Policy.from_agents_md('AGENTS.md') if __import__('pathlib').Path('AGENTS.md').exists() "
+        "policy=Policy.from_agents_md('AGENTS.md',confirm=False) if __import__('pathlib').Path('AGENTS.md').exists() "
         "else Policy({});"
         "r=check_hook(p,policy);"
         "print(json.dumps(r))"
     )
 
-    ystar_hook = {
-        "type":    "command",
-        "command": f"MSYS_NO_PATHCONV=1 {python_exec} -c '{hook_script}'",
-    }
+    # Windows cmd.exe doesn't handle single-quote nesting well, use double quotes with escaping
+    if sys.platform == "win32":
+        hook_script_escaped = hook_script.replace('"', '\\"')
+        ystar_hook = {
+            "type":    "command",
+            "command": f'{python_exec} -c "{hook_script_escaped}"',
+        }
+    else:
+        ystar_hook = {
+            "type":    "command",
+            "command": f"MSYS_NO_PATHCONV=1 {python_exec} -c '{hook_script}'",
+        }
 
     hook_entry = {
         "matcher": "",
