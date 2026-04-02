@@ -13,7 +13,38 @@ Contains:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import Any, List
+
+
+# ── GovernanceSuggestion (shared data type) ──────────────────────────────────
+# Defined here (not in governance_loop.py) so that Path A, Path B, and other
+# subsystems can import it without depending on the orchestration layer.
+
+@dataclass
+class GovernanceSuggestion:
+    """
+    一条基于观测产生的治理参数调整建议。
+    不直接修改任何配置，而是提交给 ConstraintRegistry 受控激活。
+    """
+    suggestion_type:  str   = ""
+    target_rule_id:   str   = ""
+    current_value:    Any   = None
+    suggested_value:  Any   = None
+    confidence:       float = 0.5
+    rationale:        str   = ""
+    observation_ref:  str   = ""
+
+    def to_constraint_proposal_dict(self) -> dict:
+        """转换为 ConstraintRegistry 可消费的格式。"""
+        return {
+            "rule_id":         self.target_rule_id,
+            "suggestion_type": self.suggestion_type,
+            "current":         self.current_value,
+            "suggested":       self.suggested_value,
+            "confidence":      self.confidence,
+            "rationale":       self.rationale,
+            "source":          "governance_loop",
+        }
 
 
 # ── N7: GovernanceSuggestionPolicy ────────────────────────────────────────────
@@ -85,8 +116,7 @@ def generate_governance_suggestions(
     N7: Thresholds and templates are driven by GovernanceSuggestionPolicy
     instead of hardcoded values.
     """
-    # Avoid circular imports — these types live in governance_loop
-    from ystar.governance.governance_loop import GovernanceSuggestion
+    # GovernanceSuggestion is defined above in this module
 
     suggestions: List[GovernanceSuggestion] = []
 

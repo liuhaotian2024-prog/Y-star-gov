@@ -41,7 +41,7 @@ Usage:
     registry.register(trigger)
 
     # Match tool calls
-    triggers = match_triggers(registry, "WebSearch", {"query": "..."}, "CMO")
+    triggers = match_triggers(registry, "WebSearch", {"query": "..."}, "marketing_agent")
     for t in triggers:
         # Create obligation in OmissionEngine
         ...
@@ -388,11 +388,26 @@ def create_obligation_from_trigger(
 # ── Built-in trigger definitions ────────────────────────────────────────────
 
 
-def register_default_triggers(registry: TriggerRegistry) -> None:
+def register_default_triggers(
+    registry: TriggerRegistry,
+    escalation_target: str = "supervisor",
+    finance_role: str = "finance",
+    tech_review_role: str = "technical_reviewer",
+) -> None:
     """
     Register the 4 priority triggers from Directive #015.
 
-    These are the triggers approved by the Board for Y* Bridge Labs operations:
+    These triggers can be customized for any organizational structure by
+    passing role parameters. The defaults are generic role names that can
+    be mapped to any specific team structure (CEO/CTO/CFO, or any other).
+
+    Args:
+        registry:           TriggerRegistry to populate
+        escalation_target:  Role ID for escalation (default: "supervisor")
+        finance_role:       Role ID for financial tracking (default: "finance")
+        tech_review_role:   Role ID for technical review (default: "technical_reviewer")
+
+    Default triggers registered:
       #1: Research Knowledge Update
       #2: Session Token Recording
       #7: Failure Case Documentation
@@ -411,7 +426,7 @@ def register_default_triggers(registry: TriggerRegistry) -> None:
         grace_period_secs=180,  # 3 minute grace
         hard_overdue_secs=3600,  # 1 hour before blocking
         escalate_to_hard=True,
-        escalate_to_actor="CEO",
+        escalate_to_actor=escalation_target,
         fulfillment_event="file_write",
         verification_method="file_modified",
         verification_target="knowledge/{agent_role}/",
@@ -426,14 +441,14 @@ def register_default_triggers(registry: TriggerRegistry) -> None:
         trigger_id="session_token_recording",
         trigger_tool_pattern=r"(session_end|TaskComplete|task_closed)",
         obligation_type="token_recording_required",
-        description="After session completion, CFO must run track_burn.py",
-        target_agent="CFO",
+        description=f"After session completion, {finance_role} must run track_burn.py",
+        target_agent=finance_role,
         deadline_seconds=600,  # 10 minutes
         severity="HARD",
         grace_period_secs=60,  # 1 minute grace
         hard_overdue_secs=600,  # Immediate block after deadline
         escalate_to_hard=True,
-        escalate_to_actor="CEO",
+        escalate_to_actor=escalation_target,
         fulfillment_event="bash_exec",
         verification_method="command_contains",
         verification_target="track_burn.py",
@@ -456,7 +471,7 @@ def register_default_triggers(registry: TriggerRegistry) -> None:
         grace_period_secs=600,  # 10 minute grace
         hard_overdue_secs=7200,  # 2 hours before blocking
         escalate_to_hard=True,
-        escalate_to_actor="CEO",
+        escalate_to_actor=escalation_target,
         fulfillment_event="file_write",
         verification_method="file_modified",
         verification_target="knowledge/cases/",
@@ -471,15 +486,15 @@ def register_default_triggers(registry: TriggerRegistry) -> None:
         trigger_id="content_accuracy_review",
         trigger_tool_pattern=r"(Write|Edit)",
         trigger_param_filter=None,  # Will check file path in verification
-        obligation_type="cto_review_required",
-        description="CMO content must be reviewed by CTO before publish",
-        target_agent="CTO",
+        obligation_type="technical_review_required",
+        description=f"Content must be reviewed by {tech_review_role} before publish",
+        target_agent=tech_review_role,
         deadline_seconds=7200,  # 2 hours
         severity="SOFT",
         grace_period_secs=600,  # 10 minute grace
         hard_overdue_secs=14400,  # 4 hours before blocking
         escalate_to_hard=True,
-        escalate_to_actor="CEO",
+        escalate_to_actor=escalation_target,
         fulfillment_event="review_complete",
         verification_method="file_modified",
         verification_target="content/",  # Check if writing to content/ or marketing/

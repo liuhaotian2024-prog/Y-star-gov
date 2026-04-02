@@ -18,7 +18,7 @@ Design constraints:
     GovernanceLoop/PathA run only periodically (batched).
   - Fail-safe: all orchestration failures are caught and logged to CIEU.
     The hook NEVER blocks due to orchestrator failure.
-  - Agent-agnostic: works for CEO/CTO/CMO/CSO/CFO or any agent_id.
+  - Agent-agnostic: works with any agent_id or role naming scheme.
 
 Usage from hook.py:
     from ystar.adapters.orchestrator import get_orchestrator
@@ -28,9 +28,12 @@ Usage from hook.py:
 """
 from __future__ import annotations
 
+import logging
 import time
 import threading
 from typing import Any, Dict, List, Optional
+
+_log = logging.getLogger(__name__)
 
 
 # ── Configuration ────────────────────────────────────────────────────────────
@@ -96,8 +99,8 @@ class Orchestrator:
         try:
             self._init_from_session(session_cfg or {})
             self._initialized = True
-        except Exception:
-            pass  # Initialization failure is not fatal
+        except Exception as e:
+            _log.error("Orchestrator initialization failed: %s", e, exc_info=True)
 
     def _init_from_session(self, session_cfg: Dict[str, Any]) -> None:
         """Wire up subsystem references from the existing adapter singletons."""
@@ -105,29 +108,29 @@ class Orchestrator:
         try:
             from ystar.domains.openclaw.adapter import get_intervention_engine
             self._intervention_engine = get_intervention_engine()
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning("Failed to initialize InterventionEngine: %s", e)
 
         # 2. OmissionAdapter — for scan forwarding
         try:
             from ystar.domains.openclaw.adapter import get_omission_adapter
             self._omission_adapter = get_omission_adapter()
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning("Failed to initialize OmissionAdapter: %s", e)
 
         # 3. CIEUStore — for reading accumulated records
         cieu_db = session_cfg.get("cieu_db", ".ystar_cieu.db")
         try:
             from ystar.governance.cieu_store import CIEUStore
             self._cieu_store = CIEUStore(cieu_db)
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning("Failed to initialize CIEUStore: %s", e)
 
         # 4. GovernanceLoop — the meta-learning orchestrator
         try:
             self._governance_loop = self._build_governance_loop()
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning("Failed to initialize GovernanceLoop: %s", e)
 
     def _build_governance_loop(self) -> Optional[Any]:
         """
@@ -157,8 +160,8 @@ class Orchestrator:
                 from ystar.governance.causal_engine import CausalEngine
                 causal_engine = CausalEngine()
                 self._causal_engine = causal_engine
-            except Exception:
-                pass
+            except Exception as e:
+                _log.warning("Failed to initialize CausalEngine: %s", e)
 
             loop = GovernanceLoop(
                 report_engine=report_engine,
@@ -277,8 +280,8 @@ class Orchestrator:
                                     "reroutes": len(intervention_result.reroutes),
                                 },
                             )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        _log.warning("Failed to log intervention scan event: %s", e)
 
                 # Scan for restorable actors
                 if self._intervention_engine is not None:

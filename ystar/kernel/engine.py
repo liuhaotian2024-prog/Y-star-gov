@@ -722,6 +722,34 @@ def check(
                 severity   = 0.8,
             ))
 
+    # ── 9. obligation_timing: task completion deadlines ───────────────────────
+    # Task #5: Check whether obligations are completed within required time limits.
+    # Only checks if contract defines obligation_timing AND params contain both
+    # obligation_type and elapsed_seconds.
+    if contract.obligation_timing:
+        obligation_type = params.get("obligation_type")
+        elapsed_seconds = params.get("elapsed_seconds")
+
+        if obligation_type and elapsed_seconds is not None:
+            # Check if this obligation type has a deadline defined
+            if obligation_type in contract.obligation_timing:
+                deadline = contract.obligation_timing[obligation_type]
+                try:
+                    elapsed = float(elapsed_seconds)
+                    if elapsed > deadline:
+                        violations.append(Violation(
+                            dimension  = "obligation_timing",
+                            field      = "elapsed_seconds",
+                            message    = (f"Obligation '{obligation_type}' exceeded deadline: "
+                                        f"{elapsed:.1f}s > {deadline}s"),
+                            actual     = elapsed,
+                            constraint = f"obligation_timing[{obligation_type}]={deadline}",
+                            severity   = 0.9,
+                        ))
+                except (TypeError, ValueError):
+                    # elapsed_seconds is not numeric — skip check
+                    pass
+
     return CheckResult(
         passed     = len(violations) == 0,
         violations = violations,

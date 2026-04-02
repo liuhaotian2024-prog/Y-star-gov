@@ -180,6 +180,123 @@ def _print_baseline_report(wr_result, sim_result, g_result) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  Baseline & Delta commands
+# ══════════════════════════════════════════════════════════════════════
+
+def _cmd_baseline(args: list) -> None:
+    """Capture a governance baseline snapshot to .ystar_baseline.json."""
+    import json, pathlib, time as _t
+
+    db_path = ".ystar_cieu.db"
+    try:
+        cfg = json.load(open(".ystar_session.json", encoding="utf-8"))
+        db_path = cfg.get("cieu_db", db_path)
+    except Exception:
+        pass
+
+    if not pathlib.Path(db_path).exists():
+        print(f"  No CIEU database found at {db_path}")
+        print("  Run 'ystar setup' first.")
+        sys.exit(1)
+
+    from ystar.governance.cieu_store import CIEUStore
+    store = CIEUStore(db_path)
+    total = store.count()
+
+    # Query deny rate and agent stats
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    deny_count = conn.execute(
+        "SELECT COUNT(*) FROM cieu_events WHERE decision='deny'"
+    ).fetchone()[0]
+    agent_rows = conn.execute(
+        "SELECT DISTINCT agent_id FROM cieu_events WHERE agent_id != ''"
+    ).fetchall()
+    agents = [r[0] for r in agent_rows]
+    conn.close()
+
+    snapshot = {
+        "captured_at": _t.time(),
+        "captured_iso": _t.strftime("%Y-%m-%dT%H:%M:%S"),
+        "cieu_db": db_path,
+        "total_events": total,
+        "deny_count": deny_count,
+        "deny_rate": round(deny_count / total, 4) if total else 0,
+        "agent_count": len(agents),
+        "agents": agents,
+    }
+
+    out = pathlib.Path(".ystar_baseline.json")
+    out.write_text(json.dumps(snapshot, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    print()
+    print(f"  Baseline captured → {out}")
+    print(f"  Total events:  {total}")
+    print(f"  Deny rate:     {snapshot['deny_rate']:.1%}")
+    print(f"  Agents:        {len(agents)}")
+    print()
+    print("  Run 'ystar delta' later to see changes.")
+    print()
+
+
+def _cmd_delta(args: list) -> None:
+    """Compare current governance state against the last baseline."""
+    import json, pathlib, time as _t
+
+    baseline_path = pathlib.Path(".ystar_baseline.json")
+    if not baseline_path.exists():
+        print("  No baseline found. Run 'ystar baseline' first.")
+        sys.exit(1)
+
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    db_path = baseline.get("cieu_db", ".ystar_cieu.db")
+
+    if not pathlib.Path(db_path).exists():
+        print(f"  CIEU database not found: {db_path}")
+        sys.exit(1)
+
+    from ystar.governance.cieu_store import CIEUStore
+    import sqlite3
+
+    store = CIEUStore(db_path)
+    total_now = store.count()
+    conn = sqlite3.connect(db_path)
+    deny_now = conn.execute(
+        "SELECT COUNT(*) FROM cieu_events WHERE decision='deny'"
+    ).fetchone()[0]
+
+    # New events since baseline
+    new_events = conn.execute(
+        "SELECT COUNT(*) FROM cieu_events WHERE created_at > ?",
+        (baseline["captured_at"],)
+    ).fetchone()[0]
+
+    # New violations since baseline
+    new_denies = conn.execute(
+        "SELECT COUNT(*) FROM cieu_events WHERE decision='deny' AND created_at > ?",
+        (baseline["captured_at"],)
+    ).fetchone()[0]
+
+    conn.close()
+
+    deny_rate_now = round(deny_now / total_now, 4) if total_now else 0
+    deny_rate_before = baseline.get("deny_rate", 0)
+
+    print()
+    print(f"  Y*gov Governance Delta")
+    print(f"  Baseline: {baseline.get('captured_iso', '?')}")
+    print(f"  Current:  {_t.strftime('%Y-%m-%dT%H:%M:%S')}")
+    print()
+    print(f"  {'Metric':<25} {'Baseline':>10} {'Now':>10} {'Delta':>10}")
+    print(f"  {'-'*25} {'-'*10} {'-'*10} {'-'*10}")
+    print(f"  {'Total events':<25} {baseline['total_events']:>10} {total_now:>10} {'+' + str(new_events):>10}")
+    print(f"  {'Deny count':<25} {baseline['deny_count']:>10} {deny_now:>10} {'+' + str(new_denies):>10}")
+    print(f"  {'Deny rate':<25} {deny_rate_before:>10.1%} {deny_rate_now:>10.1%} {deny_rate_now - deny_rate_before:>+10.1%}")
+    print(f"  {'Agents':<25} {baseline['agent_count']:>10} {baseline['agent_count']:>10} {'--':>10}")
+    print()
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  Entry point (ONE main(), dispatches to cli/* modules)
 # ══════════════════════════════════════════════════════════════════════
 
@@ -256,18 +373,16 @@ def main() -> None:
         _cmd_seal(rest)
 
     elif cmd == "baseline":
-        print()
-        print("  Note: Baseline is captured automatically during 'ystar setup'.")
-        print("        To re-run baseline, use 'ystar setup --yes'.")
-        print("        For A/B simulation, use 'ystar simulate'.")
-        print()
-        sys.exit(0)
+        _cmd_baseline(rest)
+
+    elif cmd == "delta":
+        _cmd_delta(rest)
 
     else:
         print(f"Unknown command: {cmd}\n")
         print("Available commands: demo, setup, hook-install, doctor, verify, report,")
         print("                    seal, policy-builder, audit, check, init, version,")
-        print("                    simulate, quality, baseline")
+        print("                    simulate, quality, baseline, delta")
         sys.exit(1)
 
 

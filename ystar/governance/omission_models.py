@@ -49,6 +49,7 @@ class ObligationStatus(str, Enum):
     ESCALATED     = "escalated"      # 已升级
     CANCELLED     = "cancelled"      # 已取消（义务本身被撤销）
     FAILED        = "failed"         # Fix 6.3: 明确失败（cycle failure 触发）
+    RESTORED      = "restored"       # v0.43: 过期后补救成功
 
     @property
     def is_open(self) -> bool:
@@ -236,6 +237,11 @@ class ObligationRecord:
     hard_violation_at:   Optional[float] = None  # 首次硬超时记录时间
     soft_count:          int = 0                 # 软超时告警累计次数（用于 severity 升级）
 
+    # v0.43: Restoration fields ──────────────────────────────────────────────
+    restoration_grace_period_multiplier: float = 2.0  # grace period 倍数（默认=原deadline的2倍）
+    restored_at:         Optional[float] = None  # 恢复时间戳
+    restored_by_event_id:Optional[str] = None    # 恢复事件 ID
+
     reminder_sent_at:    Optional[float] = None  # 已发送 reminder 的时间
     notes:               str = ""
 
@@ -258,6 +264,23 @@ class ObligationRecord:
             return False
         return (now or time.time()) > eff
 
+    def restoration_deadline(self) -> Optional[float]:
+        """计算恢复截止时间（原deadline + grace period * multiplier）。"""
+        if self.due_at is None:
+            return None
+        deadline_secs = self.due_at - self.created_at
+        return self.due_at + (deadline_secs * self.restoration_grace_period_multiplier)
+
+    def can_restore(self, now: Optional[float] = None) -> bool:
+        """检查是否仍在恢复宽限期内。"""
+        if self.status not in (ObligationStatus.EXPIRED, ObligationStatus.HARD_OVERDUE,
+                                ObligationStatus.SOFT_OVERDUE, ObligationStatus.ESCALATED):
+            return False
+        restoration_deadline = self.restoration_deadline()
+        if restoration_deadline is None:
+            return False
+        return (now or time.time()) <= restoration_deadline
+
     def to_dict(self) -> dict:
         return {
             "obligation_id":        self.obligation_id,
@@ -279,6 +302,9 @@ class ObligationRecord:
             "soft_violation_at":    self.soft_violation_at,
             "hard_violation_at":    self.hard_violation_at,
             "soft_count":           self.soft_count,
+            "restoration_grace_period_multiplier": self.restoration_grace_period_multiplier,
+            "restored_at":          self.restored_at,
+            "restored_by_event_id": self.restored_by_event_id,
             "reminder_sent_at":     self.reminder_sent_at,
             "notes":                self.notes,
             "created_at":           self.created_at,
@@ -312,6 +338,29 @@ class GovernanceEvent:
             "payload":    self.payload,
             "source":     self.source,
             "lineage_ref":self.lineage_ref,
+        }
+
+
+@dataclass
+class RestorationResult:
+    """
+    恢复（restoration）操作的结果。
+    """
+    success:           bool = False
+    obligation_id:     str = ""
+    actor_id:          str = ""
+    restored_at:       Optional[float] = None
+    failure_reason:    Optional[str] = None  # beyond_grace_period / already_fulfilled / not_found / ...
+    governance_event_id: Optional[str] = None  # 写入的 OBLIGATION_RESTORED 事件 ID
+
+    def to_dict(self) -> dict:
+        return {
+            "success":            self.success,
+            "obligation_id":      self.obligation_id,
+            "actor_id":           self.actor_id,
+            "restored_at":        self.restored_at,
+            "failure_reason":     self.failure_reason,
+            "governance_event_id":self.governance_event_id,
         }
 
 
@@ -389,3 +438,6 @@ class GEventType:
     FALLBACK_REROUTE        = "fallback_reroute"
     CAPABILITY_RESTRICTED   = "capability_restricted"
     CAPABILITY_RESTORED     = "capability_restored"
+
+    # v0.43: Restoration events
+    OBLIGATION_RESTORED     = "obligation_restored"

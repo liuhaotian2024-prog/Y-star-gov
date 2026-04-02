@@ -24,12 +24,15 @@ OpenClaw × Y*  Adapter  v1.0.0
 """
 
 from __future__ import annotations
+import logging
 import uuid
 
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
+
+_log = logging.getLogger(__name__)
 
 from ystar import check, CallRecord
 from ystar.kernel.dimensions import (
@@ -628,15 +631,15 @@ def configure_auto_persist(db_path: str = ".ystar_cieu.db") -> None:
         from ystar.governance.cieu_store import CIEUStore
         _auto_persist_store = CIEUStore(db_path)
     except ImportError:
-        pass   # cieu_store が使えない場合は静かに無視
+        _log.warning("CIEUStore not available — auto-persist disabled")
 
 def _auto_write_cieu(record: "OpenClawCIEU") -> None:
     """CIEU レコードを自動永続化（configure_auto_persist() が呼ばれた場合）。"""
     if _auto_persist_store is not None:
         try:
             _auto_persist_store.write(record)
-        except Exception:
-            pass   # 永続化失敗は runtime を止めない
+        except Exception as e:
+            _log.error("CIEU auto-persist failed: %s", e, exc_info=True)
 
 
 def get_cieu_log() -> List[OpenClawCIEU]:
@@ -645,6 +648,205 @@ def get_cieu_log() -> List[OpenClawCIEU]:
 
 def clear_cieu_log() -> None:
     _cieu_log.clear()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 5. 治理职责分解函数 — Independent Governance Capabilities
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def validate_delegation_chain(
+    event:         OpenClawEvent,
+    session_state: SessionState,
+) -> Tuple[bool, Optional[str], Optional[IntentContract], Optional[IntentContract]]:
+    """
+    Validate HANDOFF delegation chain monotonicity.
+
+    Checks that child contracts are proper subsets of parent contracts,
+    and that the delegation chain itself is structurally valid.
+
+    Args:
+        event:         OpenClawEvent with event_type == HANDOFF
+        session_state: Current session state with delegation chain
+
+    Returns:
+        Tuple of (is_valid, error_message, parent_contract, child_contract)
+        - is_valid: True if delegation is valid, False otherwise
+        - error_message: None if valid, error description if invalid
+        - parent_contract: The parent's grant contract (for logging)
+        - child_contract: The child's contract (for logging)
+
+    Example:
+        valid, error, parent_c, child_c = validate_delegation_chain(event, state)
+        if not valid:
+            print(f"Delegation violation: {error}")
+    """
+    drift_error = None
+    chain_errors = []
+
+    # Verify delegation chain structural integrity
+    if session_state.delegation_chain:
+        chain_errors = session_state.delegation_chain.validate()
+
+    # HANDOFF contract resolution priority:
+    # Parent contract: from delegation chain link (trusted source)
+    # Child contract: from delegation chain first (trusted), then handoff_contracts
+    parent_contract = _resolve_parent_grant_contract(
+        event.parent_agent_id or "", event.agent_id,
+        session_state
+    )
+
+    # Child contract: prefer delegation chain (trusted), fallback to handoff_contracts
+    child_contract = None
+    if session_state.delegation_chain:
+        for link in session_state.delegation_chain.links:
+            if link.actor == event.agent_id:
+                child_contract = link.contract
+                break
+    if child_contract is None:
+        child_contract = session_state.handoff_contracts.get(event.agent_id)
+    if child_contract is None and not session_state.strict_handoff_mode:
+        child_contract = session_state.get_contract_for(event.agent_id)
+
+    # Check monotonicity: child ⊆ parent
+    if parent_contract and child_contract:
+        ok, viols = child_contract.is_subset_of(parent_contract)
+        if not ok:
+            drift_error = f"Contract drift: {'; '.join(viols)}"
+
+    errors_combined = chain_errors + ([drift_error] if drift_error else [])
+    is_valid = not bool(errors_combined)
+    error_message = "; ".join(errors_combined) if errors_combined else None
+
+    return is_valid, error_message, parent_contract, child_contract
+
+
+def detect_spawn_drift(
+    event:         OpenClawEvent,
+    session_state: SessionState,
+) -> Tuple[bool, Optional[str], Optional[str]]:
+    """
+    Detect goal drift in SUBAGENT_SPAWN events.
+
+    Performs three-layer drift detection:
+    1. Lineage depth check (max agent depth enforcement)
+    2. Single-hop goal drift detection (v2 algorithm)
+    3. Chain-level cumulative drift detection (ChainDriftDetector)
+
+    Args:
+        event:         OpenClawEvent with event_type == SUBAGENT_SPAWN
+        session_state: Current session state with lineage tracking
+
+    Returns:
+        Tuple of (drifted, drift_reason, drift_category)
+        - drifted: True if any drift detected
+        - drift_reason: Human-readable description of the drift
+        - drift_category: Category tag (e.g., "depth", "goal", "chain")
+
+    Example:
+        drifted, reason, category = detect_spawn_drift(event, state)
+        if drifted:
+            print(f"[{category}] Drift detected: {reason}")
+    """
+    # Layer 1: Lineage tracking + depth enforcement
+    if session_state.lineage is not None:
+        node = session_state.lineage.register_spawn(
+            agent_id         = event.child_agent_id or event.agent_id,
+            parent_agent_id  = event.parent_agent_id,
+            task_description = event.task_description,
+            action_scope     = event.action_scope,
+        )
+        depth_err = session_state.lineage.check_max_depth(
+            session_state.max_agent_depth
+        )
+        if depth_err:
+            return True, depth_err, "depth"
+
+    # Layer 2: Single-hop goal drift detection (v2)
+    parent_node = (
+        session_state.lineage.nodes.get(event.parent_agent_id or "")
+        if session_state.lineage else None
+    )
+    parent_scope = parent_node.action_scope if parent_node else event.action_scope
+    drifted, drift_reason, drift_category = detect_goal_drift_v2(
+        event.task_description or "", parent_scope
+    )
+    if drifted:
+        formatted_reason = (
+            drift_reason if (drift_reason or "").startswith(f"[{drift_category}]")
+            else f"[{drift_category}] {drift_reason}"
+        ) if drift_category else drift_reason
+        return True, formatted_reason, drift_category or "goal"
+
+    # Layer 3: Chain-level cumulative drift detection
+    chain_detector = get_chain_detector(event.session_id)
+
+    # Register root task from SessionLineage (first time only)
+    if session_state.lineage and not chain_detector._chain:
+        for agent_id_lin, node_lin in session_state.lineage.nodes.items():
+            if node_lin.parent_agent_id is None:  # root node
+                chain_detector.register_task(
+                    agent_id         = agent_id_lin,
+                    task_description = node_lin.task_description or "",
+                    action_scope     = node_lin.action_scope or [],
+                    parent_id        = None,
+                    depth            = 0,
+                )
+                break
+
+    # Register current task to chain
+    chain_detector.register_task(
+        agent_id         = event.agent_id,
+        task_description = event.task_description or "",
+        action_scope     = event.action_scope or [],
+        parent_id        = event.parent_agent_id,
+        depth            = len(chain_detector._chain),
+    )
+
+    # Detect chain-level drift
+    chain_drifted, chain_reason, chain_category = chain_detector.detect(
+        current_task  = event.task_description or "",
+        current_scope = event.action_scope or [],
+        agent_id      = event.agent_id,
+        parent_id     = event.parent_agent_id,
+    )
+    if chain_drifted:
+        return True, f"[{chain_category}] {chain_reason}", chain_category
+
+    # No drift detected
+    return False, None, None
+
+
+def check_skill_risk(
+    event: OpenClawEvent,
+) -> Tuple[bool, Optional[str]]:
+    """
+    Assess supply chain risk for skill installation/loading.
+
+    Evaluates whether a skill poses security or provenance risks based on
+    its source, name, and other metadata. High-risk skills may be denied
+    or escalated for manual approval.
+
+    Args:
+        event: OpenClawEvent with event_type in (SKILL_INSTALL, SKILL_LOAD)
+
+    Returns:
+        Tuple of (is_safe, risk_reason)
+        - is_safe: True if skill is safe to use, False if risky
+        - risk_reason: None if safe, description of risk if unsafe
+
+    Example:
+        is_safe, reason = check_skill_risk(event)
+        if not is_safe:
+            if "approval" in reason:
+                decision = "ESCALATE"  # needs manual approval
+            else:
+                decision = "DENY"      # block immediately
+    """
+    is_safe, risk_reason = assess_skill_risk(
+        event.skill_name or "", event.skill_source or "unknown"
+    )
+    return is_safe, risk_reason
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -740,40 +942,11 @@ def enforce(
 
     # ── 特殊路径：HANDOFF 触发委托链单调性验证 ──────────────────────
     if event.event_type == EventType.HANDOFF:
-        drift_error = None
-        chain_errors = []
-
-        # 验证委托链完整性
-        if session_state.delegation_chain:
-            chain_errors = session_state.delegation_chain.validate()
-
-        # HANDOFF时的合约来源优先级：
-        # 父合约：_resolve_parent_grant_contract（从委托链的link取，可信）
-        # 子合约：优先从委托链取（委托链是启动时固定的，可信）
-        #         而不是从get_contract_for取（strict模式下handoff_contracts里还没有）
-        parent_contract = _resolve_parent_grant_contract(
-            event.parent_agent_id or "", event.agent_id,
-            session_state
+        # Use extracted validation function
+        is_valid, error_message, parent_contract, child_contract = validate_delegation_chain(
+            event, session_state
         )
-        # 子合约：先从委托链取（可信来源），再从handoff_contracts取
-        child_contract = None
-        if session_state.delegation_chain:
-            for link in session_state.delegation_chain.links:
-                if link.actor == event.agent_id:
-                    child_contract = link.contract
-                    break
-        if child_contract is None:
-            child_contract = session_state.handoff_contracts.get(event.agent_id)
-        if child_contract is None and not session_state.strict_handoff_mode:
-            child_contract = session_state.get_contract_for(event.agent_id)
-
-        if parent_contract and child_contract:
-            ok, viols = child_contract.is_subset_of(parent_contract)
-            if not ok:
-                drift_error = f"Contract drift: {'; '.join(viols)}"
-
-        errors_combined = chain_errors + ([drift_error] if drift_error else [])
-        drift_detected  = bool(errors_combined)
+        drift_detected = not is_valid
 
         # HANDOFF 验证通过 → 将合约写入 handoff_contracts（权威来源）
         # 只有这里能写入，外部代码无法绕过
@@ -789,7 +962,7 @@ def enforce(
             seq            = seq,
             func_name      = f"handoff.{event.parent_agent_id}->{event.agent_id}",
             params         = params,
-            result         = {"chain_errors": errors_combined},
+            result         = {"validation_error": error_message},
             violations     = result.violations,
             intent_contract= dummy_contract,
         )
@@ -801,7 +974,7 @@ def enforce(
             decision        = decision,
             parent_agent_id = event.parent_agent_id,
             drift_detected  = drift_detected,
-            drift_details   = "; ".join(errors_combined) if errors_combined else None,
+            drift_details   = error_message,
         )
         _cieu_log.append(rec)
         _auto_write_cieu(rec)
@@ -810,9 +983,8 @@ def enforce(
 
     # ── Skill 供应链风险检查（主线 A.1）────────────────────────────
     if event.event_type in (EventType.SKILL_INSTALL, EventType.SKILL_LOAD):
-        is_safe, risk_reason = assess_skill_risk(
-            event.skill_name or "", event.skill_source or "unknown"
-        )
+        # Use extracted skill risk assessment function
+        is_safe, risk_reason = check_skill_risk(event)
         if not is_safe:
             rec = OpenClawCIEU(
                 call_record = CallRecord(
@@ -844,117 +1016,43 @@ def enforce(
 
     # ── Subagent spawn：lineage 追踪 + goal drift 检测（主线 A.2 + B）──
     if event.event_type == EventType.SUBAGENT_SPAWN:
-        # lineage 追踪
-        if session_state.lineage is not None:
-            node = session_state.lineage.register_spawn(
-                agent_id         = event.child_agent_id or event.agent_id,
-                parent_agent_id  = event.parent_agent_id,
-                task_description = event.task_description,
-                action_scope     = event.action_scope,
-            )
-            depth_err = session_state.lineage.check_max_depth(
-                session_state.max_agent_depth
-            )
-            if depth_err:
-                rec = OpenClawCIEU(
-                    call_record=CallRecord(
-                        seq=seq, func_name="subagent_spawn",
-                        params=extract_params(event), result={},
-                        violations=[], intent_contract=IntentContract(name="depth_guard"),
-                    ),
-                    event=event, decision=EnforceDecision.DENY,
-                    drift_details=depth_err,
-                )
-                _cieu_log.append(rec)
-                _auto_write_cieu(rec)
-                cieu_records.append(rec)
-                return EnforceDecision.DENY, cieu_records
+        # Use extracted spawn drift detection function
+        drifted, drift_reason, drift_category = detect_spawn_drift(event, session_state)
 
-        # goal drift 检测
-        parent_node = (
-            session_state.lineage.nodes.get(event.parent_agent_id or "")
-            if session_state.lineage else None
-        )
-        parent_scope = parent_node.action_scope if parent_node else event.action_scope
-        drifted, drift_reason, drift_category = detect_goal_drift_v2(
-            event.task_description or "", parent_scope
-        )
         if drifted:
+            # Determine guard name based on category
+            guard_name = {
+                "depth": "depth_guard",
+                "goal": "goal_guard",
+                "chain": "chain_drift_guard",
+            }.get(drift_category or "", "goal_guard")
+
+            func_name = "subagent_spawn.chain" if drift_category == "chain" else "subagent_spawn"
+
             rec = OpenClawCIEU(
                 call_record=CallRecord(
-                    seq=seq, func_name="subagent_spawn",
+                    seq=seq, func_name=func_name,
                     params=extract_params(event), result={},
-                    violations=[], intent_contract=IntentContract(name="goal_guard"),
+                    violations=[], intent_contract=IntentContract(name=guard_name),
                 ),
                 event=event, decision=EnforceDecision.DENY,
                 drift_detected=True,
-                drift_details=(
-                    drift_reason if (drift_reason or "").startswith(f"[{drift_category}]")
-                    else f"[{drift_category}] {drift_reason}"
-                ) if drift_category else drift_reason,
+                drift_details=drift_reason,
             )
             _cieu_log.append(rec)
             _auto_write_cieu(rec)
             cieu_records.append(rec)
-            return EnforceDecision.DENY, cieu_records
 
-        # ChainDriftDetector: v2 で検出されなかった場合も
-        # チェーン全体を通じた累積 drift を検出する
-        chain_detector = get_chain_detector(event.session_id)
-
-        # root task（planner の元の使命）をチェーンに初回登録
-        # SessionLineage のルートノードから取得する
-        if session_state.lineage and not chain_detector._chain:
-            for agent_id_lin, node_lin in session_state.lineage.nodes.items():
-                if node_lin.parent_agent_id is None:  # root node
-                    chain_detector.register_task(
-                        agent_id         = agent_id_lin,
-                        task_description = node_lin.task_description or "",
-                        action_scope     = node_lin.action_scope or [],
-                        parent_id        = None,
-                        depth            = 0,
-                    )
-                    break
-
-        # 現在のタスクをチェーンに登録
-        chain_detector.register_task(
-            agent_id         = event.agent_id,
-            task_description = event.task_description or "",
-            action_scope     = event.action_scope or [],
-            parent_id        = event.parent_agent_id,
-            depth            = len(chain_detector._chain),
-        )
-        # チェーン対応の drift 検出
-        chain_drifted, chain_reason, chain_category = chain_detector.detect(
-            current_task  = event.task_description or "",
-            current_scope = event.action_scope or [],
-            agent_id      = event.agent_id,
-            parent_id     = event.parent_agent_id,
-        )
-        if chain_drifted:
-            rec = OpenClawCIEU(
-                call_record=CallRecord(
-                    seq=seq, func_name="subagent_spawn.chain",
-                    params=extract_params(event), result={},
-                    violations=[], intent_contract=IntentContract(name="chain_drift_guard"),
-                ),
-                event=event, decision=EnforceDecision.DENY,
-                drift_detected=True,
-                drift_details=f"[{chain_category}] {chain_reason}",
-            )
-            _cieu_log.append(rec)
-            _auto_write_cieu(rec)
-            cieu_records.append(rec)
             # ── Edge 2 WIRED: ChainDriftDetector → OmissionEngine.scan ───────
-            # 链漂移发生 → 创建 "drift_acknowledgement" obligation
-            # 10分钟内必须有人工确认，否则 OmissionEngine 会产生 HARD_OVERDUE
-            if session_state.omission_engine is not None:
+            # Chain drift → create "drift_acknowledgement" obligation
+            if drift_category == "chain" and session_state.omission_engine is not None:
                 _create_drift_tracking_obligation(
                     omission_engine = session_state.omission_engine,
                     agent_id        = event.agent_id,
-                    drift_type      = f"{chain_category}: {chain_reason}",
+                    drift_type      = drift_reason or "chain drift",
                     seq             = seq,
                 )
+
             return EnforceDecision.DENY, cieu_records
 
     # ── Fix 7: DelegationChain.validate() on SPAWN ────────────────

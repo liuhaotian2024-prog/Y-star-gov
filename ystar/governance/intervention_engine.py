@@ -77,6 +77,7 @@ class GatingPolicy:
         GEventType.DELEGATION_EVENT,
         GEventType.SELF_OWNERSHIP_EVENT,
         GEventType.CLARIFICATION_EVENT,
+        GEventType.OBLIGATION_RESTORED,  # v0.43: restoration 永远放行
     })
 
     # 高风险动作类：actor 有 hard_overdue 时 DENY

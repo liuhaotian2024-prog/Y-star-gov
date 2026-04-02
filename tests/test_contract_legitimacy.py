@@ -377,6 +377,190 @@ def test_multiple_triggers_cumulative_reduction():
     assert 0.49 < score < 0.51  # 1.0 - 0.5 = 0.5
 
 
+def test_source_hash_verification_on_tampering():
+    """Test 13 (Task #4): verify_hash detects tampered constitution source."""
+    import tempfile
+    import os
+    from ystar.kernel.contract_provider import ConstitutionProvider
+
+    # Create a temporary constitution file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as f:
+        original_content = """# Test Constitution
+## agent_alice
+- deny: ["password"]
+"""
+        f.write(original_content)
+        temp_path = f.name
+
+    try:
+        provider = ConstitutionProvider()
+
+        # First resolve: loads and records hash
+        bundle1 = provider.resolve(temp_path)
+        hash1 = bundle1.source_hash
+
+        # Tamper with the source file
+        with open(temp_path, 'w') as f:
+            tampered_content = """# Test Constitution
+## agent_alice
+- deny: ["password", "secret"]
+"""
+            f.write(tampered_content)
+
+        # Clear cache and resolve again
+        provider.invalidate_cache(temp_path)
+
+        # Second resolve: should detect hash mismatch and log warning
+        import logging
+        with LogCapture() as logs:
+            bundle2 = provider.resolve(temp_path)
+
+        hash2 = bundle2.source_hash
+
+        # Hash should have changed
+        assert hash1 != hash2
+
+        # verify_hash should return False when checking against old hash
+        assert provider.verify_hash(temp_path, hash1) is False
+        assert provider.verify_hash(temp_path, hash2) is True
+
+        # Check that warning was logged
+        warning_found = any("Source legitimacy warning" in log for log in logs.messages)
+        assert warning_found, "Expected source legitimacy warning in logs"
+
+    finally:
+        os.unlink(temp_path)
+
+
+def test_obligation_timing_within_deadline():
+    """Test 14 (Task #5): Obligation completed within deadline passes check."""
+    contract = IntentContract(
+        obligation_timing={
+            "acknowledgement": 300,  # 5 minutes
+            "completion": 3600,      # 1 hour
+        },
+        deny=[]
+    )
+
+    # Acknowledgement completed in 120 seconds (under 300s limit)
+    result = check(
+        params={
+            "obligation_type": "acknowledgement",
+            "elapsed_seconds": 120,
+        },
+        result={"status": "ok"},
+        contract=contract,
+    )
+    assert result.passed is True
+    assert len(result.violations) == 0
+
+
+def test_obligation_timing_exceeds_deadline():
+    """Test 15 (Task #5): Obligation exceeding deadline produces violation."""
+    contract = IntentContract(
+        obligation_timing={
+            "acknowledgement": 300,  # 5 minutes
+            "completion": 3600,      # 1 hour
+        },
+        deny=[]
+    )
+
+    # Acknowledgement took 450 seconds (exceeds 300s limit)
+    result = check(
+        params={
+            "obligation_type": "acknowledgement",
+            "elapsed_seconds": 450,
+        },
+        result={"status": "ok"},
+        contract=contract,
+    )
+
+    assert result.passed is False
+    assert len(result.violations) == 1
+    v = result.violations[0]
+    assert v.dimension == "obligation_timing"
+    assert v.field == "elapsed_seconds"
+    assert "exceeded deadline" in v.message.lower()
+    assert "450" in v.message
+    assert "300" in v.message
+
+
+def test_obligation_timing_no_params_skips_check():
+    """Test 16 (Task #5): Missing obligation params skips timing check."""
+    contract = IntentContract(
+        obligation_timing={
+            "acknowledgement": 300,
+        },
+        deny=[]
+    )
+
+    # No obligation_type or elapsed_seconds provided
+    result = check(
+        params={"message": "Hello"},
+        result={"status": "ok"},
+        contract=contract,
+    )
+    assert result.passed is True
+
+    # Only obligation_type, no elapsed_seconds
+    result2 = check(
+        params={"obligation_type": "acknowledgement"},
+        result={"status": "ok"},
+        contract=contract,
+    )
+    assert result2.passed is True
+
+
+def test_obligation_timing_unknown_type_skips_check():
+    """Test 17 (Task #5): Unknown obligation type skips check."""
+    contract = IntentContract(
+        obligation_timing={
+            "acknowledgement": 300,
+        },
+        deny=[]
+    )
+
+    # obligation_type not defined in contract
+    result = check(
+        params={
+            "obligation_type": "unknown_type",
+            "elapsed_seconds": 450,
+        },
+        result={"status": "ok"},
+        contract=contract,
+    )
+    assert result.passed is True
+
+
+class LogCapture:
+    """Simple log capture context manager for testing."""
+    def __init__(self):
+        self.messages = []
+
+    def __enter__(self):
+        import logging
+        self.handler = logging.StreamHandler()
+        self.handler.setLevel(logging.WARNING)
+
+        # Capture log messages
+        class MessageCollector(logging.Handler):
+            def __init__(self, collector):
+                super().__init__()
+                self.collector = collector
+
+            def emit(self, record):
+                self.collector.messages.append(self.format(record))
+
+        self.collector = MessageCollector(self)
+        logging.root.addHandler(self.collector)
+        logging.root.setLevel(logging.WARNING)
+        return self
+
+    def __exit__(self, *args):
+        import logging
+        logging.root.removeHandler(self.collector)
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])

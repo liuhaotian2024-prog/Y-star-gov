@@ -40,6 +40,7 @@ from ystar.governance.omission_models import (
     EscalationAction, EscalationPolicy,
     TrackedEntity, ObligationRecord, GovernanceEvent,
     OmissionViolation, GEventType, OmissionType,
+    RestorationResult,
 )
 from ystar.governance.omission_store import InMemoryOmissionStore, OmissionStore
 from ystar.governance.omission_rules import RuleRegistry, get_registry
@@ -624,6 +625,151 @@ class OmissionEngine:
                 v.cieu_ref = cieu_record["event_id"]
         except Exception:
             pass  # CIEU 写入失败不阻断主流程
+
+    def _write_restoration_to_cieu(
+        self,
+        ob: ObligationRecord,
+        restoration_event: GovernanceEvent,
+    ) -> None:
+        """写入 OBLIGATION_RESTORED 到 CIEU（证据链）。"""
+        try:
+            cieu_record = {
+                "event_id":    restoration_event.event_id,
+                "seq_global":  int(self._now() * 1_000_000),
+                "created_at":  self._now(),
+                "session_id":  ob.entity_id,
+                "agent_id":    ob.actor_id,
+                "event_type":  "obligation_restored",
+                "decision":    "allow",
+                "passed":      True,
+                "violations":  [],
+                "drift_detected": False,
+                "drift_details":  (
+                    f"obligation_restored: {ob.obligation_type} | "
+                    f"obligation_id={ob.obligation_id} | "
+                    f"restored_at={ob.restored_at}"
+                ),
+                "drift_category": "restoration_success",
+                "task_description": (
+                    f"Restoration: {ob.obligation_type} | "
+                    f"entity={ob.entity_id} | actor={ob.actor_id}"
+                ),
+            }
+            self.cieu_store.write_dict(cieu_record)
+        except Exception:
+            pass  # CIEU 写入失败不阻断主流程
+
+    # ── 主入口 3：Restoration（补救过期义务）──────────────────────────────────
+
+    def restore_obligation(
+        self,
+        obligation_id: str,
+        actor_id: str,
+        event_id: Optional[str] = None,
+    ) -> RestorationResult:
+        """
+        恢复（补救）一个过期的 obligation。
+
+        条件：
+          1. obligation 必须存在且处于 expired/violated 状态
+             (EXPIRED, SOFT_OVERDUE, HARD_OVERDUE, ESCALATED)
+          2. 当前时间必须在 restoration grace period 内
+             (restoration_deadline = due_at + original_deadline_duration * multiplier)
+
+        成功后：
+          - obligation 状态转为 RESTORED
+          - 写入 OBLIGATION_RESTORED 事件到 store
+          - 返回 RestorationResult(success=True)
+
+        失败返回：
+          - not_found: obligation 不存在
+          - wrong_actor: actor_id 不匹配
+          - not_restorable: obligation 不在可恢复状态
+          - beyond_grace_period: 超出恢复宽限期
+        """
+        now = self._now()
+
+        # 1. 查找 obligation
+        ob = self.store.get_obligation(obligation_id)
+        if ob is None:
+            return RestorationResult(
+                success=False,
+                obligation_id=obligation_id,
+                actor_id=actor_id,
+                failure_reason="not_found",
+            )
+
+        # 2. 检查 actor 匹配
+        if ob.actor_id != actor_id:
+            return RestorationResult(
+                success=False,
+                obligation_id=obligation_id,
+                actor_id=actor_id,
+                failure_reason="wrong_actor",
+            )
+
+        # 3. 检查状态（必须是可恢复状态）
+        restorable_states = (
+            ObligationStatus.EXPIRED,
+            ObligationStatus.SOFT_OVERDUE,
+            ObligationStatus.HARD_OVERDUE,
+            ObligationStatus.ESCALATED,
+        )
+        if ob.status not in restorable_states:
+            return RestorationResult(
+                success=False,
+                obligation_id=obligation_id,
+                actor_id=actor_id,
+                failure_reason="not_restorable",
+            )
+
+        # 4. 检查是否在 restoration grace period 内
+        if not ob.can_restore(now):
+            return RestorationResult(
+                success=False,
+                obligation_id=obligation_id,
+                actor_id=actor_id,
+                restored_at=now,
+                failure_reason="beyond_grace_period",
+            )
+
+        # 5. 创建 OBLIGATION_RESTORED 事件 ID
+        restoration_event_id = event_id or str(uuid.uuid4())
+
+        # 6. 执行恢复
+        ob.status = ObligationStatus.RESTORED
+        ob.restored_at = now
+        ob.restored_by_event_id = restoration_event_id
+        ob.updated_at = now
+        self.store.update_obligation(ob)
+
+        # 7. 写入 OBLIGATION_RESTORED 事件
+        restoration_event = GovernanceEvent(
+            event_id=restoration_event_id,
+            event_type=GEventType.OBLIGATION_RESTORED,
+            entity_id=ob.entity_id,
+            actor_id=actor_id,
+            ts=now,
+            payload={
+                "obligation_id": obligation_id,
+                "obligation_type": ob.obligation_type,
+                "was_status": "expired",  # 记录原状态（已经更新为 RESTORED，这里记录之前的）
+                "restored_at": now,
+            },
+            source="omission_engine",
+        )
+        self.store.add_event(restoration_event)
+
+        # 8. 写入 CIEU（可选）
+        self._write_restoration_to_cieu(ob, restoration_event)
+
+        return RestorationResult(
+            success=True,
+            obligation_id=obligation_id,
+            actor_id=actor_id,
+            restored_at=now,
+            governance_event_id=restoration_event_id,
+        )
 
     # ── 工具方法 ──────────────────────────────────────────────────────────────
 

@@ -23,7 +23,7 @@ import time, uuid, os
 from ystar.kernel.dimensions import IntentContract
 from ystar.kernel.scope_encoding import encode_module_scope
 from ystar.kernel.contract_provider import ConstitutionProvider
-from ystar.governance.governance_loop import GovernanceSuggestion
+from ystar.governance.suggestion_policy import GovernanceSuggestion
 from ystar.governance.causal_engine import CausalEngine, CausalState, DoCalcResult
 from ystar.governance.amendment import AmendmentEngine
 

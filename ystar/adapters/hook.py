@@ -319,8 +319,8 @@ def _detect_agent_id(hook_payload: Dict[str, Any]) -> str:
             content = marker.read_text(encoding="utf-8").strip()
             if content:
                 return content
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning("Failed to read agent marker file: %s", e)
 
     return "agent"
 
@@ -617,8 +617,8 @@ def _load_session_config(search_dirs: Optional[list] = None) -> Optional[Dict[st
             try:
                 with open(p, encoding="utf-8") as f:
                     return json.load(f)
-            except Exception:
-                pass
+            except Exception as e:
+                _log.warning("Failed to parse session config from %s: %s", p, e)
     return None
 
 
@@ -642,8 +642,8 @@ def _write_cieu(
             "params":        params,
             "contract_hash": contract_hash,
         })
-    except Exception:
-        pass   # CIEU 写入失败不影响 hook 的阻断/放行决策
+    except Exception as e:
+        _log.error("CIEU write failed (non-fatal): %s", e, exc_info=True)
 
 
 def check_hook(
@@ -1027,7 +1027,8 @@ def _setup_omission_from_contract(
 
         try:
             contract = IntentContract.from_dict(contract_dict)
-        except Exception:
+        except Exception as e:
+            _log.warning("Failed to parse IntentContract: %s", e)
             contract = None
 
         # 配置带合约时限的 omission registry
@@ -1038,14 +1039,16 @@ def _setup_omission_from_contract(
         try:
             from ystar.governance.omission_store import OmissionStore
             store = OmissionStore(db_path=cieu_db.replace(".db", "_omission.db"))
-        except Exception:
+        except Exception as e:
+            _log.warning("OmissionStore unavailable, using in-memory fallback: %s", e)
             from ystar.governance.omission_store import InMemoryOmissionStore
             store = InMemoryOmissionStore()
 
         # ── 关键：把真实的 CIEUStore 传入，让 omission 违规写入统一日志 ──
         try:
             cieu_store = CIEUStore(cieu_db)
-        except Exception:
+        except Exception as e:
+            _log.warning("CIEUStore initialization failed: %s", e)
             cieu_store = None
 
         adapter = create_adapter(store=store, registry=registry,
@@ -1060,8 +1063,8 @@ def _setup_omission_from_contract(
                 configure_intervention_engine, get_omission_adapter
             )
             configure_intervention_engine()
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning("Failed to configure intervention engine: %s", e)
 
         # ── 关键2：接通 scan→pulse 链路 ──────────────────────────────────
         # OmissionEngine.scan() 产生 violation 后必须推给 InterventionEngine

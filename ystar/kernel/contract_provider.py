@@ -46,6 +46,7 @@ class ConstitutionProvider:
         Resolve a constitution by reference (file path or identifier).
 
         Returns cached bundle if available, otherwise compiles fresh.
+        Verifies source hash against history on subsequent loads.
         """
         if source_ref in self._cache:
             return self._cache[source_ref]
@@ -56,6 +57,17 @@ class ConstitutionProvider:
         self._version_counter[source_ref] = self._version_counter.get(source_ref, 0) + 1
         bundle.version = self._version_counter[source_ref]
         bundle.previous_hash = prev_hash
+
+        # Verify hash if we have history (Task #4: Source Legitimacy Check)
+        # Compare directly instead of calling verify_hash() to avoid recursion
+        if prev_hash and prev_hash != "" and prev_hash != bundle.source_hash:
+            import logging
+            logging.warning(
+                f"Source legitimacy warning: constitution '{source_ref}' "
+                f"hash changed from {prev_hash[:12]}... to {bundle.source_hash[:12]}... "
+                f"— possible tampering or unrecorded amendment"
+            )
+
         self._hash_history.setdefault(source_ref, []).append(bundle.source_hash)
 
         self._cache[source_ref] = bundle
@@ -64,6 +76,7 @@ class ConstitutionProvider:
     def resolve_latest(self, source_ref: str) -> CompiledContractBundle:
         """
         Force re-read and return the latest constitution, bypassing cache.
+        Verifies source hash against history.
         """
         self._cache.pop(source_ref, None)
         return self.resolve(source_ref)

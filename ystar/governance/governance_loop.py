@@ -43,6 +43,7 @@ from ystar.governance.metalearning import AdaptiveCoefficients
 
 # ── Modularized sub-concerns ─────────────────────────────────────────────────
 from ystar.governance.suggestion_policy import (
+    GovernanceSuggestion,
     GovernanceSuggestionPolicy,
     generate_governance_suggestions as _generate_governance_suggestions_impl,
 )
@@ -138,32 +139,8 @@ class GovernanceObservation:
 
 
 # ── 治理侧调参建议 ─────────────────────────────────────────────────────────────
-
-@dataclass
-class GovernanceSuggestion:
-    """
-    一条基于观测产生的治理参数调整建议。
-    不直接修改任何配置，而是提交给 ConstraintRegistry 受控激活。
-    """
-    suggestion_type:  str   = ""    # "tighten_timing" / "relax_timing" / "add_domain_pack" / etc.
-    target_rule_id:   str   = ""
-    current_value:    Any   = None
-    suggested_value:  Any   = None
-    confidence:       float = 0.5   # 0~1
-    rationale:        str   = ""
-    observation_ref:  str   = ""    # GovernanceObservation.period_label
-
-    def to_constraint_proposal_dict(self) -> dict:
-        """转换为 ConstraintRegistry 可消费的格式。"""
-        return {
-            "rule_id":         self.target_rule_id,
-            "suggestion_type": self.suggestion_type,
-            "current":         self.current_value,
-            "suggested":       self.suggested_value,
-            "confidence":      self.confidence,
-            "rationale":       self.rationale,
-            "source":          "governance_loop",
-        }
+# GovernanceSuggestion is now defined in suggestion_policy.py and imported above.
+# Re-exported here for backward compatibility.
 
 
 @dataclass
