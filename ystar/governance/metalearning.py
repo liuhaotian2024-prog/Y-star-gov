@@ -25,6 +25,9 @@
 """
 Causal metalearning: tighten intent contracts from violation history.
 
+import logging
+_log = logging.getLogger(__name__)
+
 This module is intentionally independent of K9Audit's CIEU format.
 It operates on any sequence of (params, result, violations) records.
 
@@ -1500,6 +1503,7 @@ class DimensionDiscovery:
                     try:
                         numeric_params[k].append(float(v))
                     except (TypeError, ValueError):
+                        # Value is not numeric — skip
                         pass
             for param, values in numeric_params.items():
                 if len(values) >= 2:
@@ -1759,7 +1763,8 @@ def learn_from_jsonl(
                 continue
             try:
                 rec = json.loads(line)
-            except Exception:
+            except Exception as e:
+                _log.debug(f"Could not parse JSONL line: {e}")
                 continue
 
             # Support K9Audit CIEU format

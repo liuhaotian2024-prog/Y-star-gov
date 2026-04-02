@@ -24,6 +24,7 @@ Obligation-First Gate：
 """
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional, Set, Union
@@ -38,6 +39,8 @@ from ystar.governance.omission_models import (
     Severity, GEventType,
 )
 from ystar.governance.omission_store import InMemoryOmissionStore, OmissionStore
+
+_log = logging.getLogger(__name__)
 
 AnyStore = Union[InMemoryOmissionStore, OmissionStore]
 
@@ -568,8 +571,8 @@ class InterventionEngine:
                         f"causal: allow recommended "
                         f"(P(H|allow)={p_health_allow:.2f} >= P(H|block)={p_health_block:.2f})"
                     )
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning("Causal gate check failed for actor %s: %s", actor_id, e)
 
     # ── 私有：脉冲工厂 ────────────────────────────────────────────────────────
 
@@ -607,7 +610,8 @@ class InterventionEngine:
             )
             self.omission_store.add_obligation(new_ob)
             return new_ob
-        except Exception:
+        except Exception as e:
+            _log.error("Failed to create reroute obligation for actor %s: %s", actor_id, e)
             return None
 
     def _make_soft_pulse(
@@ -744,5 +748,5 @@ class InterventionEngine:
             if ok:
                 pulse.cieu_ref = record["event_id"]
                 self.pulse_store.update_pulse(pulse)
-        except Exception:
-            pass
+        except Exception as e:
+            _log.error("Failed to write intervention pulse to CIEU (pulse_id=%s): %s", pulse.pulse_id, e)

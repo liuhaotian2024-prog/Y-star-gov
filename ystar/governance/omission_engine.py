@@ -30,6 +30,7 @@ ystar.omission_engine  —  Deterministic Omission Governance Engine
 """
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -45,6 +46,8 @@ from ystar.governance.omission_models import (
 from ystar.governance.omission_store import InMemoryOmissionStore, OmissionStore
 from ystar.governance.omission_rules import RuleRegistry, get_registry
 from ystar.governance.cieu_store import NullCIEUStore
+
+_log = logging.getLogger(__name__)
 
 # 类型别名：支持两种 store
 AnyStore = Union[InMemoryOmissionStore, OmissionStore]
@@ -120,6 +123,7 @@ class OmissionEngine:
                 from ystar.governance.obligation_triggers import get_trigger_registry
                 self.trigger_registry = get_trigger_registry()
             except ImportError:
+                # Optional import — trigger system is not yet available
                 self.trigger_registry = None
         else:
             self.trigger_registry = trigger_registry
@@ -318,8 +322,8 @@ class OmissionEngine:
                         "severity":      v.severity.value if hasattr(v.severity, 'value') else str(v.severity),
                         "detected_at":   v.detected_at,
                     })
-                except Exception:
-                    pass
+                except Exception as e:
+                    _log.warning("Failed to serialize violation for event %s: %s", event.event_type, e)
 
         return result
 
@@ -431,6 +435,7 @@ class OmissionEngine:
                 check_result=None,  # We already filtered by ALLOW above
             )
         except ImportError:
+            # Optional import — trigger matching module not available
             return []
 
         # Create obligations for each matched trigger
@@ -738,8 +743,9 @@ class OmissionEngine:
             ok = self.cieu_store.write_dict(cieu_record)
             if ok:
                 v.cieu_ref = cieu_record["event_id"]
-        except Exception:
-            pass  # CIEU 写入失败不阻断主流程
+        except Exception as e:
+            # CIEU 写入失败不阻断主流程
+            _log.error("Failed to write violation to CIEU (violation_id=%s): %s", v.violation_id, e)
 
     def _write_restoration_to_cieu(
         self,
@@ -772,8 +778,9 @@ class OmissionEngine:
                 "evidence_grade": "governance",  # [P2-3] restoration 是治理级证据
             }
             self.cieu_store.write_dict(cieu_record)
-        except Exception:
-            pass  # CIEU 写入失败不阻断主流程
+        except Exception as e:
+            # CIEU 写入失败不阻断主流程
+            _log.error("Failed to write restoration to CIEU (ob_id=%s): %s", ob.ob_id, e)
 
     # ── 主入口 3：Restoration（补救过期义务）──────────────────────────────────
 

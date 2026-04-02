@@ -24,8 +24,11 @@ Path B is learning about the outside world.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
+_log = logging.getLogger(__name__)
 
 
 # ── Stage 1 output: aggregated patterns from CIEU records ────────────────────
@@ -525,4 +528,5 @@ class ExperienceBridge:
                 )
                 observations.append(obs)
             except ImportError:
+                # Optional import — CausalObservation not available
                 pass

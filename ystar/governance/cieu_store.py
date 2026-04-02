@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 import time
 import uuid
@@ -39,6 +40,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
+
+_log = logging.getLogger(__name__)
 
 _DEFAULT_DB = Path(".ystar_cieu.db")
 
@@ -271,7 +274,8 @@ class CIEUStore:
             return None
         try:
             raw = json.dumps(value, default=str, ensure_ascii=False)
-        except Exception:
+        except Exception as e:
+            _log.warning("JSON serialization failed for snapshot, using str(): %s", e)
             raw = str(value)
         if len(raw.encode()) > max_bytes:
             # 截断到字节上限后注明
@@ -293,7 +297,8 @@ class CIEUStore:
             self._insert_dict(d)
             return True
         except sqlite3.IntegrityError:
-            return False  # 重複（UNIQUE violation）
+            # Duplicate event_id — expected behavior, not an error
+            return False
 
     def write_dict(self, d: dict) -> bool:
         """dict 形式の CIEU レコードを書き込む（JSONL からの移行用）。"""
@@ -301,6 +306,7 @@ class CIEUStore:
             self._insert_dict(d)
             return True
         except sqlite3.IntegrityError:
+            # Duplicate event_id — expected behavior, not an error
             return False
 
     def _insert_dict(self, d: dict) -> None:
@@ -410,7 +416,8 @@ class CIEUStore:
                 d = json.loads(line)
                 if self.write_dict(d):
                     written += 1
-            except Exception:
+            except Exception as e:
+                _log.warning("Failed to parse JSONL line during ingest: %s", e)
                 pass
         return written
 
@@ -494,13 +501,15 @@ class CIEUStore:
     def _row_to_result(self, row: sqlite3.Row) -> CIEUQueryResult:
         try:
             violations = json.loads(row["violations"] or "[]")
-        except Exception:
+        except Exception as e:
+            _log.warning("Failed to parse violations JSON in query result: %s", e)
             violations = []
         # Safely access new columns — may be absent in very old DBs
         def _safe(col: str) -> Optional[str]:
             try:
                 return row[col]
             except IndexError:
+                # Column not present in old schema — expected
                 return None
         return CIEUQueryResult(
             event_id        = row["event_id"],
@@ -579,8 +588,8 @@ class CIEUStore:
                         dim = v.get("dimension","")
                         if dim and dim != "phantom_variable":
                             all_viols[dim] = all_viols.get(dim, 0) + 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    _log.warning("Failed to parse violation data in stats: %s", e)
 
             sessions = conn.execute(
                 f"SELECT COUNT(DISTINCT session_id) FROM cieu_events {where}", params
@@ -759,7 +768,8 @@ class CIEUStore:
                 d = dict(row)
                 try:
                     d["violations"] = json.loads(d.get("violations") or "[]")
-                except Exception:
+                except Exception as e:
+                    _log.warning("Failed to parse violations during JSONL export: %s", e)
                     d["violations"] = []
                 f.write(json.dumps(d, default=str) + "\n")
                 written += 1

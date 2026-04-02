@@ -41,34 +41,70 @@ def _detect_agent_id(hook_payload: Dict[str, Any]) -> str:
     1. hook_payload 里的 agent_id 字段
     2. 环境变量 YSTAR_AGENT_ID
     3. 环境变量 CLAUDE_AGENT_NAME（Claude Code 可能设置）
-    4. .ystar_active_agent 文件（agent 在 session start 时写入）
-    5. 回退到 "agent"
+    4. session_id 提取（格式 "agentName_sessionId"）
+    5. transcript_path 提取
+    6. .ystar_active_agent 文件（agent 在 session start 时写入）
+    7. 回退到 "agent"
     """
     # 1. payload
     aid = hook_payload.get("agent_id", "")
     if aid and aid != "agent":
+        _log.debug("Agent ID from payload.agent_id: %s", aid)
         return aid
 
     # 2. env: YSTAR_AGENT_ID
     aid = os.environ.get("YSTAR_AGENT_ID", "")
     if aid:
+        _log.debug("Agent ID from YSTAR_AGENT_ID env: %s", aid)
         return aid
 
     # 3. env: CLAUDE_AGENT_NAME
     aid = os.environ.get("CLAUDE_AGENT_NAME", "")
     if aid:
+        _log.debug("Agent ID from CLAUDE_AGENT_NAME env: %s", aid)
         return aid
 
-    # 4. marker file
+    # 4. session_id extraction (format: "agentName_sessionId")
+    session_id = hook_payload.get("session_id", "")
+    if session_id and "_" in session_id:
+        parts = session_id.split("_", 1)
+        if parts[0] and parts[0] != "agent":
+            _log.debug("Agent ID extracted from session_id: %s (from %s)", parts[0], session_id)
+            return parts[0]
+        else:
+            _log.debug("session_id present but no agent name extracted: %s", session_id)
+
+    # 5. transcript_path extraction
+    transcript_path = hook_payload.get("transcript_path", "")
+    if transcript_path:
+        # Example: /path/to/agents/ceo/transcript.md or .claude/agents/cto.md
+        path_obj = Path(transcript_path)
+        # Try parent directory name first
+        parent_name = path_obj.parent.name
+        if parent_name and parent_name not in ["agents", ".", "", "claude"]:
+            _log.debug("Agent ID extracted from transcript_path parent: %s (from %s)", parent_name, transcript_path)
+            return parent_name
+        # Try filename without extension
+        stem = path_obj.stem
+        if stem and stem != "transcript" and stem != "agent":
+            _log.debug("Agent ID extracted from transcript_path stem: %s (from %s)", stem, transcript_path)
+            return stem
+        _log.debug("transcript_path present but no agent name extracted: %s", transcript_path)
+
+    # 6. marker file
     marker = Path(".ystar_active_agent")
     if marker.exists():
         try:
             content = marker.read_text(encoding="utf-8").strip()
             if content:
+                _log.debug("Agent ID from marker file: %s", content)
                 return content
         except Exception as e:
             _log.warning("Failed to read agent marker file: %s", e)
+    else:
+        _log.debug("Marker file .ystar_active_agent not found")
 
+    _log.debug("All agent ID detection methods failed, falling back to 'agent'")
     return "agent"
 
 

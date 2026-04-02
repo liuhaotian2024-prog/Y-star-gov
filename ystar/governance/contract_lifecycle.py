@@ -13,12 +13,15 @@ State machine:
 """
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from ystar.kernel.dimensions import IntentContract
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -207,8 +210,9 @@ class ContractLifecycle:
                 },
                 "source": "contract_lifecycle",
             })
-        except Exception:
-            pass
+        except Exception as e:
+            # Optional CIEU recording — failure is non-critical
+            _log.debug(f"Could not record contract activation to CIEU: {e}")
 
         return draft
 

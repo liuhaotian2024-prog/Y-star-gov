@@ -33,9 +33,12 @@ v0.45.0
 """
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
+_log = logging.getLogger(__name__)
 
 from ystar.governance.reporting import Report, ReportEngine
 # Connection 5: AdaptiveCoefficients — shared between commission and governance
@@ -261,6 +264,7 @@ class GovernanceLoop:
                     from ystar.governance.metalearning import YStarLoop
                     self._ystar_loop = YStarLoop()
                 except ImportError:
+                    # Optional dependency — metalearning not available
                     self._ystar_loop = None
         else:
             self._ystar_loop = ystar_loop
@@ -308,11 +312,13 @@ class GovernanceLoop:
                             violations = d.get('violations', []),
                         )
                         records.append(rec)
-                    except Exception:
+                    except Exception as e:
+                        _log.warning("Failed to parse JSONL record during bootstrap: %s", e)
                         continue
             self._ystar_loop.record_many(records)
             return len(records)
-        except Exception:
+        except Exception as e:
+            _log.error("Bootstrap from JSONL failed: %s", e)
             return 0
 
 
@@ -519,8 +525,9 @@ class GovernanceLoop:
                         )
                         if sem and hasattr(sem, 'reasoning'):
                             semantic_rationale = f" | Semantic: {sem.reasoning[:80]}"
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        # Optional semantic enrichment — failure is non-critical
+                        _log.debug(f"Could not get semantic info for {param_name_hint}: {e}")
 
                 suggestions.append(GovernanceSuggestion(
                     suggestion_type = f"parameter_discovery_{hint_type.lower()}",
@@ -585,8 +592,8 @@ class GovernanceLoop:
                         f"{len(pending)} approved amendment(s) pending activation. "
                         + result.recommended_action
                     )
-            except Exception:
-                pass
+            except Exception as e:
+                _log.warning(f"Failed to check pending amendments: {e}")
 
         # Connection 8a: scan_restorations — restore actor capabilities
         # when their hard_overdue obligations are fulfilled.
@@ -596,8 +603,8 @@ class GovernanceLoop:
                 restored = self._intervention_engine.scan_restorations()
                 if restored:
                     result.restored_actors = restored
-            except Exception:
-                pass
+            except Exception as e:
+                _log.error(f"Failed to scan restorations: {e}")
 
         # Commission 侧学习（已有 YStarLoop，直接驱动）
         # Connection 1: inject governance coefficients so YStarLoop uses
@@ -611,8 +618,8 @@ class GovernanceLoop:
                 result.commission_result = self._ystar_loop.tighten()
                 # Read back (YStarLoop may have further updated them)
                 self.coefficients = self._ystar_loop.coefficients
-            except Exception:
-                pass
+            except Exception as e:
+                _log.error(f"Failed to run commission-side YStarLoop.tighten(): {e}")
 
         # Governance 侧 RefinementFeedback（如有前一次观测，计算 delta 作为反馈）
         if len(self._observations) >= 2 and self._ystar_loop:
@@ -716,8 +723,8 @@ class GovernanceLoop:
                     result.restored_actors.extend(
                         getattr(iv_result, 'restored_actors', [])
                     )
-            except Exception:
-                pass
+            except Exception as e:
+                _log.error(f"Failed to process obligation violations: {e}")
 
         # Connection 6: ContractQuality self-assessment
         result.contract_quality = self._score_contract_quality()
@@ -733,11 +740,12 @@ class GovernanceLoop:
                         {"entity_id": r.entity_id, "actor_id": r.actor_id}
                         for r in reroutes
                     ]
-                except Exception:
+                except Exception as e:
+                    _log.warning(f"Failed to get pending_reroutes: {e}")
                     snapshot["pending_reroutes"] = []
                 result.intervention_snapshot = snapshot
-            except Exception:
-                pass
+            except Exception as e:
+                _log.error(f"Failed to generate intervention report: {e}")
 
         # 综合健康判断
         result.overall_health    = self._assess_health(latest)

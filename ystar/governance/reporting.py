@@ -36,9 +36,12 @@ v0.41.0
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
+
+_log = logging.getLogger(__name__)
 
 from ystar.governance.omission_models import (
     ObligationStatus, OmissionType, EntityStatus, Severity,
@@ -76,7 +79,9 @@ class ArtifactIntegrity:
             try:
                 from ystar import __version__
                 self.ystar_version = __version__
-            except Exception:
+            except Exception as e:
+                # Optional version import — fallback is acceptable
+                _log.debug(f"Could not import ystar version: {e}")
                 self.ystar_version = "unknown"
 
     def to_dict(self) -> dict:
@@ -943,8 +948,8 @@ class ReportEngine:
                 if cieu_omission_count > m.total_violations:
                     m.total_violations = cieu_omission_count
                     m.remaining_open_count = max(0, cieu_omission_count - recovered)
-            except Exception:
-                pass
+            except Exception as e:
+                _log.warning(f"Could not compute CIEU omission metrics: {e}")
 
         # Chain breakpoint analysis
         try:
@@ -953,8 +958,8 @@ class ReportEngine:
             m.total_chains           = ca["total_chains"]
             m.most_common_breakpoint = ca["most_common_break"]
             m.breakpoints            = ca["breakpoints"][:5]
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning(f"Could not compute chain breakpoint analysis: {e}")
 
     def _fill_chain(self, r: Report) -> None:
         entities = self.omission_store.list_entities()
@@ -1063,8 +1068,8 @@ class ReportEngine:
                 m._pending_reroute_count = len(
                     self.intervention_eng.pending_reroutes()
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                _log.warning(f"Could not get pending reroutes: {e}")
 
             # operator burden: escalated interventions (reroutes needing handoff)
             m._operator_burden_escalations = m.reroutes
@@ -1080,11 +1085,11 @@ class ReportEngine:
                         / max(chain_m.total_entities, 1)
                     )
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                _log.warning(f"Could not compute closure recovery: {e}")
 
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning(f"Could not fill intervention metrics: {e}")
 
     def _fill_cieu(self, r: Report, since: Optional[float]) -> None:
         if self.cieu_store is None:
@@ -1099,8 +1104,8 @@ class ReportEngine:
             m.escalate_count = by_dec.get("escalate", 0)
             m.drift_count    = stats.get("drift_count", 0)
             m.top_violations = stats.get("top_violations", [])
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning(f"Could not fill CIEU metrics: {e}")
 
         # 2-E: DimensionDiscovery — 从 CIEU 历史发现未覆盖的违规模式
         if m.total_events > 0:
@@ -1127,12 +1132,12 @@ class ReportEngine:
                             violations=chk.violations,
                             intent_contract=contract,
                         ))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        _log.debug(f"Could not process dimension discovery record: {e}")
                 if history:
                     m.dimension_hints = DimensionDiscovery.analyze(history)[:3]
-            except Exception:
-                pass
+            except Exception as e:
+                _log.warning(f"Could not fill dimension discovery metrics: {e}")
 
     def _fill_causal(self, r: Report) -> None:
         """GAP 2 FIX: Compute causal metrics from CausalEngine if available."""
@@ -1152,5 +1157,5 @@ class ReportEngine:
                 m.autonomous_rate = auto_count / len(obs)
                 m.human_required_rate = human_count / len(obs)
             m.counterfactual_queries = getattr(self.causal_engine, '_counterfactual_count', 0)
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning(f"Could not fill causal metrics: {e}")

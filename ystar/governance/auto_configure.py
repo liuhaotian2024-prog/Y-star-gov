@@ -23,8 +23,11 @@ v0.41.0
 """
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any, Optional, TYPE_CHECKING
+
+_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ystar.governance.governance_loop import GovernanceLoop
@@ -64,8 +67,9 @@ def _get_auto_activate_threshold() -> float:
             val = gc.get("auto_activate_threshold")
             if val is not None and isinstance(val, (int, float)) and 0 < val <= 1.0:
                 return float(val)
-    except Exception:
-        pass
+    except Exception as e:
+        # Optional config read — fallback to default is acceptable
+        _log.debug(f"Could not read auto_activate_threshold from .ystar_session.json: {e}")
     return _AUTO_ACTIVATE_THRESHOLD_FALLBACK
 
 
@@ -140,15 +144,15 @@ def run_governance_auto_configure(
                 governance_loop.constraint_registry,
                 omission_registry,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            _log.error(f"Failed to activate/apply constraints: {e}")
 
     registry_state = ""
     if governance_loop.constraint_registry:
         try:
             registry_state = governance_loop.constraint_registry.summary()
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning(f"Failed to get constraint registry summary: {e}")
 
     return {
         "observations":              len(governance_loop.observation_history()),
@@ -197,10 +201,10 @@ def _apply_active_constraints_with_floor(
                     omission_registry.override_timing(rule_id, due_within_secs=new_due)
                     applied += 1
 
-            except Exception:
-                pass
-    except Exception:
-        pass
+            except Exception as e:
+                _log.warning(f"Failed to apply constraint {mc.id} to rule {rule_id}: {e}")
+    except Exception as e:
+        _log.error(f"Failed to apply active constraints: {e}")
     return applied
 
 

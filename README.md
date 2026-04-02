@@ -301,7 +301,7 @@ contract = IntentContract(
 # Check a proposed action
 result = check(
     params={"file_path": "./projects/data.txt", "amount": 500},
-    output={},
+    result={},
     contract=contract
 )
 
@@ -659,6 +659,8 @@ Y*gov `check()` at 0.042ms mean: **2.4× faster.**
 
 CIEU write throughput: ~8,000 records/second (SQLite WAL).
 
+**Reproduce:** `python benchmarks/check_latency.py`
+
 ---
 
 ## Patent Portfolio
@@ -711,7 +713,7 @@ Enterprise licensing · Domain pack development · Research collaboration
 
 **Tests failing:**
 - Run tests: `python -m pytest tests/ -v`
-- Expected: 359/359 passing
+- Expected: see pytest output for current test count
 - Report failures to: liuhaotian2024@gmail.com
 
 ---
