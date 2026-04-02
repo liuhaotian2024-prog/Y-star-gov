@@ -21,6 +21,7 @@ from ystar.adapters.hook import (
     _AGENT_WRITE_PATHS,
     check_hook,
     _extract_params,
+    _extract_write_paths_from_bash,
 )
 import ystar.adapters.hook as hook_module
 
@@ -286,3 +287,139 @@ class TestHookIntegration:
         }
         response = check_hook(payload, policy)
         assert response == {} or "action" not in response
+
+
+# ── Bash Command Path Extraction ─────────────────────────────────────────
+
+
+class TestExtractWritePathsFromBash:
+    """Test Bash command write path extraction."""
+
+    def test_extract_redirect_output(self):
+        """Test extraction of > redirect paths."""
+        paths = _extract_write_paths_from_bash("echo hello > output.txt")
+        assert "output.txt" in paths
+
+    def test_extract_append_redirect(self):
+        """Test extraction of >> redirect paths."""
+        paths = _extract_write_paths_from_bash("echo world >> log.txt")
+        assert "log.txt" in paths
+
+    def test_extract_tee_command(self):
+        """Test extraction of tee command paths."""
+        paths = _extract_write_paths_from_bash("echo test | tee file1.txt file2.txt")
+        assert "file1.txt" in paths
+        assert "file2.txt" in paths
+
+    def test_extract_cp_command(self):
+        """Test extraction of cp target path."""
+        paths = _extract_write_paths_from_bash("cp source.txt destination.txt")
+        assert "destination.txt" in paths
+
+    def test_extract_mv_command(self):
+        """Test extraction of mv target path."""
+        paths = _extract_write_paths_from_bash("mv old.txt new.txt")
+        assert "new.txt" in paths
+
+    def test_extract_multiple_operations(self):
+        """Test extraction from command with multiple write operations."""
+        cmd = "echo a > file1.txt && cat data | tee file2.txt && cp src.txt dst.txt"
+        paths = _extract_write_paths_from_bash(cmd)
+        assert "file1.txt" in paths
+        assert "file2.txt" in paths
+        assert "dst.txt" in paths
+
+    def test_extract_quoted_paths(self):
+        """Test extraction of quoted file paths."""
+        paths = _extract_write_paths_from_bash('echo test > "path with spaces.txt"')
+        assert "path with spaces.txt" in paths
+
+    def test_no_write_operations(self):
+        """Test command with no write operations."""
+        paths = _extract_write_paths_from_bash("ls -la && cat file.txt")
+        assert len(paths) == 0
+
+
+# ── Bash Hook Integration ───────────────────────────────────────────────
+
+
+class TestBashHookIntegration:
+    """Test Bash command write boundary enforcement in hook."""
+
+    @pytest.fixture
+    def policy(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        md = tmp_path / "AGENTS.md"
+        md.write_text(SAMPLE_AGENTS_MD)
+        # Reset write paths
+        hook_module._WRITE_PATHS_LOADED = False
+        hook_module._AGENT_WRITE_PATHS = {}
+        return Policy.from_agents_md_multi(str(md))
+
+    def test_bash_redirect_allowed_path(self, policy):
+        """Test Bash redirect to allowed path."""
+        payload = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "echo test > ./patient_records/output.txt"},
+            "agent_id": "doctor",
+        }
+        response = check_hook(payload, policy)
+        assert response == {} or "action" not in response
+
+    def test_bash_redirect_denied_path(self, policy):
+        """Test Bash redirect to denied path."""
+        payload = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "echo test > ./billing/hack.txt"},
+            "agent_id": "doctor",
+        }
+        response = check_hook(payload, policy)
+        assert response.get("action") == "block"
+        assert "Write boundary violation" in response.get("message", "")
+
+    def test_bash_tee_denied_path(self, policy):
+        """Test Bash tee to denied path."""
+        payload = {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": "echo data | tee ./billing/secret.txt ./reports/ok.txt"
+            },
+            "agent_id": "doctor",
+        }
+        response = check_hook(payload, policy)
+        # Should be blocked because billing/ is not in doctor's allowed paths
+        assert response.get("action") == "block"
+
+    def test_bash_cp_to_immutable_path(self, policy):
+        """Test Bash cp to immutable governance file."""
+        payload = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "cp fake.md AGENTS.md"},
+            "agent_id": "admin",
+        }
+        response = check_hook(payload, policy)
+        assert response.get("action") == "block"
+        assert "Immutable path violation" in response.get("message", "")
+
+    def test_bash_mv_allowed_paths(self, policy):
+        """Test Bash mv between allowed paths."""
+        payload = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "mv ./care_logs/old.txt ./care_logs/new.txt"},
+            "agent_id": "nurse",
+        }
+        response = check_hook(payload, policy)
+        assert response == {} or "action" not in response
+
+    def test_bash_complex_command_with_violations(self, policy):
+        """Test complex Bash command with multiple write operations."""
+        payload = {
+            "tool_name": "Bash",
+            "tool_input": {
+                "command": "echo ok > ./diagnosis/log.txt && echo bad > ./billing/invoice.txt"
+            },
+            "agent_id": "doctor",
+        }
+        response = check_hook(payload, policy)
+        # Should be blocked on ./billing/invoice.txt
+        assert response.get("action") == "block"

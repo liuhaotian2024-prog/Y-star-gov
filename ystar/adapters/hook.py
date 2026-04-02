@@ -367,6 +367,97 @@ def _check_write_boundary(
     )
 
 
+def _extract_write_paths_from_bash(command: str) -> list:
+    """
+    从 Bash 命令中提取所有写操作的目标路径。
+
+    支持的写操作模式：
+    - 重定向：> file, >> file
+    - tee 命令：tee file1 file2
+    - cp 命令：cp src dest
+    - mv 命令：mv src dest
+
+    Returns:
+        写操作目标路径列表（去重后）
+    """
+    import re
+    import shlex
+
+    paths = []
+
+    # 1. 提取重定向的目标路径：> 和 >>
+    # 匹配 > file 或 >> file（处理引号和空格）
+    # 先匹配带双引号的路径
+    redirect_double_quote = r'>>?\s+"([^"]+)"'
+    for match in re.finditer(redirect_double_quote, command):
+        paths.append(match.group(1))
+
+    # 然后匹配带单引号的路径
+    redirect_single_quote = r">>?\s+'([^']+)'"
+    for match in re.finditer(redirect_single_quote, command):
+        paths.append(match.group(1))
+
+    # 最后匹配不带引号的路径
+    redirect_no_quote = r'>>?\s+([^\s;|&<>"\']+)'
+    for match in re.finditer(redirect_no_quote, command):
+        path = match.group(1)
+        # 跳过已经被引号模式匹配的路径
+        if path and not path.startswith('"') and not path.startswith("'"):
+            paths.append(path)
+
+    # 2. 提取 tee 命令的参数路径
+    # tee [-a] file1 file2 ...
+    tee_pattern = r'\btee\s+(?:-a\s+)?(.+?)(?:\s*[|;&]|$)'
+    for match in re.finditer(tee_pattern, command):
+        args_str = match.group(1).strip()
+        # 使用 shlex 来正确解析带引号的路径
+        try:
+            args = shlex.split(args_str)
+            for arg in args:
+                # 跳过选项参数
+                if not arg.startswith('-') and arg:
+                    paths.append(arg)
+        except ValueError:
+            # shlex 解析失败时使用简单分割
+            for arg in args_str.split():
+                arg = arg.strip('\'"')
+                if not arg.startswith('-') and arg:
+                    paths.append(arg)
+
+    # 3. 提取 cp 命令的目标路径（最后一个参数）
+    # cp [-options] src... dest
+    cp_pattern = r'\bcp\s+(?:-\w+\s+)*(.+?)(?:\s*[;&|]|$)'
+    for match in re.finditer(cp_pattern, command):
+        args_str = match.group(1).strip()
+        try:
+            args = shlex.split(args_str)
+            if args:
+                # 目标路径是最后一个参数
+                paths.append(args[-1])
+        except ValueError:
+            args = args_str.split()
+            if args:
+                paths.append(args[-1].strip('\'"'))
+
+    # 4. 提取 mv 命令的目标路径（最后一个参数）
+    # mv [-options] src... dest
+    mv_pattern = r'\bmv\s+(?:-\w+\s+)*(.+?)(?:\s*[;&|]|$)'
+    for match in re.finditer(mv_pattern, command):
+        args_str = match.group(1).strip()
+        try:
+            args = shlex.split(args_str)
+            if args:
+                # 目标路径是最后一个参数
+                paths.append(args[-1])
+        except ValueError:
+            args = args_str.split()
+            if args:
+                paths.append(args[-1].strip('\'"'))
+
+    # 去重并返回
+    return list(set(paths))
+
+
 # ── 工具名 → Y* 参数字段的映射 ────────────────────────────────────────────
 
 _TOOL_PARAMS: Dict[str, str] = {
@@ -630,6 +721,46 @@ def check_hook(
         _log.warning("DENY write boundary: %s → %s (%s)",
                      who, params_early.get("file_path", "?"), write_deny.reason)
         return _result_to_response(write_deny)
+
+    # ── P0-1.5: Bash 命令写路径检查 ──────────────────────────────────
+    if tool_name == "Bash":
+        command = params_early.get("command", "")
+        if command:
+            bash_write_paths = _extract_write_paths_from_bash(command)
+            for path in bash_write_paths:
+                # 检查不可变路径
+                immutable_result = _check_immutable_paths(
+                    "Write",  # 视为写操作
+                    {"file_path": path}
+                )
+                if immutable_result is not None:
+                    cieu_db = ".ystar_cieu.db"
+                    session_cfg_bash = _load_session_config()
+                    if session_cfg_bash:
+                        cieu_db = session_cfg_bash.get("cieu_db", cieu_db)
+                    contract = policy._rules.get(who)
+                    _write_cieu(who, tool_name, params_early, immutable_result,
+                                session_id_payload or "unknown",
+                                contract.hash if contract else "", cieu_db)
+                    _log.warning("DENY Bash command (immutable path): %s → %s", who, path)
+                    return _result_to_response(immutable_result)
+
+                # 检查写边界
+                boundary_result = _check_write_boundary(
+                    who, "Write",  # 视为写操作
+                    {"file_path": path}
+                )
+                if boundary_result is not None:
+                    cieu_db = ".ystar_cieu.db"
+                    session_cfg_bash2 = _load_session_config()
+                    if session_cfg_bash2:
+                        cieu_db = session_cfg_bash2.get("cieu_db", cieu_db)
+                    contract = policy._rules.get(who)
+                    _write_cieu(who, tool_name, params_early, boundary_result,
+                                session_id_payload or "unknown",
+                                contract.hash if contract else "", cieu_db)
+                    _log.warning("DENY Bash command (write boundary): %s → %s", who, path)
+                    return _result_to_response(boundary_result)
 
     # ── 尝试完整治理路径（有 session 配置时自动升级）────────────────
     session_cfg = _load_session_config()
