@@ -615,7 +615,9 @@ def _setup_omission_from_contract(
                 }
 
                 for key, due_within_secs in obligation_timing_config.items():
-                    rule_id = _KEY_TO_RULE.get(key)
+                    # Map known OpenClaw keys to rule IDs; for custom keys
+                    # (e.g. p0_bug_fix, session_boot), use the key directly.
+                    rule_id = _KEY_TO_RULE.get(key, key)
                     if rule_id and isinstance(due_within_secs, (int, float)) and due_within_secs > 0:
                         # Get timing from registry (already configured by accountability_pack)
                         rule = registry.get(rule_id)
