@@ -49,8 +49,64 @@ if not _log.handlers:
 _AGENT_WRITE_PATHS: Dict[str, list] = {}  # 动态填充，不硬编码
 _WRITE_PATHS_LOADED: bool = False
 
+# ── 工具限制（动态从 AGENTS.md 或 session config 加载）────────────────────
+_AGENT_ALLOWED_TOOLS: Dict[str, list] = {}    # agent → [allowed tool names]
+_AGENT_DISALLOWED_TOOLS: Dict[str, list] = {}  # agent → [forbidden tool names]
+_TOOL_RESTRICTIONS_LOADED: bool = False
+
 # 写操作工具名
 _WRITE_TOOLS = {"Write", "Edit", "MultiEdit"}
+
+# ── 不可变路径：治理宪章文件，任何角色都不得写入 ──────────────────────────
+_IMMUTABLE_PATTERNS = [
+    "AGENTS.md",
+    ".claude/agents/",
+]
+
+
+def _check_immutable_paths(tool_name: str, params: dict) -> Optional[PolicyResult]:
+    """
+    拦截对治理宪章文件的写入（AGENTS.md, .claude/agents/*.md）。
+    在 _check_write_boundary 之前调用，优先级最高。
+    """
+    if tool_name not in _WRITE_TOOLS:
+        return None
+
+    file_path = params.get("file_path", "")
+    if not file_path:
+        return None
+
+    norm = os.path.normpath(file_path).replace("\\", "/")
+    basename = os.path.basename(norm)
+
+    for pattern in _IMMUTABLE_PATTERNS:
+        if pattern.endswith("/"):
+            # 目录前缀匹配
+            if f"/{pattern}" in f"/{norm}/" or norm.startswith(pattern):
+                return PolicyResult(
+                    allowed=False,
+                    reason=(
+                        f"Immutable path violation: '{file_path}' is a governance "
+                        f"charter file and cannot be modified by any agent."
+                    ),
+                    who="*",
+                    what=tool_name,
+                    violations=[],
+                )
+        else:
+            # 文件名精确匹配
+            if basename == pattern:
+                return PolicyResult(
+                    allowed=False,
+                    reason=(
+                        f"Immutable path violation: '{file_path}' is a governance "
+                        f"charter file and cannot be modified by any agent."
+                    ),
+                    who="*",
+                    what=tool_name,
+                    violations=[],
+                )
+    return None
 
 
 def _load_write_paths_from_agents_md() -> Dict[str, list]:
@@ -94,6 +150,111 @@ def _load_write_paths_from_agents_md() -> Dict[str, list]:
                 result[agent_key] = paths
 
     return result
+
+
+def _load_tool_restrictions_from_agents_md() -> Tuple[Dict[str, list], Dict[str, list]]:
+    """
+    从 AGENTS.md 动态解析每个角色的 Allowed/Forbidden 工具列表。
+    返回 (allowed_tools_dict, disallowed_tools_dict)。
+    """
+    import re
+    allowed: Dict[str, list] = {}
+    disallowed: Dict[str, list] = {}
+
+    for candidate in [Path("AGENTS.md"), Path.cwd() / "AGENTS.md"]:
+        if candidate.exists():
+            text = candidate.read_text(encoding="utf-8")
+            break
+    else:
+        return allowed, disallowed
+
+    # 按 "### " 分割子 agent 段落
+    sections = re.split(r"\n### ", text)
+    for section in sections:
+        # 匹配角色名（如 "code-reviewer", "test-runner"）
+        role_match = re.match(r"([\w-]+)(?:\s*\(.*?\))?\s*\n", section)
+        if not role_match:
+            continue
+        agent_key = role_match.group(1).strip().lower()
+
+        for line in section.splitlines():
+            line_stripped = line.strip().lstrip("- ").strip()
+            # "Allowed: Read, Grep, Glob"
+            m_allowed = re.match(r"Allowed:\s*(.+)", line_stripped)
+            if m_allowed:
+                tools = [t.strip().split("(")[0].strip()
+                         for t in m_allowed.group(1).split(",")]
+                allowed.setdefault(agent_key, []).extend(
+                    t for t in tools if t)
+            # "Forbidden: Write, Edit, Bash"
+            m_forbidden = re.match(r"Forbidden:\s*(.+)", line_stripped)
+            if m_forbidden:
+                tools = [t.strip().split("(")[0].strip()
+                         for t in m_forbidden.group(1).split(",")]
+                disallowed.setdefault(agent_key, []).extend(
+                    t for t in tools if t)
+
+    return allowed, disallowed
+
+
+def _ensure_tool_restrictions_loaded():
+    """确保工具限制已加载（懒加载）。优先 session config，回退 AGENTS.md。"""
+    global _AGENT_ALLOWED_TOOLS, _AGENT_DISALLOWED_TOOLS, _TOOL_RESTRICTIONS_LOADED
+    if _TOOL_RESTRICTIONS_LOADED:
+        return
+    session_cfg = _load_session_config()
+    if session_cfg and "agent_allowed_tools" in session_cfg:
+        _AGENT_ALLOWED_TOOLS = session_cfg["agent_allowed_tools"]
+        _AGENT_DISALLOWED_TOOLS = session_cfg.get("agent_disallowed_tools", {})
+        _log.info("Tool restrictions loaded from session config")
+    else:
+        _AGENT_ALLOWED_TOOLS, _AGENT_DISALLOWED_TOOLS = (
+            _load_tool_restrictions_from_agents_md()
+        )
+        if _AGENT_ALLOWED_TOOLS or _AGENT_DISALLOWED_TOOLS:
+            _log.info("Tool restrictions loaded from AGENTS.md")
+    _TOOL_RESTRICTIONS_LOADED = True
+
+
+def _check_tool_restriction(
+    who: str, tool_name: str
+) -> Optional[PolicyResult]:
+    """
+    检查 agent 是否被允许使用该工具。
+    - 如果 who 有 allowed_tools 定义，tool_name 必须在列表中
+    - 如果 who 有 disallowed_tools 定义，tool_name 不能在列表中
+    """
+    _ensure_tool_restrictions_loaded()
+
+    # disallowed_tools 检查（显式禁止）
+    forbidden = _AGENT_DISALLOWED_TOOLS.get(who)
+    if forbidden and tool_name in forbidden:
+        return PolicyResult(
+            allowed=False,
+            reason=(
+                f"Tool restriction: agent '{who}' is forbidden from using "
+                f"tool '{tool_name}'. Disallowed tools: {forbidden}"
+            ),
+            who=who,
+            what=tool_name,
+            violations=[],
+        )
+
+    # allowed_tools 检查（白名单模式）
+    allowed = _AGENT_ALLOWED_TOOLS.get(who)
+    if allowed and tool_name not in allowed:
+        return PolicyResult(
+            allowed=False,
+            reason=(
+                f"Tool restriction: agent '{who}' may only use tools "
+                f"{allowed}, but tried to use '{tool_name}'."
+            ),
+            who=who,
+            what=tool_name,
+            violations=[],
+        )
+
+    return None
 
 
 def _ensure_write_paths_loaded():
@@ -425,8 +586,36 @@ def check_hook(
             if registered:
                 who = registered[0]
 
-    # ── P0-1: 写路径边界检查（仅 Write/Edit/MultiEdit）──────────────
+    # ── P0-0: 不可变路径检查（AGENTS.md / .claude/agents/*.md）──────
     params_early = _extract_params(tool_name, tool_input)
+    immutable_deny = _check_immutable_paths(tool_name, params_early)
+    if immutable_deny is not None:
+        cieu_db = ".ystar_cieu.db"
+        session_cfg_imm = _load_session_config()
+        if session_cfg_imm:
+            cieu_db = session_cfg_imm.get("cieu_db", cieu_db)
+        contract = policy._rules.get(who)
+        _write_cieu(who, tool_name, params_early, immutable_deny,
+                    session_id_payload or "unknown",
+                    contract.hash if contract else "", cieu_db)
+        _log.warning("DENY immutable path: %s → %s", who, params_early.get("file_path", "?"))
+        return _result_to_response(immutable_deny)
+
+    # ── P0-0.5: 工具限制检查（allowed/disallowed tools）──────────────
+    tool_deny = _check_tool_restriction(who, tool_name)
+    if tool_deny is not None:
+        cieu_db = ".ystar_cieu.db"
+        session_cfg_td = _load_session_config()
+        if session_cfg_td:
+            cieu_db = session_cfg_td.get("cieu_db", cieu_db)
+        contract = policy._rules.get(who)
+        _write_cieu(who, tool_name, params_early, tool_deny,
+                    session_id_payload or "unknown",
+                    contract.hash if contract else "", cieu_db)
+        _log.warning("DENY tool restriction: %s → %s", who, tool_name)
+        return _result_to_response(tool_deny)
+
+    # ── P0-1: 写路径边界检查（仅 Write/Edit/MultiEdit）──────────────
     write_deny = _check_write_boundary(who, tool_name, params_early)
     if write_deny is not None:
         # 写入 CIEU 记录（deny）

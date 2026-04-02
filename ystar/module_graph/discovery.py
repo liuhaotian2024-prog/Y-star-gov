@@ -28,6 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Set, Tuple, Any
 import collections
+import logging
 
 
 @dataclass
@@ -141,8 +142,9 @@ class GapDetector:
                         for v in r.get("violations", []):
                             if isinstance(v, dict):
                                 dim_counts[v.get("dimension","?")] += 1
-                    except:
-                        pass
+                    except Exception as e:
+                        logging.getLogger("ystar.discovery").warning(
+                            "CIEU JSON parse error: %s", e)
             os.unlink(tmp)
 
             for dim, count in dim_counts.most_common(5):

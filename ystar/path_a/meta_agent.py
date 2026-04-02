@@ -579,8 +579,8 @@ class PathAAgent:
                     result={"decision": "FAILED", "error": str(e)},
                     cycle=_stub,
                 ))
-            except:
-                pass
+            except Exception as e2:
+                _log.error("Failed to write handoff CIEU record: %s", e2)
             return False
 
     def run_one_cycle(self) -> MetaAgentCycle:
@@ -1200,8 +1200,8 @@ class PathAAgent:
         """标记循环使用了开放世界发现。"""
         try:
             cycle._discovered_novel = value
-        except:
-            pass
+        except Exception as e:
+            _log.warning("Failed to flag novel discovery: %s", e)
     def acknowledge_human_review(self) -> None:
         """Fix 6.2: Reset the human review gate so execution can resume."""
         self._human_review_required = False

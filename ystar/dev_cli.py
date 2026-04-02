@@ -3,7 +3,7 @@
 # Full implementation — no wrapper to external scripts
 
 from __future__ import annotations
-import json, os, re, subprocess, sys, time
+import json, logging, os, re, subprocess, sys, time
 from pathlib import Path
 from typing import List, Optional
 
@@ -50,7 +50,9 @@ def _run_tests():
         passed = int(re.search(r'(\d+) passed', r.stdout).group(1)) if 'passed' in r.stdout else 0
         failed = int(re.search(r'(\d+) failed', r.stdout).group(1)) if 'failed' in r.stdout else 0
         return (failed==0), passed, failed
-    except: return False, 0, -1
+    except Exception as e:
+        logging.getLogger("ystar.dev_cli").warning("_run_tests failed: %s", e)
+        return False, 0, -1
 
 def _count_tests():
     try:
@@ -60,7 +62,9 @@ def _count_tests():
             capture_output=True, text=True, cwd=str(_ROOT), timeout=30)
         m = re.search(r'(\d+) tests? collected', r.stdout)
         return int(m.group(1)) if m else 0
-    except: return 0
+    except Exception as e:
+        logging.getLogger("ystar.dev_cli").warning("_count_tests failed: %s", e)
+        return 0
 
 # ── check ─────────────────────────────────────────────────────────────
 def cmd_check(args):
