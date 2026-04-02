@@ -541,6 +541,7 @@ class Orchestrator:
                 "drift_details": "",
                 "drift_category": "orchestration",
                 "task_description": str(details)[:500],
+                "evidence_grade": "ops",  # [P2-3] orchestration 是运维级事件
             })
         except Exception:
             pass

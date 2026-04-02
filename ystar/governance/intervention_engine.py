@@ -738,6 +738,7 @@ class InterventionEngine:
                     f"Intervention: {pulse.level.value} | "
                     f"entity={pulse.entity_id} | actor={pulse.actor_id}"
                 ),
+                "evidence_grade": "governance",  # [P2-3] intervention 是治理级证据
             }
             ok = self.cieu_store.write_dict(record)
             if ok:

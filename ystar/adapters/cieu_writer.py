@@ -57,6 +57,7 @@ def _write_boot_record(who: str, session_id: str, cieu_db: str) -> None:
             "violations":    [],
             "params":        {"boot_time": time.time(), "message": "Y*gov hook activated"},
             "contract_hash": "",
+            "evidence_grade": "ops",  # [P2-3] HOOK_BOOT 是运维诊断事件
         })
         _log.info("HOOK_BOOT record written — CIEU is alive")
     except Exception as e:
@@ -82,6 +83,7 @@ def _write_cieu(
                               for v in (result.violations or [])],
             "params":        params,
             "contract_hash": contract_hash,
+            "evidence_grade": "decision",  # [P2-3] hook allow/deny 是决策级证据
         })
     except Exception as e:
         _log.error("CIEU write failed (non-fatal): %s", e, exc_info=True)

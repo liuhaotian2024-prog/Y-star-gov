@@ -153,6 +153,7 @@ _NEW_COLUMNS = [
     ("result_json",     "TEXT"),
     ("human_initiator", "TEXT"),
     ("lineage_path",    "TEXT"),
+    ("evidence_grade",  "TEXT DEFAULT 'decision'"),
 ]
 
 
@@ -177,6 +178,8 @@ class CIEUQueryResult:
     result_json:      Optional[str] = None   # 返回值快照
     human_initiator:  Optional[str] = None   # 人工操作者
     lineage_path:     Optional[str] = None   # 完整委托链（JSON array）
+    # [P2-3] 证据分级
+    evidence_grade:   str = "decision"       # decision / governance / advisory / ops
 
     def display(self) -> str:
         ts  = time.strftime("%m-%d %H:%M:%S", time.localtime(self.created_at))
@@ -311,6 +314,8 @@ class CIEUStore:
             json.dumps(lineage_raw) if isinstance(lineage_raw, list)
             else lineage_raw  # 已是 JSON 字符串则直接存
         ) if lineage_raw else None
+        # [P2-3] 证据分级
+        evidence_grade = d.get("evidence_grade", "decision")
 
         with self._conn() as conn:
             conn.execute("""
@@ -321,11 +326,13 @@ class CIEUStore:
                      violations, drift_detected, drift_details, drift_category,
                      file_path, command, url, skill_name, skill_source,
                      task_description, contract_hash, chain_depth,
-                     params_json, result_json, human_initiator, lineage_path)
+                     params_json, result_json, human_initiator, lineage_path,
+                     evidence_grade)
                 VALUES
                     (?, ?, ?,   ?, ?, ?,   ?, ?,   ?, ?, ?, ?,
                      ?, ?, ?, ?, ?,   ?, ?, ?,
-                     ?, ?, ?, ?)
+                     ?, ?, ?, ?,
+                     ?)
             """, (
                 d.get("event_id") or str(uuid.uuid4()),
                 d.get("seq_global") or int(time.time() * 1_000_000),
@@ -351,6 +358,7 @@ class CIEUStore:
                 result_json,
                 human_init,
                 lineage_json,
+                evidence_grade,
             ))
 
     def ingest_from_session(
@@ -512,6 +520,7 @@ class CIEUStore:
             result_json     = _safe("result_json"),
             human_initiator = _safe("human_initiator"),
             lineage_path    = _safe("lineage_path"),
+            evidence_grade  = _safe("evidence_grade") or "decision",
         )
 
     # ── 統計 ──────────────────────────────────────────────────────────
@@ -759,6 +768,63 @@ class CIEUStore:
     def count(self) -> int:
         with self._conn() as conn:
             return conn.execute("SELECT COUNT(*) FROM cieu_events").fetchone()[0]
+
+    # ── [P2-3] CIEU Evidence Grading ──────────────────────────────────────
+
+    def count_by_grade(self, session_id: Optional[str] = None) -> dict:
+        """
+        [P2-3] 按证据分级统计 CIEU 事件数量。
+
+        Returns: {"decision": 120, "governance": 8, "advisory": 5, "ops": 42}
+        """
+        where_parts = []
+        params: List[Any] = []
+        if session_id:
+            where_parts.append("session_id = ?")
+            params.append(session_id)
+        where = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"SELECT evidence_grade, COUNT(*) FROM cieu_events {where} "
+                f"GROUP BY evidence_grade", params
+            ).fetchall()
+            return dict(rows)
+
+    def query_by_grade(
+        self,
+        grade: str,
+        session_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[CIEUQueryResult]:
+        """
+        [P2-3] 按证据分级查询 CIEU 事件。
+
+        Args:
+            grade: "decision" | "governance" | "advisory" | "ops"
+            session_id: 可选，过滤特定 session
+            limit: 返回数量上限
+
+        Returns: List[CIEUQueryResult]
+        """
+        conditions = ["evidence_grade = ?"]
+        params: List[Any] = [grade]
+        if session_id:
+            conditions.append("session_id = ?")
+            params.append(session_id)
+
+        where = "WHERE " + " AND ".join(conditions)
+        params.append(limit)
+
+        with self._conn() as conn:
+            rows = conn.execute(f"""
+                SELECT * FROM cieu_events
+                {where}
+                ORDER BY seq_global DESC
+                LIMIT ?
+            """, params).fetchall()
+
+        return [self._row_to_result(r) for r in rows]
 
 
 # ── [FIX-2] NullCIEUStore — 显式 no-op 替代 None ─────────────────────────
