@@ -374,6 +374,24 @@ ystar simulate
 ystar quality
     Contract quality metrics: coverage, false positive rate.
 
+ystar baseline
+    Capture current governance state as baseline snapshot.
+    Saves to .ystar_baseline.json for later comparison.
+
+ystar delta
+    Compare current governance state against baseline.
+    Shows changes in events, deny rate, obligations, omissions.
+
+ystar trend
+    Show 7-day CIEU event trend with daily breakdown.
+    Displays total events, deny count, deny rate, and trend indicators (↑↓→).
+
+ystar domain [list|describe|init]
+    Discover and use domain packs.
+    list: show available domain packs
+    describe: show details for a specific pack
+    init: initialize a domain pack in current project
+
 ystar policy-builder
     Launch local HTML policy builder (port 7921).
 
