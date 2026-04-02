@@ -5,6 +5,8 @@
 [![Tests](https://img.shields.io/badge/tests-518%20passing-brightgreen)]()
 [![check() latency](https://img.shields.io/badge/check()-0.042ms-blue)]()
 
+**Y\*gov is a runtime governance sovereignty layer for multi-agent AI.** It is not a prompt guardrail, not an observability platform, not an agent framework. Sovereignty means deterministic pre-execution decisions, tamper-evident evidence, and obligation enforcement.
+
 **v0.48.0 · MIT License · Y* Bridge Labs**
 
 Zero external dependencies. Installs in seconds. Runs anywhere Python runs.
@@ -115,25 +117,26 @@ pip install ystar
 
 **Requirements:** Python >= 3.11
 
-**See it work instantly:**
+**5-Minute Value Path:**
 
 ```bash
+# Step 1: See it work instantly (30 seconds)
 ystar demo
-```
 
-**Three-step integration (Claude Code / OpenClaw):**
-
-```bash
-# 1. Initialize session config
+# Step 2: Integrate with your agent (2 minutes)
 ystar setup
-
-# 2. Install governance hook
 ystar hook-install
 
-# 3. Create AGENTS.md in your project root with your rules
+# Step 3: See your governance baseline (1 minute)
+ystar baseline
+ystar doctor
+
+# Step 4: After running your agents, see what changed (30 seconds)
+ystar delta
+ystar trend
 ```
 
-**Example AGENTS.md:**
+**Create AGENTS.md in your project root with your rules:**
 
 ```markdown
 # Governance Rules
@@ -153,16 +156,6 @@ ystar doctor
 
 All 7 checks should pass. If any fail, run `ystar doctor` again to see diagnostic details.
 
-**Track governance over time:**
-
-```bash
-# Capture current governance state as baseline
-ystar baseline
-
-# After running your agents, see what changed
-ystar delta
-```
-
 ---
 
 ## What Y*gov Does
@@ -180,6 +173,17 @@ When a task is assigned, an obligation record is created with a deadline. If the
 ### 3. Tamper-Evident CIEU Audit Chain
 
 Every decision (ALLOW or DENY, with full context) is written to a SHA-256 Merkle-chained SQLite database. Records cannot be modified after creation. Any tampering breaks the hash chain, detectable by `ystar verify`.
+
+#### CIEU Evidence Grading
+
+**New in v0.48.0:** All CIEU records carry an evidence grade indicating their regulatory weight and use case:
+
+- **Decision-grade**: Allow/deny/escalation decisions (default for all hook events). Suitable for audit, compliance, and forensic purposes. Cannot be fabricated by agents.
+- **Governance-grade**: Policy tightening, intervention, and restoration events. Produced by the GovernanceLoop when adapting contracts based on causal discovery. High confidence, regulatory-weight evidence.
+- **Advisory-grade**: Causal analysis and non-binding suggestions. Produced by the RuleAdvisor for human review before activation. Informational, not enforced.
+- **Ops-grade**: Orchestration health metrics, subagent lifecycle, and diagnostic telemetry. Used for performance monitoring and system debugging.
+
+All grades share the same tamper-evident hash chain. The grade field allows auditors and regulators to filter CIEU records by their evidentiary purpose.
 
 ### The 5 Pain Points Y*gov Solves
 

@@ -651,8 +651,8 @@ class GovernanceLoop:
                 self._ystar_loop.coefficients = update_coefficients(
                     fb, self._ystar_loop.coefficients
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                _log.warning("YStarLoop coefficient update failed: %s", e)
 
         # ── Pearl Integration 2-3: causal feedback + structure discovery ──
         if self._causal_engine is not None:
