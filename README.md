@@ -2,7 +2,7 @@
 
 [![Y*gov governed](https://img.shields.io/badge/governed%20by-Y*gov-brightgreen)](https://github.com/liuhaotian2024-prog/Y-star-gov)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-458%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-518%20passing-brightgreen)]()
 [![check() latency](https://img.shields.io/badge/check()-0.042ms-blue)]()
 
 **v0.48.0 · MIT License · Y* Bridge Labs**
