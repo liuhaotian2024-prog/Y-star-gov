@@ -11,10 +11,13 @@ Handles Pearl Integration points 1-3:
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ystar.governance.causal_engine import CausalEngine
+
+_log = logging.getLogger("ystar.governance.causal_feedback")
 
 
 def weight_suggestions_by_causal(
@@ -48,8 +51,9 @@ def weight_suggestions_by_causal(
                     f" (original={original_conf:.2f}→{sug.confidence:.2f})"
                 )
             causal_chain_entries.extend(do_result.causal_chain)
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning("Causal weighting failed for %s->%s: %s",
+                         sug.suggestion_type, sug.target_rule_id, e)
     return causal_chain_entries
 
 
@@ -100,8 +104,8 @@ def feed_metalearning_to_causal(
             cycle_id=f"governance_tighten_{curr.period_label}",
             suggestion_type=stype,
         )
-    except Exception:
-        pass
+    except Exception as e:
+        _log.warning("Failed to feed metalearning result to causal engine: %s", e)
 
 
 def try_structure_discovery(causal_engine: CausalEngine) -> Optional[Any]:
@@ -117,6 +121,7 @@ def try_structure_discovery(causal_engine: CausalEngine) -> Optional[Any]:
             discovered = causal_engine.learn_structure(min_observations=30)
             if discovered is not None:
                 return getattr(causal_engine, '_structure_validation', None)
-    except Exception:
-        pass
+    except Exception as e:
+        _log.warning("Structure discovery failed (n_obs=%d): %s",
+                     causal_engine.count_cycle_observations() if hasattr(causal_engine, 'count_cycle_observations') else 0, e)
     return None

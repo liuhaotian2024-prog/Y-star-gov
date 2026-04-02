@@ -20,8 +20,11 @@ from __future__ import annotations
 
 import hashlib
 import time
+import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+
+_log = logging.getLogger("ystar.governance.amendment")
 
 
 # ── Amendment Audit Chain ────────────────────────────────────────────────────
@@ -161,8 +164,9 @@ class AmendmentEngine:
         ref = None
         try:
             ref = cieu_store.write_dict(record)
-        except Exception:
-            pass
+        except Exception as e:
+            _log.warning("Failed to write amendment event to CIEU (event=%s, proposal=%s): %s",
+                         event_type, proposal.proposal_id, e)
         return ref or proposal.proposal_id
 
     def propose(self, proposal: AmendmentProposal, cieu_store) -> AmendmentProposal:
