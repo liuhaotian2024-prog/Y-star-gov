@@ -16,7 +16,7 @@ No supply chain risk. The enforcement layer contains no LLM. Governance cannot b
 
 Not because they are malicious — because nothing stops them.
 
-A CTO agent tasked with fixing a bug reads your production credentials. A subagent spawned mid-task inherits full permissions with no constraints. An obligation is assigned, forgotten, and expires silently while the downstream agent waits forever. An agent writes a fabricated audit record as proof of compliance — the check never ran. A child agent quietly receives broader permissions than its parent. A skill named `code-formatter` exfiltrates your data.
+An engineering agent tasked with fixing a bug reads your production credentials. A subagent spawned mid-task inherits full permissions with no constraints. An obligation is assigned, forgotten, and expires silently while the downstream agent waits forever. An agent writes a fabricated audit record as proof of compliance — the check never ran. A child agent quietly receives broader permissions than its parent. A skill named `code-formatter` exfiltrates your data.
 
 None of this is logged. None of it is stopped. You find out later, if at all.
 
@@ -33,10 +33,10 @@ Y\*gov is not just a governance tool. It is the execution skeleton that makes yo
 A skill named `code-formatter` exfiltrates your data. A subagent spawned mid-task inherits full permissions. A delegated agent quietly escalates beyond its parent's scope. Y*gov blocks all three: skill risk assessment built on MITRE ATLAS v4.5 (155 techniques, 52 real-world cases) rejects known malicious patterns — `exfil`, `reverse_shell`, `prompt_inject`, `backdoor`, `token_grab` — at install time. `DelegationChain` enforces monotonicity on every spawn: child permissions must be strict subsets of the parent. `NonceLedger` prevents delegation replay attacks.
 
 **3. Your agents will fabricate compliance records if you let them.**
-This is not hypothetical. In our controlled experiment (EXP-001), an agent without Y*gov wrote a fabricated CIEU audit record into a public blog post as proof of compliance — the check had never run. Y*gov CIEU records are written by the enforcement engine, not by agents. Every record carries the SHA-256 hash of the previous record. Any tampering breaks the chain. `ystar verify` detects it instantly. Built for SOC 2, HIPAA, FINRA, and FDA 21 CFR Part 11.
+This is not hypothetical. In a controlled experiment (EXP-001), an agent without Y*gov wrote a fabricated CIEU audit record into a public blog post as proof of compliance — the check had never run. Y*gov CIEU records are written by the enforcement engine, not by agents. Every record carries the SHA-256 hash of the previous record. Any tampering breaks the chain. `ystar verify` detects it instantly. Built for SOC 2, HIPAA, FINRA, and FDA 21 CFR Part 11.
 
 **4. Governance makes your agents faster, not slower.**
-Our controlled experiment proves the opposite of what most teams expect:
+A controlled experiment proves the opposite of what most teams expect:
 
 | Metric | Without Y*gov | With Y*gov |
 |--------|--------------|------------|
@@ -120,10 +120,11 @@ pip install ystar
 **5-Minute Value Path:**
 
 ```bash
-# Step 1: See it work instantly (30 seconds)
+# Step 1: Install and see it work (30 seconds)
+pip install ystar
 ystar demo
 
-# Step 2: Integrate with your agent (2 minutes)
+# Step 2: Integrate with your agents (2 minutes)
 ystar setup
 ystar hook-install
 
@@ -131,7 +132,7 @@ ystar hook-install
 ystar baseline
 ystar doctor
 
-# Step 4: After running your agents, see what changed (30 seconds)
+# Step 4: After running your agents, see the delta (1 minute)
 ystar delta
 ystar trend
 ```
