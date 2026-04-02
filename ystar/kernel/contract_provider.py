@@ -13,12 +13,15 @@ This centralizes:
   - Caching (avoid re-reading on every cycle)
   - Cache invalidation (after amendment)
   - Compilation via the unified compiler
+  - Amendment audit chain tracking
 """
 from __future__ import annotations
 
+import time
 from typing import Dict, List, Optional
 
 from ystar.kernel.compiler import CompiledContractBundle, compile_constitution
+from ystar.governance.amendment import AmendmentLog, AmendmentRecord
 
 
 class ConstitutionProvider:
@@ -35,11 +38,13 @@ class ConstitutionProvider:
         bundle = provider.resolve("ystar/path_a/PATH_A_AGENTS.md")  # re-reads
     """
 
-    def __init__(self, compiler=None) -> None:
+    def __init__(self, compiler=None, amendment_log: Optional[AmendmentLog] = None) -> None:
         self._cache: Dict[str, CompiledContractBundle] = {}
         self._compiler = compiler  # reserved for future custom compiler injection
         self._version_counter: Dict[str, int] = {}
         self._hash_history: Dict[str, List[str]] = {}
+        self._amendment_log = amendment_log or AmendmentLog()
+        self._amendment_counter = 0  # for generating unique amendment IDs
 
     def resolve(self, source_ref: str) -> CompiledContractBundle:
         """
@@ -67,6 +72,19 @@ class ConstitutionProvider:
                 f"hash changed from {prev_hash[:12]}... to {bundle.source_hash[:12]}... "
                 f"— possible tampering or unrecorded amendment"
             )
+
+            # Create amendment record when hash changes
+            self._amendment_counter += 1
+            amendment_record = AmendmentRecord(
+                amendment_id=f"amend_{self._amendment_counter}_{int(time.time())}",
+                timestamp=time.time(),
+                author_agent_id="system",  # default, should be overridden by caller
+                source_ref=source_ref,
+                old_hash=prev_hash,
+                new_hash=bundle.source_hash,
+                change_description=f"Hash changed from {prev_hash[:12]}... to {bundle.source_hash[:12]}..."
+            )
+            self._amendment_log.append(amendment_record)
 
         self._hash_history.setdefault(source_ref, []).append(bundle.source_hash)
 
@@ -181,15 +199,33 @@ class ConstitutionProvider:
         # Use existing resolve() to get the bundle
         return self.resolve(source_ref)
 
-    def invalidate_cache(self, source_ref: Optional[str] = None) -> None:
+    def invalidate_cache(
+        self,
+        source_ref: Optional[str] = None,
+        author_agent_id: str = "system",
+        change_description: str = ""
+    ) -> None:
         """
         Invalidate cached constitution (after amendment).
+
+        When source_ref is specified and we have a cached bundle with a different
+        hash, creates an AmendmentRecord automatically on next resolve().
 
         Args:
             source_ref: specific file to invalidate.
                         If None, invalidates ALL cached constitutions.
+            author_agent_id: agent who triggered the invalidation (for audit)
+            change_description: human-readable description of the change
         """
         if source_ref is None:
             self._cache.clear()
         else:
             self._cache.pop(source_ref, None)
+
+    def get_amendment_history(self, source_ref: str) -> List[AmendmentRecord]:
+        """Get chronological amendment history for a specific constitution."""
+        return self._amendment_log.history(source_ref)
+
+    def get_all_amendments(self) -> List[AmendmentRecord]:
+        """Get all amendment records across all constitutions."""
+        return self._amendment_log.all_records()

@@ -11,6 +11,10 @@ State machine:
   draft -> proposed -> under_review -> approved -> activated
                                     -> rejected
   activated -> rolled_back
+
+Amendment Audit Chain:
+  AmendmentRecord tracks every hash change with full metadata.
+  AmendmentLog provides a chronological history of all amendments.
 """
 from __future__ import annotations
 
@@ -18,6 +22,69 @@ import hashlib
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+
+
+# ── Amendment Audit Chain ────────────────────────────────────────────────────
+
+@dataclass
+class AmendmentRecord:
+    """
+    A record of a single constitution hash change.
+
+    Created automatically when ConstitutionProvider detects a hash change.
+    Tracks who changed what, when, and how.
+    """
+    amendment_id: str
+    timestamp: float
+    author_agent_id: str
+    source_ref: str
+    old_hash: str
+    new_hash: str
+    change_description: str = ""
+
+    def __post_init__(self):
+        if self.timestamp == 0.0:
+            self.timestamp = time.time()
+
+
+class AmendmentLog:
+    """
+    Chronological log of all amendment records for audit trail.
+
+    Usage:
+        log = AmendmentLog()
+        record = AmendmentRecord(
+            amendment_id="a1",
+            timestamp=time.time(),
+            author_agent_id="board",
+            source_ref="PATH_A_AGENTS.md",
+            old_hash="abc123",
+            new_hash="def456",
+            change_description="Added new obligation"
+        )
+        log.append(record)
+        history = log.history("PATH_A_AGENTS.md")
+    """
+
+    def __init__(self) -> None:
+        self._records: List[AmendmentRecord] = []
+        self._index_by_source: Dict[str, List[AmendmentRecord]] = {}
+
+    def append(self, record: AmendmentRecord) -> None:
+        """Append a new amendment record to the log."""
+        self._records.append(record)
+        source_ref = record.source_ref
+        if source_ref not in self._index_by_source:
+            self._index_by_source[source_ref] = []
+        self._index_by_source[source_ref].append(record)
+
+    def history(self, source_ref: str) -> List[AmendmentRecord]:
+        """Get chronological history of amendments for a specific source."""
+        return self._index_by_source.get(source_ref, [])
+
+    def all_records(self) -> List[AmendmentRecord]:
+        """Get all amendment records in chronological order."""
+        return self._records.copy()
 
 
 # ── Amendment State Machine ──────────────────────────────────────────────────
