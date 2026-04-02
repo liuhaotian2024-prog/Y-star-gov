@@ -142,12 +142,18 @@ def _cmd_hook_install() -> None:
         "print(json.dumps(r))"
     )
 
-    # Windows cmd.exe doesn't handle single-quote nesting well, use double quotes with escaping
+    # Windows: Create a .bat wrapper to avoid cmd.exe quoting issues
     if sys.platform == "win32":
-        hook_script_escaped = hook_script.replace('"', '\\"')
+        wrapper_path = pathlib.Path.home() / ".claude" / "ystar_hook_wrapper.bat"
+        wrapper_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write a .bat file that receives stdin and runs the Python hook script
+        wrapper_content = f'@echo off\n{python_exec} -c "{hook_script.replace(chr(34), chr(34)+chr(34))}"'
+        wrapper_path.write_text(wrapper_content, encoding="utf-8")
+
         ystar_hook = {
             "type":    "command",
-            "command": f'{python_exec} -c "{hook_script_escaped}"',
+            "command": str(wrapper_path).replace("\\", "/"),
         }
     else:
         ystar_hook = {
