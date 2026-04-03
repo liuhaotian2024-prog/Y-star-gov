@@ -214,33 +214,9 @@ def merge_contracts(
       2. session -- the baseline from AGENTS.md
       3. relax -- applied only when deny is absent for a dimension
 
-    TODO: eng-kernel will implement the full three-layer merge.
-    This placeholder applies deny on top of session using the existing
-    IntentContract.merge() mechanism.  relax is noted but not yet
-    applied pending kernel support.
+    Delegates to ystar.kernel.merge.merge_contracts for full three-layer merge
+    with monotonicity guarantees.
     """
-    from ystar.kernel.dimensions import ConstitutionalContract
+    from ystar.kernel.merge import merge_contracts as kernel_merge
 
-    if deny is None and relax is None:
-        return session
-
-    if deny is not None:
-        # Use deny as a constitutional layer on top of session --
-        # the merge() method unions deny-lists and intersects whitelists,
-        # which is exactly the "only stricter" semantics we need.
-        deny_as_constitutional = ConstitutionalContract(
-            deny=list(deny.deny),
-            only_paths=list(deny.only_paths),
-            deny_commands=list(deny.deny_commands),
-            only_domains=list(deny.only_domains),
-            invariant=list(deny.invariant),
-            field_deny=dict(deny.field_deny),
-            value_range=dict(deny.value_range),
-        )
-        session = session.merge(deny_as_constitutional)
-
-    # relax: placeholder -- eng-kernel will implement selective relaxation
-    # For now, relax is loaded but not applied to avoid accidentally
-    # weakening constraints before the kernel merge logic is ready.
-
-    return session
+    return kernel_merge(session=session, deny=deny, relax=relax)
