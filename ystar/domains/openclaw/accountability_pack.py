@@ -179,7 +179,7 @@ def _contract_to_timing(contract) -> dict:
 
     result = {}
     for key, secs in ot.items():
-        rule_id = _OBLIGATION_KEY_TO_RULE.get(key)
+        rule_id = _OBLIGATION_KEY_TO_RULE.get(key, key)
         if rule_id and isinstance(secs, (int, float)) and secs > 0:
             grace = max(secs * 0.1, 5.0)   # 宽限期 = 10%，最少5秒
             result[rule_id] = {
