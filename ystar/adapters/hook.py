@@ -328,6 +328,9 @@ def check_hook(
             _log.error("Full governance path failed, degrading to light path: %s", exc)
 
     # ── 轻量路径（无 session 或完整路径失败）────────────────────────
+    # ── Runtime contracts: merge deny/relax layers into effective contract ──
+    _apply_runtime_contracts(policy, who)
+
     params   = _extract_params(tool_name, tool_input)
     result   = policy.check(who, tool_name, **params)
 
@@ -350,7 +353,11 @@ def check_hook(
     # ── Orchestrator: feed advanced governance subsystems ─────────────────
     _run_orchestrator(who, tool_name, params, result, session_cfg)
 
-    return _result_to_response(result)
+    # ── Path B: feed observation for metalearning ────────────────────────
+    response = _result_to_response(result)
+    _feed_path_b(who, tool_name, params, response, session_id_payload)
+
+    return response
 
 
 def _check_hook_full(
@@ -473,13 +480,18 @@ def _check_hook_full(
         # ── Orchestrator: feed advanced governance subsystems (DENY path) ────
         _run_orchestrator(who, tool_name, params, decision, session_cfg)
 
-        return {"action": "block", "message": message}
+        deny_response = {"action": "block", "message": message}
+        _feed_path_b(who, tool_name, params, deny_response, session_id)
+        return deny_response
 
     # ── NEW: Process ALLOW triggers (full path) ──────────────────────────────
     _process_obligation_triggers(tool_name, tool_input, who, session_id, decision)
 
     # ── Orchestrator: feed advanced governance subsystems (ALLOW path) ────
     _run_orchestrator(who, tool_name, params, decision, session_cfg)
+
+    # ── Path B: feed observation for metalearning ────────────────────────
+    _feed_path_b(who, tool_name, params, {}, session_id)
 
     return {}
 
@@ -851,6 +863,44 @@ def _setup_omission_from_contract(
             pass
 
 
+# ── Runtime Contract Merge ────────────────────────────────────────────────
+
+
+def _apply_runtime_contracts(policy: Policy, who: str) -> None:
+    """
+    Merge runtime deny/relax contracts into the policy for *who*.
+
+    Loads .ystar_runtime_deny.json and .ystar_runtime_relax.json from cwd,
+    merges them with the session contract using merge_contracts(), and
+    replaces the contract in the policy object.
+
+    Fail-safe: any error is logged and the original policy is unchanged.
+    """
+    try:
+        from ystar.adapters.runtime_contracts import (
+            load_runtime_deny,
+            load_runtime_relax,
+            merge_contracts,
+        )
+
+        deny = load_runtime_deny(os.getcwd())
+        relax = load_runtime_relax(os.getcwd())
+
+        if deny is None and relax is None:
+            return  # No runtime contracts -- nothing to merge
+
+        session_contract = policy._rules.get(who)
+        if session_contract is None:
+            return  # No contract for this agent -- skip
+
+        effective = merge_contracts(session_contract, deny, relax)
+        policy._rules[who] = effective
+        _log.debug("Runtime contracts merged for %s (deny=%s, relax=%s)",
+                    who, deny is not None, relax is not None)
+    except Exception as exc:
+        _log.debug("Runtime contract merge failed (non-critical): %s", exc)
+
+
 # ── Orchestrator Integration ──────────────────────────────────────────────
 
 
@@ -884,6 +934,55 @@ def _run_orchestrator(
         )
     except Exception:
         pass  # Orchestrator failure never blocks the hook
+
+
+# ── Path B Feed ──────────────────────────────────────────────────────────────
+
+
+def _feed_path_b(
+    agent_id: str,
+    tool_name: str,
+    params: dict,
+    result: dict,
+    session_id: Optional[str],
+) -> None:
+    """
+    Feed an ExternalObservation to PathBAgent (fail-safe).
+
+    Called after every hook decision (ALLOW or DENY) to give Path B the
+    data it needs for metalearning and runtime constraint generation.
+
+    This function MUST NOT affect check_hook()'s return value -- all
+    exceptions are caught and logged at debug level.
+    """
+    try:
+        from ystar.adapters.orchestrator import get_orchestrator
+        orch = get_orchestrator()
+        if orch is None:
+            return
+
+        # PathBAgent may not be initialised yet
+        path_b = getattr(orch, "_path_b_agent", None)
+        if path_b is None:
+            return
+
+        from ystar.path_b.path_b_agent import ExternalObservation
+
+        violations = []
+        if isinstance(result, dict) and result.get("action") == "block":
+            violations = [result]
+
+        obs = ExternalObservation(
+            agent_id=agent_id,
+            session_id=session_id or "unknown",
+            action_type="tool_call",
+            params={"tool": tool_name, **(params or {})},
+            result=result,
+            violations=violations,
+        )
+        path_b.observe(obs)
+    except Exception as e:
+        _log.debug("Path B feed failed (non-critical): %s", e)
 
 
 # ── ObligationTrigger Integration ──────────────────────────────────────────

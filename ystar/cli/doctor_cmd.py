@@ -280,6 +280,88 @@ def _doctor_layer1() -> Tuple[bool, int, int]:
     except Exception as e:
         warn(f"External Config Reads check failed: {e}")
 
+    # 9. Check Runtime Constraint Files
+    print()
+    print("  [9] Runtime Constraints")
+
+    deny_path = pathlib.Path(".ystar_runtime_deny.json")
+    relax_path = pathlib.Path(".ystar_runtime_relax.json")
+
+    for name, rpath in [("deny", deny_path), ("relax", relax_path)]:
+        if rpath.exists():
+            try:
+                with open(rpath, encoding="utf-8") as f:
+                    data = json.load(f)
+                from ystar.kernel.dimensions import IntentContract as _IC
+                _IC.from_dict(data)
+                rule_count = sum(
+                    len(v) if isinstance(v, list) else len(v) if isinstance(v, dict) else 1
+                    for v in data.values()
+                )
+                ok(f"Runtime {name} — {rule_count} constraint entries")
+            except Exception as e:
+                fail(f"Runtime {name} — parse failed: {e}")
+        else:
+            print(f"  [ ] Runtime {name} — not present (ok)")
+
+    # Monotonicity check (if either runtime file exists)
+    if deny_path.exists() or relax_path.exists():
+        try:
+            from ystar.adapters.runtime_contracts import (
+                load_runtime_deny, load_runtime_relax,
+            )
+            from ystar.kernel.dimensions import IntentContract as _IC2
+
+            # Load session contract from session config or empty baseline
+            session_contract = _IC2()
+            try:
+                from ystar.session import Policy
+                policy = Policy.from_agents_md_multi()
+                # Use first registered agent as baseline
+                for _agent_key in policy._rules:
+                    session_contract = policy._rules[_agent_key]
+                    break
+            except Exception:
+                pass
+
+            deny_contract = load_runtime_deny(".")
+            relax_contract = load_runtime_relax(".")
+
+            if deny_contract is not None:
+                is_ok, viols = deny_contract.is_subset_of(session_contract)
+                if not is_ok:
+                    fail(f"Runtime deny monotonicity violation: {viols[0]}")
+                else:
+                    ok("Runtime deny monotonicity check passed")
+
+            if relax_contract is not None:
+                is_ok, viols = relax_contract.is_subset_of(session_contract)
+                if not is_ok:
+                    fail(f"Runtime relax exceeds session boundary: {viols[0]}")
+                else:
+                    ok("Runtime relax boundary check passed")
+        except Exception as e:
+            warn(f"Monotonicity check failed: {e}")
+
+    # CIEU statistics for Path B constraint activity
+    try:
+        from ystar.governance.cieu_store import CIEUStore as _CStore
+        _cieu_db = cieu_path  # reuse from check [1]
+        if pathlib.Path(_cieu_db).exists():
+            _cstore = _CStore(_cieu_db)
+            try:
+                deny_events = _cstore.query(event_type="runtime_deny_applied", limit=100)
+                print(f"  [ ] Path B deny events: {len(deny_events)}")
+            except Exception:
+                print("  [ ] Path B deny events: query unavailable")
+            try:
+                relax_events = _cstore.query(event_type="runtime_relax_applied", limit=100)
+                print(f"  [ ] Metalearning relax events: {len(relax_events)}")
+            except Exception:
+                print("  [ ] Metalearning relax events: query unavailable")
+    except Exception:
+        pass
+
     # Layer1 summary
     all_ok = (fail_count == 0)
     return all_ok, ok_count, fail_count

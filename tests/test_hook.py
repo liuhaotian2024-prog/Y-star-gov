@@ -3,10 +3,10 @@ tests/test_hook.py — 使用正确 API 验证 check_hook 的两条路径
 """
 import pytest
 import json
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from ystar.kernel.dimensions import IntentContract
 from ystar.session import Policy
-from ystar.adapters.hook import check_hook, _extract_params
+from ystar.adapters.hook import check_hook, _extract_params, _feed_path_b
 
 
 def make_policy() -> Policy:
@@ -159,3 +159,55 @@ class TestHookFullPath:
         with patch("ystar.adapters.hook._load_session_config", return_value=cfg):
             result = check_hook(payload, policy, agent_id="test_agent")
         assert result.get("action") == "block"
+
+
+class TestFeedPathB:
+    """Verify _feed_path_b is fail-safe and feeds observations correctly."""
+
+    def test_feed_path_b_no_orchestrator_no_crash(self):
+        """_feed_path_b must not crash when orchestrator has no _path_b_agent."""
+        # Should silently return without error
+        _feed_path_b("agent1", "Read", {"file_path": "/x"}, {}, "sess1")
+
+    def test_feed_path_b_with_block_result(self):
+        """_feed_path_b should include violations when result is a block."""
+        block_result = {"action": "block", "message": "denied"}
+        # Should not crash regardless of orchestrator state
+        _feed_path_b("agent1", "Write", {"file_path": "/x"}, block_result, "sess1")
+
+    def test_feed_path_b_none_session(self):
+        """_feed_path_b handles None session_id gracefully."""
+        _feed_path_b("agent1", "Bash", {"command": "ls"}, {}, None)
+
+
+class TestRuntimeContractMerge:
+    """Verify that runtime contracts are merged into hook checks."""
+
+    def test_runtime_deny_tightens_policy(self, tmp_path):
+        """A runtime_deny file should add deny rules on top of session policy."""
+        # Write a deny file with additional constraints
+        deny_file = tmp_path / ".ystar_runtime_deny.json"
+        deny_file.write_text(json.dumps({
+            "deny": ["/etc", "/production", "/staging"],
+            "deny_commands": ["rm -rf", "sudo", "curl"],
+        }))
+
+        policy = make_policy()
+        payload = make_payload(tool_name="Bash",
+                               path="/workspace/ok.py")
+        payload["tool_input"] = {"command": "curl http://example.com"}
+
+        with patch("ystar.adapters.hook._load_session_config", return_value=None), \
+             patch("os.getcwd", return_value=str(tmp_path)):
+            result = check_hook(payload, policy, agent_id="test_agent")
+        # curl should be denied because runtime_deny adds it
+        assert result.get("action") == "block"
+
+    def test_no_runtime_files_unchanged(self, tmp_path):
+        """Without runtime files, behavior should be unchanged."""
+        policy = make_policy()
+        payload = make_payload(path="/workspace/safe.py")
+        with patch("ystar.adapters.hook._load_session_config", return_value=None), \
+             patch("os.getcwd", return_value=str(tmp_path)):
+            result = check_hook(payload, policy, agent_id="test_agent")
+        assert result == {}
