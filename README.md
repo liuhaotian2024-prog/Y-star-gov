@@ -81,6 +81,12 @@ Allow           : 11  (78.6%)
 Deny            : 3   (21.4%)
 Top blocked     : /etc (2x), rm -rf (1x)
 Chain integrity : verified
+
+Evidence Grade Distribution:
+  Decision-grade   : 12 (85.7%) ← Audit weight
+  Governance-grade :  1 (7.1%)  ← Policy adaptation
+  Advisory-grade   :  1 (7.1%)  ← Causal suggestions
+  Ops-grade        :  0 (0.0%)  ← Health metrics
 ─────────────────────────────────────
 ```
 
@@ -135,6 +141,43 @@ ystar doctor
 # Step 4: After running your agents, see the delta (1 minute)
 ystar delta
 ystar trend
+```
+
+**What you'll see after Step 3 (baseline):**
+
+```
+Y*gov Baseline Snapshot — 2026-04-03 14:23:01
+─────────────────────────────────────────────
+Total events       : 0
+Deny count         : 0
+Deny rate          : 0.0%
+Active obligations : 0
+Pending omissions  : 0
+
+Baseline saved to .ystar_baseline.json
+```
+
+**What you'll see after Step 4 (delta after running agents):**
+
+```
+Y*gov Delta Report — Baseline vs Current
+─────────────────────────────────────────────
+                    Baseline    Current    Change
+Total events            0         42       +42
+Deny count              0          3       +3
+Deny rate            0.0%       7.1%     +7.1%
+Active obligations      0          2       +2
+Pending omissions       0          0        —
+
+New violations detected:
+  • /etc access blocked (2×)
+  • rm -rf blocked (1×)
+
+CIEU Evidence Grade Distribution:
+  • Decision-grade:   38 (90.5%) ← Audit-weight enforcement
+  • Governance-grade:  2 (4.8%)  ← Policy tightening
+  • Advisory-grade:    1 (2.4%)  ← Causal suggestions
+  • Ops-grade:         1 (2.4%)  ← Health metrics
 ```
 
 **Create AGENTS.md in your project root with your rules:**
