@@ -1,0 +1,126 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for Y*gov
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! Help us understand your use case and how this would improve Y*gov.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Use Case
+      description: What problem are you trying to solve?
+      placeholder: |
+        I'm trying to enforce governance rules across multiple repositories, but currently Y*gov only works within a single git repo...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: How do you envision this feature working?
+      placeholder: |
+        Add a `ystar link` command that creates symbolic links to a shared governance contract...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: What workarounds or alternative solutions have you tried?
+      placeholder: |
+        Currently I'm copying AGENTS.md to each repo manually, but this creates version drift...
+    validations:
+      required: false
+
+  - type: textarea
+    id: api
+    attributes:
+      label: Proposed API / Interface
+      description: How should users interact with this feature? (commands, code examples, config format)
+      placeholder: |
+        ```bash
+        # Link to shared governance contract
+        ystar link --contract /path/to/shared/AGENTS.md
+
+        # Verify all linked repos use same contract version
+        ystar verify --all-links
+        ```
+      render: markdown
+    validations:
+      required: false
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this feature to your workflow?
+      options:
+        - Critical (blocking my use of Y*gov)
+        - High (significant improvement)
+        - Medium (nice to have)
+        - Low (minor improvement)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Feature Category
+      description: What area of Y*gov does this relate to?
+      options:
+        - Enforcement engine (check() logic)
+        - Audit / CIEU records
+        - CLI / UX
+        - Performance
+        - Integration (LangChain, etc.)
+        - Documentation
+        - Compliance (SOC 2, HIPAA, etc.)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Expected Impact
+      description: Who benefits from this feature? How many users would this help?
+      placeholder: |
+        This would benefit any organization with multiple repositories (likely 30-40% of enterprise users).
+    validations:
+      required: false
+
+  - type: textarea
+    id: breaking
+    attributes:
+      label: Breaking Changes
+      description: Would this require breaking changes to existing APIs or behavior?
+      placeholder: |
+        No breaking changes — this is purely additive.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I would be willing to implement this feature and submit a PR
+          required: false
+        - label: I can help test this feature once implemented
+          required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing issues and discussions for similar requests
+          required: true
+        - label: I have described the problem, not just the solution
+          required: true

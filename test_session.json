@@ -1,0 +1,58 @@
+{
+  "session_id": "test_session_20260403",
+  "cieu_events": [
+    {
+      "event_id": "evt_1",
+      "decision": "allow",
+      "tool_name": "Read",
+      "agent_id": "eng-kernel",
+      "file_path": "/workspace/test.py"
+    },
+    {
+      "event_id": "evt_2",
+      "decision": "deny",
+      "tool_name": "Write",
+      "agent_id": "eng-platform",
+      "tool_input": {
+        "file_path": "/etc/passwd"
+      }
+    },
+    {
+      "event_id": "evt_3",
+      "decision": "deny",
+      "tool_name": "Bash",
+      "agent_id": "eng-kernel",
+      "tool_input": {
+        "command": "rm -rf /"
+      }
+    },
+    {
+      "event_id": "evt_4",
+      "decision": "allow",
+      "tool_name": "Grep",
+      "agent_id": "CEO"
+    }
+  ],
+  "obligations": [
+    {
+      "obligation_id": "obl_1",
+      "obligation_type": "pre_commit_test",
+      "status": "pending",
+      "is_overdue": true,
+      "created_at": 1735689600.0
+    },
+    {
+      "obligation_id": "obl_2",
+      "obligation_type": "respond_to_complaint",
+      "status": "violated",
+      "created_at": 1735689600.0
+    },
+    {
+      "obligation_id": "obl_3",
+      "obligation_type": "update_docs",
+      "status": "pending",
+      "is_overdue": false,
+      "created_at": 1735689600.0
+    }
+  ]
+}

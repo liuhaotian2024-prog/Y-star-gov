@@ -1,0 +1,175 @@
+name: Installation Help
+description: Get help with installing or configuring Y*gov
+title: "[Install]: "
+labels: ["installation", "needs-help"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Need help getting Y*gov installed? Follow the steps below to help us diagnose the issue quickly.
+
+  - type: textarea
+    id: issue
+    attributes:
+      label: Installation Issue
+      description: What happens when you try to install or run Y*gov?
+      placeholder: |
+        When I run `ystar hook-install`, I get "git hooks directory not found"
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: ystar doctor Output
+      description: |
+        **IMPORTANT:** Run `ystar doctor` and paste the FULL output below.
+        If `ystar` command doesn't work, paste the error from `pip install ystar` instead.
+      placeholder: |
+        Y*gov Doctor v0.48.0
+        =====================
+        ✓ Python version: 3.11.5
+        ✗ Git repository: not found
+        ✓ SQLite available: yes
+        ...
+      render: shell
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - macOS (Intel)
+        - macOS (Apple Silicon / M1/M2/M3)
+        - Linux (Ubuntu/Debian)
+        - Linux (RHEL/CentOS/Fedora)
+        - Linux (Arch/Manjaro)
+        - Linux (other)
+        - Windows (Git Bash)
+        - Windows (WSL - Ubuntu)
+        - Windows (WSL - other)
+        - Windows (PowerShell)
+        - Windows (CMD)
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python Version
+      description: Run `python --version` (or `python3 --version`)
+      placeholder: Python 3.11.5
+    validations:
+      required: true
+
+  - type: input
+    id: pip
+    attributes:
+      label: Pip Version
+      description: Run `pip --version`
+      placeholder: pip 23.2.1 from /usr/local/lib/python3.11/site-packages/pip (python 3.11)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: venv
+    attributes:
+      label: Virtual Environment
+      description: Are you using a virtual environment?
+      options:
+        - "Yes (venv)"
+        - "Yes (conda)"
+        - "Yes (pipenv)"
+        - "Yes (poetry)"
+        - "No (global Python)"
+        - "Don't know"
+    validations:
+      required: true
+
+  - type: textarea
+    id: install_command
+    attributes:
+      label: Installation Command Used
+      description: Exact command you ran to install Y*gov
+      placeholder: |
+        pip install ystar
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: install_output
+    attributes:
+      label: Installation Output
+      description: Full output from the installation command (including any errors)
+      placeholder: |
+        Paste the full terminal output here
+      render: shell
+    validations:
+      required: false
+
+  - type: dropdown
+    id: git
+    attributes:
+      label: Git Availability
+      description: Run `git --version` — does it work?
+      options:
+        - "Yes (git is installed)"
+        - "No (command not found)"
+        - "Don't know"
+    validations:
+      required: true
+
+  - type: textarea
+    id: git_status
+    attributes:
+      label: Git Repository Status
+      description: Run `git status` in your project directory — what does it say?
+      placeholder: |
+        On branch main
+        Your branch is up to date with 'origin/main'.
+        ...
+      render: shell
+    validations:
+      required: false
+
+  - type: dropdown
+    id: tried
+    attributes:
+      label: Troubleshooting Steps Tried
+      description: What have you already tried?
+      multiple: true
+      options:
+        - Ran `ystar doctor`
+        - Reinstalled Y*gov (`pip uninstall ystar && pip install ystar`)
+        - Checked Python version (>=3.11)
+        - Verified in a git repository (`git init`)
+        - Tried in a fresh virtual environment
+        - Checked file permissions in `.git/hooks/`
+        - Read the FAQ (marketing/post_launch_faq.md)
+        - Searched existing issues
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any other relevant information (screenshots, error logs, system configuration)
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have run `ystar doctor` and included the full output above
+          required: true
+        - label: I have searched existing issues for similar installation problems
+          required: true
+        - label: I am using Python >= 3.11
+          required: false

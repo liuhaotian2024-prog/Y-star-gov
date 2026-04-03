@@ -1,0 +1,14 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/liuhaotian2024-prog/Y-star-gov/blob/main/README.md
+    about: Read the full Y*gov documentation and architecture guide
+  - name: FAQ
+    url: https://github.com/liuhaotian2024-prog/Y-star-gov/blob/main/FAQ.md
+    about: Common questions about installation, performance, compliance, and troubleshooting
+  - name: Enterprise Support
+    url: mailto:enterprise@ystarlabs.com
+    about: For enterprise inquiries, custom integrations, or compliance consulting
+  - name: Security Vulnerabilities
+    url: mailto:security@ystarlabs.com
+    about: Report security issues privately (PGP key available in SECURITY.md)

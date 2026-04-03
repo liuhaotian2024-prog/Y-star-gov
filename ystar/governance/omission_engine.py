@@ -1008,6 +1008,135 @@ class OmissionEngine:
             governance_event_id=restoration_event_id,
         )
 
+    # ── v0.48: Graceful Cancellation ──────────────────────────────────────────
+
+    def cancel_obligation(
+        self,
+        obligation_id: str,
+        reason: str,
+        now: Optional[float] = None,
+    ) -> Optional[ObligationRecord]:
+        """
+        Cancel a pending obligation without creating violation.
+
+        Writes CIEU info event. Common reasons:
+        - "session_ended": session boundary auto-cancel
+        - "user_requested": manual cancellation
+        - "superseded": replaced by newer obligation
+        - "no_longer_applicable": context changed
+
+        Args:
+            obligation_id: ID of obligation to cancel
+            reason: Human-readable cancellation reason
+            now: Current timestamp (default: time.time())
+
+        Returns:
+            Updated ObligationRecord with status=CANCELLED, or None if not found
+        """
+        now = now or self._now()
+
+        # Load obligation
+        obligation = self.store.get_obligation(obligation_id)
+        if not obligation:
+            _log.warning(f"cancel_obligation: {obligation_id} not found")
+            return None
+
+        # Only cancel if PENDING or SOFT_OVERDUE
+        if obligation.status not in (ObligationStatus.PENDING, ObligationStatus.SOFT_OVERDUE):
+            _log.warning(
+                f"cancel_obligation: {obligation_id} has status {obligation.status}, "
+                f"cannot cancel (only PENDING/SOFT_OVERDUE can be cancelled)"
+            )
+            return None
+
+        # Update status
+        obligation.status = ObligationStatus.CANCELLED
+        obligation.cancelled_at = now
+        obligation.cancellation_reason = reason
+        obligation.updated_at = now
+
+        # Save to store
+        self.store.update_obligation(obligation)
+
+        # Write CIEU info event
+        self.cieu_store.write({
+            "event_type": "obligation_cancelled",
+            "decision": "info",
+            "obligation_id": obligation_id,
+            "obligation_type": obligation.obligation_type,
+            "entity_id": obligation.entity_id,
+            "actor_id": obligation.actor_id,
+            "session_id": obligation.session_id,
+            "reason": reason,
+            "was_overdue": obligation.status == ObligationStatus.SOFT_OVERDUE,
+            "timestamp": now,
+        })
+
+        _log.info(
+            f"Cancelled obligation {obligation_id} "
+            f"(type={obligation.obligation_type}, reason={reason})"
+        )
+
+        return obligation
+
+    def cancel_session_obligations(
+        self,
+        old_session_id: str,
+        new_session_id: str,
+        now: Optional[float] = None,
+    ) -> int:
+        """
+        Auto-cancel all PENDING obligations from previous session.
+
+        Called at session boundary. Prevents obligation accumulation
+        across sessions without losing audit trail.
+
+        Args:
+            old_session_id: Previous session ID
+            new_session_id: New session ID (for logging)
+            now: Current timestamp
+
+        Returns:
+            Number of obligations cancelled
+        """
+        now = now or self._now()
+
+        # Find all PENDING/SOFT_OVERDUE obligations from old session
+        all_obligations = self.store.list_obligations()
+        old_session_obligations = [
+            o for o in all_obligations
+            if o.session_id == old_session_id
+            and o.status in (ObligationStatus.PENDING, ObligationStatus.SOFT_OVERDUE)
+        ]
+
+        # Cancel each
+        cancelled_count = 0
+        for obligation in old_session_obligations:
+            result = self.cancel_obligation(
+                obligation.obligation_id,
+                reason=f"session_ended (old={old_session_id}, new={new_session_id})",
+                now=now,
+            )
+            if result:
+                cancelled_count += 1
+
+        _log.info(
+            f"Session boundary: cancelled {cancelled_count} obligations "
+            f"from session {old_session_id}"
+        )
+
+        # Write CIEU summary event
+        self.cieu_store.write({
+            "event_type": "session_boundary_cleanup",
+            "decision": "info",
+            "old_session_id": old_session_id,
+            "new_session_id": new_session_id,
+            "cancelled_count": cancelled_count,
+            "timestamp": now,
+        })
+
+        return cancelled_count
+
     # ── 工具方法 ──────────────────────────────────────────────────────────────
 
     def obligation_status_report(self, entity_id: str) -> dict:

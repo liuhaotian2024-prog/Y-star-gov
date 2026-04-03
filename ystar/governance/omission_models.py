@@ -275,6 +275,11 @@ class ObligationRecord:
     created_at:          float = field(default_factory=time.time)
     updated_at:          float = field(default_factory=time.time)
 
+    # v0.48: Cancellation fields ─────────────────────────────────────────────
+    session_id:          Optional[str] = None    # Session ID for boundary management
+    cancelled_at:        Optional[float] = None  # Cancellation timestamp
+    cancellation_reason: Optional[str] = None    # Why cancelled (session_ended, user_requested, etc.)
+
     @property
     def effective_due_at(self) -> Optional[float]:
         """考虑宽限期之后的实际判定截止时间。"""

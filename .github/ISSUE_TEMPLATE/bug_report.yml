@@ -1,0 +1,142 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in Y*gov
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug! Please provide as much detail as possible to help us reproduce and fix the issue.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear description of what the bug is
+      placeholder: When I run ystar hook-install, I get...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Exact steps to reproduce the behavior
+      placeholder: |
+        1. Run `pip install ystar`
+        2. Run `ystar hook-install`
+        3. See error...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen
+      placeholder: Hook should install successfully
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened
+      placeholder: Got error "git hooks directory not found"
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: ystar doctor Output
+      description: Run `ystar doctor` and paste the full output here
+      placeholder: |
+        Y*gov Doctor v0.48.0
+        ✓ Python version: 3.11.5
+        ✗ Git repository: not found
+        ...
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Y*gov Version
+      description: Run `ystar --version` or `pip show ystar`
+      placeholder: 0.48.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - macOS
+        - Linux (Ubuntu/Debian)
+        - Linux (RHEL/CentOS/Fedora)
+        - Linux (other)
+        - Windows (Git Bash)
+        - Windows (WSL)
+        - Windows (PowerShell)
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python Version
+      description: Run `python --version`
+      placeholder: 3.11.5
+    validations:
+      required: true
+
+  - type: dropdown
+    id: agent_framework
+    attributes:
+      label: Agent Framework
+      description: What framework are you using Y*gov with?
+      options:
+        - Claude Code
+        - LangChain
+        - AutoGPT
+        - CrewAI
+        - Custom framework
+        - Other
+        - Not applicable
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs
+      description: Any error messages, stack traces, or logs
+      placeholder: Paste logs here
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any other context about the problem (screenshots, workarounds you tried, etc.)
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing issues to avoid duplicates
+          required: true
+        - label: I have run `ystar doctor` and included the output
+          required: false
+        - label: I am using the latest version of Y*gov
+          required: false

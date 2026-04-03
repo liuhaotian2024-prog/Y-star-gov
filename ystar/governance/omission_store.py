@@ -291,6 +291,20 @@ class OmissionStore:
     def _init(self) -> None:
         with self._conn() as conn:
             conn.executescript(_SCHEMA)
+            # Schema migration: add v0.48 cancellation fields if missing
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT name FROM pragma_table_info('obligations')
+                WHERE name IN ('session_id', 'cancelled_at', 'cancellation_reason')
+            """)
+            existing_cols = {row[0] for row in cursor.fetchall()}
+
+            if 'session_id' not in existing_cols:
+                cursor.execute("ALTER TABLE obligations ADD COLUMN session_id TEXT")
+            if 'cancelled_at' not in existing_cols:
+                cursor.execute("ALTER TABLE obligations ADD COLUMN cancelled_at REAL")
+            if 'cancellation_reason' not in existing_cols:
+                cursor.execute("ALTER TABLE obligations ADD COLUMN cancellation_reason TEXT")
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -387,7 +401,7 @@ class OmissionStore:
         with self._conn() as conn:
             conn.execute("""
                 INSERT OR IGNORE INTO obligations VALUES
-                    (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (
                 ob.obligation_id, ob.entity_id, ob.actor_id,
                 ob.obligation_type, ob.trigger_event_id,
@@ -399,6 +413,7 @@ class OmissionStore:
                 1 if ob.escalated else 0, ob.escalated_at,
                 ob.reminder_sent_at, ob.notes,
                 ob.created_at, ob.updated_at,
+                ob.session_id, ob.cancelled_at, ob.cancellation_reason,
             ))
 
     def get_obligation(self, obligation_id: str) -> Optional[ObligationRecord]:
@@ -416,13 +431,15 @@ class OmissionStore:
                     status=?, fulfilled_by_event_id=?, violation_code=?,
                     escalated=?, escalated_at=?, reminder_sent_at=?,
                     notes=?, updated_at=?,
-                    due_at=?, grace_period_secs=?, hard_overdue_secs=?
+                    due_at=?, grace_period_secs=?, hard_overdue_secs=?,
+                    session_id=?, cancelled_at=?, cancellation_reason=?
                 WHERE obligation_id=?
             """, (
                 ob.status.value, ob.fulfilled_by_event_id, ob.violation_code,
                 1 if ob.escalated else 0, ob.escalated_at,
                 ob.reminder_sent_at, ob.notes, ob.updated_at,
                 ob.due_at, ob.grace_period_secs, ob.hard_overdue_secs,
+                ob.session_id, ob.cancelled_at, ob.cancellation_reason,
                 ob.obligation_id,
             ))
 
@@ -508,6 +525,9 @@ class OmissionStore:
             notes                = row["notes"] or "",
             created_at           = row["created_at"],
             updated_at           = row["updated_at"],
+            session_id           = row["session_id"] if "session_id" in row.keys() else None,
+            cancelled_at         = row["cancelled_at"] if "cancelled_at" in row.keys() else None,
+            cancellation_reason  = row["cancellation_reason"] if "cancellation_reason" in row.keys() else None,
         )
 
     # ── GovernanceEvent ────────────────────────────────────────────────────
