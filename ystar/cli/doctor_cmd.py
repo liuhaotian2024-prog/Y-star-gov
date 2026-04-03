@@ -243,6 +243,43 @@ def _doctor_layer1() -> Tuple[bool, int, int]:
         fail("Archive Freshness — No archive found",
              "Run 'ystar archive-cieu' to create first archive")
 
+    # 8. Check External Config Reads
+    print()
+    print("  [8] External Config Reads")
+    try:
+        import sqlite3
+        cieu_db_path = pathlib.Path(cieu_path)
+
+        if cieu_db_path.exists():
+            conn = sqlite3.connect(str(cieu_db_path))
+            cursor = conn.cursor()
+
+            # Query for external config reads
+            cursor.execute("""
+                SELECT file_path, COUNT(*) as count
+                FROM cieu_events
+                WHERE event_type = 'external_config_read'
+                GROUP BY file_path
+                ORDER BY count DESC
+                LIMIT 5
+            """)
+
+            external_reads = cursor.fetchall()
+            conn.close()
+
+            if external_reads:
+                fail(f"External Config Reads — {len(external_reads)} unique paths detected",
+                     "Review external CLAUDE.md for context poisoning")
+                for path, count in external_reads:
+                    print(f"      → {path} ({count} reads)")
+            else:
+                ok("External Config Reads — None detected")
+        else:
+            ok("External Config Reads — No CIEU database")
+
+    except Exception as e:
+        warn(f"External Config Reads check failed: {e}")
+
     # Layer1 summary
     all_ok = (fail_count == 0)
     return all_ok, ok_count, fail_count
