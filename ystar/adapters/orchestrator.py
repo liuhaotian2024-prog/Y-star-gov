@@ -180,7 +180,16 @@ class Orchestrator:
 
         # 4. GovernanceLoop — the meta-learning orchestrator
         try:
-            self._governance_loop = self._build_governance_loop()
+            # Timeout protection: if _build_governance_loop hangs, fall back gracefully
+            _gl_result = [None]
+            def _build_gl():
+                _gl_result[0] = self._build_governance_loop()
+            _gl_thread = threading.Thread(target=_build_gl, daemon=True)
+            _gl_thread.start()
+            _gl_thread.join(timeout=5.0)
+            self._governance_loop = _gl_result[0]
+            if self._governance_loop is None:
+                _log.warning("GovernanceLoop init timed out or failed, using light path")
         except Exception as e:
             _log.warning("Failed to initialize GovernanceLoop: %s", e, exc_info=True)
 

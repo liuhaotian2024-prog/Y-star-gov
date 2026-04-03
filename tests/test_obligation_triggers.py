@@ -25,6 +25,7 @@ from ystar.governance.obligation_triggers import (
 from ystar.governance.omission_models import (
     GovernanceEvent,
     ObligationStatus,
+    OmissionType,
     Severity,
 )
 from ystar.governance.omission_store import InMemoryOmissionStore
@@ -43,7 +44,7 @@ def test_trigger_registry_register_and_get():
     trigger = ObligationTrigger(
         trigger_id="test_trigger",
         trigger_tool_pattern=r"TestTool",
-        obligation_type="test_obligation",
+        obligation_type=OmissionType.TEST_OBLIGATION,
         description="Test description",
         target_agent="caller",
         deadline_seconds=300,
@@ -62,7 +63,7 @@ def test_trigger_registry_disabled_triggers_excluded():
     trigger1 = ObligationTrigger(
         trigger_id="enabled",
         trigger_tool_pattern=r"Tool1",
-        obligation_type="obligation1",
+        obligation_type=OmissionType.OBLIGATION1,
         description="Enabled",
         target_agent="caller",
         deadline_seconds=300,
@@ -72,7 +73,7 @@ def test_trigger_registry_disabled_triggers_excluded():
     trigger2 = ObligationTrigger(
         trigger_id="disabled",
         trigger_tool_pattern=r"Tool2",
-        obligation_type="obligation2",
+        obligation_type=OmissionType.OBLIGATION2,
         description="Disabled",
         target_agent="caller",
         deadline_seconds=300,
@@ -185,7 +186,7 @@ def test_multiple_triggers_can_fire():
     trigger1 = ObligationTrigger(
         trigger_id="trigger1",
         trigger_tool_pattern=r"Write",
-        obligation_type="obligation1",
+        obligation_type=OmissionType.OBLIGATION1,
         description="First trigger",
         target_agent="caller",
         deadline_seconds=300,
@@ -194,7 +195,7 @@ def test_multiple_triggers_can_fire():
     trigger2 = ObligationTrigger(
         trigger_id="trigger2",
         trigger_tool_pattern=r"Write",
-        obligation_type="obligation2",
+        obligation_type=OmissionType.OBLIGATION2,
         description="Second trigger",
         target_agent="caller",
         deadline_seconds=600,
@@ -222,7 +223,7 @@ def test_create_obligation_from_trigger():
     trigger = ObligationTrigger(
         trigger_id="test_trigger",
         trigger_tool_pattern=r"TestTool",
-        obligation_type="test_obligation",
+        obligation_type=OmissionType.TEST_OBLIGATION,
         description="Test obligation",
         target_agent="caller",
         deadline_seconds=1800,  # 30 minutes
@@ -291,7 +292,7 @@ def test_create_obligation_target_agent_resolution():
     trigger1 = ObligationTrigger(
         trigger_id="trigger1",
         trigger_tool_pattern=r"TestTool",
-        obligation_type="obligation1",
+        obligation_type=OmissionType.OBLIGATION1,
         description="Test",
         target_agent="caller",
         deadline_seconds=300,
@@ -310,7 +311,7 @@ def test_create_obligation_target_agent_resolution():
     trigger2 = ObligationTrigger(
         trigger_id="trigger2",
         trigger_tool_pattern=r"TestTool",
-        obligation_type="obligation2",
+        obligation_type=OmissionType.OBLIGATION2,
         description="Test",
         target_agent="CTO",
         deadline_seconds=300,
@@ -347,7 +348,7 @@ def test_create_obligation_deduplicate():
     trigger = ObligationTrigger(
         trigger_id="test_trigger",
         trigger_tool_pattern=r"TestTool",
-        obligation_type="test_obligation",
+        obligation_type=OmissionType.TEST_OBLIGATION,
         description="Test",
         target_agent="caller",
         deadline_seconds=300,
@@ -397,7 +398,7 @@ def test_create_obligation_no_deduplicate():
     trigger = ObligationTrigger(
         trigger_id="test_trigger",
         trigger_tool_pattern=r"TestTool",
-        obligation_type="test_obligation",
+        obligation_type=OmissionType.TEST_OBLIGATION,
         description="Test",
         target_agent="caller",
         deadline_seconds=300,
@@ -449,7 +450,7 @@ def test_trigger_serialization():
     trigger = ObligationTrigger(
         trigger_id="test_trigger",
         trigger_tool_pattern=r"TestTool",
-        obligation_type="test_obligation",
+        obligation_type=OmissionType.TEST_OBLIGATION,
         description="Test description",
         target_agent="caller",
         deadline_seconds=1800,
@@ -519,7 +520,7 @@ def test_integration_trigger_creates_obligation_in_engine():
     trigger = ObligationTrigger(
         trigger_id="integration_test",
         trigger_tool_pattern=r"TestTool",
-        obligation_type="integration_obligation",
+        obligation_type=OmissionType.INTEGRATION_OBLIGATION,
         description="Integration test",
         target_agent="caller",
         deadline_seconds=300,
@@ -538,7 +539,7 @@ def test_integration_trigger_creates_obligation_in_engine():
     # Verify obligation exists in store
     obligations = store.list_obligations(entity_id="test_session")
     assert len(obligations) == 1
-    assert obligations[0].obligation_type == "integration_obligation"
+    assert obligations[0].obligation_type == OmissionType.INTEGRATION_OBLIGATION
     assert obligations[0].status == ObligationStatus.PENDING
 
 
@@ -566,7 +567,7 @@ def test_integration_obligation_expires_and_creates_violation():
     trigger = ObligationTrigger(
         trigger_id="expiry_test",
         trigger_tool_pattern=r"TestTool",
-        obligation_type="expiry_obligation",
+        obligation_type=OmissionType.EXPIRY_OBLIGATION,
         description="Expiry test",
         target_agent="caller",
         deadline_seconds=10,  # 10 seconds

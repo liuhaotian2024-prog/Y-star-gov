@@ -54,7 +54,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from ystar.governance.omission_models import Severity
+from ystar.governance.omission_models import Severity, OmissionType
 
 
 @dataclass
@@ -420,7 +420,7 @@ def register_default_triggers(
     registry.register(ObligationTrigger(
         trigger_id="research_knowledge_update",
         trigger_tool_pattern=r"(web_search|WebSearch|WebFetch)",
-        obligation_type="knowledge_update_required",
+        obligation_type=OmissionType.KNOWLEDGE_UPDATE_REQUIRED,
         description="After web research, update knowledge/[agent_role]/ with findings",
         target_agent="caller",
         deadline_seconds=1800,  # 30 minutes
@@ -442,7 +442,7 @@ def register_default_triggers(
     registry.register(ObligationTrigger(
         trigger_id="session_token_recording",
         trigger_tool_pattern=r"(session_end|TaskComplete|task_closed)",
-        obligation_type="token_recording_required",
+        obligation_type=OmissionType.TOKEN_RECORDING_REQUIRED,
         description=f"After session completion, {finance_role} must run track_burn.py",
         target_agent=finance_role,
         deadline_seconds=600,  # 10 minutes
@@ -465,7 +465,7 @@ def register_default_triggers(
         trigger_id="failure_case_documentation",
         trigger_tool_pattern=r".*",  # Any tool
         trigger_param_filter={"cieu_decision": "DENY"},
-        obligation_type="case_documentation_required",
+        obligation_type=OmissionType.CASE_DOCUMENTATION_REQUIRED,
         description="After CIEU deny, document in knowledge/cases/",
         target_agent="caller",
         deadline_seconds=3600,  # 1 hour
@@ -488,7 +488,7 @@ def register_default_triggers(
         trigger_id="content_accuracy_review",
         trigger_tool_pattern=r"(Write|Edit)",
         trigger_param_filter=None,  # Will check file path in verification
-        obligation_type="technical_review_required",
+        obligation_type=OmissionType.TECHNICAL_REVIEW_REQUIRED,
         description=f"Content must be reviewed by {tech_review_role} before publish",
         target_agent=tech_review_role,
         deadline_seconds=7200,  # 2 hours
@@ -513,7 +513,7 @@ def register_default_triggers(
         trigger_id="pre_commit_test",
         trigger_tool_pattern=r"Bash",
         trigger_param_filter={"command": ["git commit"]},
-        obligation_type="pre_commit_test_required",
+        obligation_type=OmissionType.PRE_COMMIT_TEST_REQUIRED,
         description="Before git commit, pytest must pass",
         target_agent="caller",
         deadline_seconds=60,  # 1 minute
@@ -536,7 +536,7 @@ def register_default_triggers(
         trigger_id="thinking_discipline_check",
         trigger_tool_pattern=r"(Write|Edit)",  # Only file modifications, not every tool call
         trigger_param_filter=None,
-        obligation_type="thinking_discipline_required",
+        obligation_type=OmissionType.THINKING_DISCIPLINE_REQUIRED,
         description="After significant work (file write/edit), apply 4-question thinking DNA",
         target_agent="caller",
         deadline_seconds=300,  # 5 minutes
@@ -559,7 +559,7 @@ def register_default_triggers(
         trigger_id="cross_review_critical_file",
         trigger_tool_pattern=r"(Write|Edit)",
         trigger_param_filter={"file_path": ["src/", "ystar/"]},  # Only trigger for core code changes
-        obligation_type="cross_review_required",
+        obligation_type=OmissionType.CROSS_REVIEW_REQUIRED,
         description="Critical file changes require cross-agent review",
         target_agent="*",  # Any other agent can review
         deadline_seconds=600,  # 10 minutes

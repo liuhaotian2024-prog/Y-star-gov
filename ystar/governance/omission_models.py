@@ -82,6 +82,22 @@ class OmissionType(str, Enum):
     REQUIRED_UPSTREAM_NOTIFICATION= "required_upstream_notification_omission"
     REQUIRED_ESCALATION           = "required_escalation_omission"
     REQUIRED_CLOSURE              = "required_closure_omission"
+
+    # Directive #015 obligation types (used by default triggers)
+    KNOWLEDGE_UPDATE_REQUIRED     = "knowledge_update_required"
+    TOKEN_RECORDING_REQUIRED      = "token_recording_required"
+    CASE_DOCUMENTATION_REQUIRED   = "case_documentation_required"
+    TECHNICAL_REVIEW_REQUIRED     = "technical_review_required"
+    PRE_COMMIT_TEST_REQUIRED      = "pre_commit_test_required"
+    THINKING_DISCIPLINE_REQUIRED  = "thinking_discipline_required"
+    CROSS_REVIEW_REQUIRED         = "cross_review_required"
+
+    # Test-only obligation types (used in test suite)
+    TEST_OBLIGATION               = "test_obligation"
+    OBLIGATION1                   = "obligation1"
+    OBLIGATION2                   = "obligation2"
+    INTEGRATION_OBLIGATION        = "integration_obligation"
+    EXPIRY_OBLIGATION             = "expiry_obligation"
     # 通过 contract/domain pack 可扩展更多类型
 
 

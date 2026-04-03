@@ -441,6 +441,21 @@ class OmissionEngine:
         # Create obligations for each matched trigger
         new_obs = []
         for trigger in triggers:
+            # GracefulSkip: validate obligation_type is registered
+            if not self._is_obligation_type_registered(trigger.obligation_type):
+                self._write_trigger_skip_to_cieu(
+                    trigger_id=trigger.trigger_id,
+                    obligation_type=trigger.obligation_type,
+                    reason="obligation_type_not_registered",
+                    tool_name=tool_name,
+                    actor_id=ev.actor_id,
+                )
+                _log.warning(
+                    f"GracefulSkip: trigger={trigger.trigger_id} references unregistered "
+                    f"obligation_type={trigger.obligation_type}, skipping"
+                )
+                continue  # Skip this trigger, continue with others
+
             # Determine target actor
             target_actor = trigger.get_target_actor(ev.actor_id)
 
@@ -519,6 +534,21 @@ class OmissionEngine:
             if not actor_id:
                 continue
 
+            # GracefulSkip: validate obligation_type is registered
+            if not self._is_obligation_type_registered(rule.obligation_type):
+                self._write_trigger_skip_to_cieu(
+                    trigger_id=rule.rule_id,
+                    obligation_type=rule.obligation_type,
+                    reason="obligation_type_not_registered",
+                    tool_name=ev.event_type,
+                    actor_id=actor_id,
+                )
+                _log.warning(
+                    f"GracefulSkip: rule={rule.rule_id} references unregistered "
+                    f"obligation_type={rule.obligation_type}, skipping"
+                )
+                continue  # Skip this rule, continue with others
+
             # 幂等：已有同类 pending obligation 则跳过
             if rule.deduplicate and self.store.has_pending_obligation(
                 entity_id=ev.entity_id,
@@ -567,6 +597,21 @@ class OmissionEngine:
         obligation_type = payload.get("obligation_type", "unknown")
         deadline_secs = payload.get("deadline_secs", 3600)
         fulfillment = payload.get("fulfillment", "file_write")
+
+        # GracefulSkip: validate obligation_type is registered
+        if not self._is_obligation_type_registered(obligation_type):
+            self._write_trigger_skip_to_cieu(
+                trigger_id=trigger_id,
+                obligation_type=obligation_type,
+                reason="obligation_type_not_registered",
+                tool_name=payload.get("tool_name", "unknown"),
+                actor_id=ev.actor_id,
+            )
+            _log.warning(
+                f"GracefulSkip: trigger={trigger_id} references unregistered "
+                f"obligation_type={obligation_type}, skipping"
+            )
+            return []  # Skip this trigger
 
         # Calculate due_at from event timestamp
         due_at = ev.ts + deadline_secs
@@ -746,6 +791,81 @@ class OmissionEngine:
         except Exception as e:
             # CIEU 写入失败不阻断主流程
             _log.error("Failed to write violation to CIEU (violation_id=%s): %s", v.violation_id, e)
+
+    def _is_obligation_type_registered(self, obligation_type: str) -> bool:
+        """
+        Check if an obligation_type is registered in the system.
+
+        Validates against:
+          1. Built-in OmissionType enum values
+          2. obligation_type from registered OmissionRules
+
+        GracefulSkip: Returns False for unregistered types, triggering a warning
+        rather than a violation cascade.
+
+        Note: We intentionally do NOT check trigger registry here, as that would
+        create circular validation. Triggers define NEW obligation types, and we
+        validate them against the authoritative sources (OmissionType enum + Rules).
+        """
+        # Check against OmissionType enum (authoritative source #1)
+        try:
+            known_types = {ot.value for ot in OmissionType}
+            if obligation_type in known_types:
+                return True
+        except Exception:
+            pass
+
+        # Check against registered rules (authoritative source #2)
+        all_rules = self.registry.all_enabled()
+        registered_types = {rule.obligation_type for rule in all_rules}
+        if obligation_type in registered_types:
+            return True
+
+        # Unregistered type — return False to trigger GracefulSkip
+        return False
+
+    def _write_trigger_skip_to_cieu(
+        self,
+        trigger_id: str,
+        obligation_type: str,
+        reason: str,
+        tool_name: str,
+        actor_id: str,
+    ) -> None:
+        """
+        Write GracefulSkip event to CIEU when a trigger is skipped.
+
+        This is NOT a violation - just an info-level audit record.
+        """
+        try:
+            cieu_record = {
+                "event_id":    str(uuid.uuid4()),
+                "seq_global":  int(self._now() * 1_000_000),
+                "created_at":  self._now(),
+                "session_id":  "system",
+                "agent_id":    actor_id,
+                "event_type":  "obligation_trigger_skipped",
+                "decision":    "skip",
+                "passed":      True,  # Not a failure, just a skip
+                "violations":  [],
+                "drift_detected": False,
+                "task_description": (
+                    f"GracefulSkip: trigger={trigger_id} | "
+                    f"obligation_type={obligation_type} | "
+                    f"reason={reason} | tool={tool_name}"
+                ),
+                "evidence_grade": "info",
+                "metadata": {
+                    "trigger_id": trigger_id,
+                    "obligation_type": obligation_type,
+                    "reason": reason,
+                    "tool_name": tool_name,
+                },
+            }
+            self.cieu_store.write_dict(cieu_record)
+        except Exception as e:
+            # CIEU write failure doesn't block main flow
+            _log.debug("Failed to write trigger skip to CIEU (trigger_id=%s): %s", trigger_id, e)
 
     def _write_restoration_to_cieu(
         self,
