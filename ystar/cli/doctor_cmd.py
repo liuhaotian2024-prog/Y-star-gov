@@ -175,6 +175,34 @@ def _doctor_layer1() -> Tuple[bool, int, int]:
     except Exception as e:
         warn(f"Interrupt Gate check failed: {e}")
 
+    # 4b. Circuit Breaker status
+    try:
+        from ystar.governance.intervention_engine import InterventionEngine
+        # Try to get the engine from the orchestrator if available
+        _cb_engine = None
+        try:
+            from ystar.adapters.orchestrator import get_orchestrator
+            _orch = get_orchestrator()
+            if _orch and hasattr(_orch, '_intervention_engine'):
+                _cb_engine = _orch._intervention_engine
+        except Exception:
+            pass
+
+        if _cb_engine is not None:
+            cb_armed = getattr(_cb_engine, '_circuit_breaker_armed', False)
+            cb_count = getattr(_cb_engine, '_circuit_breaker_violation_count', 0)
+            cb_threshold = getattr(_cb_engine, '_circuit_breaker_threshold', 20)
+
+            if cb_armed:
+                fail(f"Circuit Breaker — ARMED ({cb_count} violations)",
+                     "Pulse generation is STOPPED. Run 'ystar reset-breaker' to reset.")
+            else:
+                ok(f"Circuit Breaker — OK ({cb_count}/{cb_threshold} violations)")
+        else:
+            print(f"  [ ] Circuit Breaker — engine not loaded (check at runtime)")
+    except Exception as e:
+        warn(f"Circuit Breaker check failed: {e}")
+
     # 5. Check Unreachable Obligations
     print()
     print("  [5] Unreachable Obligations")

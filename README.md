@@ -360,6 +360,12 @@ ystar doctor
     Checks: session config, hook registration, CIEU database,
             AGENTS.md, hook self-test.
 
+ystar reset-breaker
+    Reset circuit breaker after manual intervention.
+    Circuit breaker arms after 20 violations to prevent
+    violation snowball. Use this command to resume pulse
+    generation after resolving the underlying issue.
+
 ystar check <events.jsonl>
     Run policy check on JSONL events file.
     Validates events against configured contract.

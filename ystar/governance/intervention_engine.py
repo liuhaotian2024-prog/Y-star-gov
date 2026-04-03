@@ -303,6 +303,14 @@ class InterventionEngine:
         # GAP 4 FIX: Optional causal engine for advisory recommendations
         self.causal_engine = causal_engine
 
+        # ── Circuit breaker state ──────────────────────────────────────
+        # P0: 防止 violation 雪球效应。
+        # 当累计 violation 数达到 threshold 时，自动停止产生新 pulse。
+        # Board 要求 threshold=20。
+        self._circuit_breaker_armed = False
+        self._circuit_breaker_violation_count = 0
+        self._circuit_breaker_threshold = 20  # Board 要求
+
     # ── 主入口 1：处理 omission violations → 产生干预脉冲 ────────────────────
 
     def process_violations(
@@ -315,6 +323,48 @@ class InterventionEngine:
         """
         result = InterventionResult()
         now = self._now()
+
+        # ── Circuit breaker: 计数并检查 ────────────────────────────────
+        self._circuit_breaker_violation_count += len(violations)
+
+        if (self._circuit_breaker_violation_count >= self._circuit_breaker_threshold
+                and not self._circuit_breaker_armed):
+            self._circuit_breaker_armed = True
+            if self.cieu_store:
+                try:
+                    self.cieu_store.write_dict({
+                        "event_id":     str(uuid.uuid4()),
+                        "seq_global":   int(now * 1_000_000),
+                        "created_at":   now,
+                        "session_id":   "circuit_breaker",
+                        "agent_id":     "intervention_engine",
+                        "event_type":   "circuit_breaker_armed",
+                        "decision":     "deny",
+                        "passed":       False,
+                        "violations":   [],
+                        "task_description": (
+                            f"Circuit breaker ARMED: "
+                            f"{self._circuit_breaker_violation_count} violations "
+                            f"reached threshold {self._circuit_breaker_threshold}"
+                        ),
+                        "evidence_grade": "governance",
+                    })
+                except Exception as e:
+                    _log.error("Failed to write circuit_breaker_armed to CIEU: %s", e)
+            _log.warning(
+                "Circuit breaker ARMED: %d violations reached threshold %d. "
+                "Pulse generation STOPPED.",
+                self._circuit_breaker_violation_count,
+                self._circuit_breaker_threshold,
+            )
+
+        if self._circuit_breaker_armed:
+            _log.debug(
+                "Circuit breaker armed, %d violations rejected (total: %d)",
+                len(violations),
+                self._circuit_breaker_violation_count,
+            )
+            return result  # 空 result — 不产生任何 pulse
 
         for v in violations:
             ob = self.omission_store.get_obligation(v.obligation_id)
@@ -537,6 +587,40 @@ class InterventionEngine:
                 self.pulse_store.update_pulse(pulse)
                 restored.append(pulse.actor_id)
         return restored
+
+    # ── Circuit breaker reset ────────────────────────────────────────────────
+
+    def reset_circuit_breaker(self) -> None:
+        """
+        Reset circuit breaker after manual intervention.
+        Called by 'ystar reset-breaker' CLI command.
+        """
+        old_count = self._circuit_breaker_violation_count
+        self._circuit_breaker_armed = False
+        self._circuit_breaker_violation_count = 0
+
+        if self.cieu_store:
+            try:
+                now = self._now()
+                self.cieu_store.write_dict({
+                    "event_id":     str(uuid.uuid4()),
+                    "seq_global":   int(now * 1_000_000),
+                    "created_at":   now,
+                    "session_id":   "circuit_breaker",
+                    "agent_id":     "intervention_engine",
+                    "event_type":   "circuit_breaker_reset",
+                    "decision":     "allow",
+                    "passed":       True,
+                    "violations":   [],
+                    "task_description": (
+                        f"Circuit breaker RESET (was at {old_count} violations)"
+                    ),
+                    "evidence_grade": "governance",
+                })
+            except Exception as e:
+                _log.error("Failed to write circuit_breaker_reset to CIEU: %s", e)
+
+        _log.info("Circuit breaker reset (was at %d violations)", old_count)
 
     # ── 汇总 ─────────────────────────────────────────────────────────────────
 

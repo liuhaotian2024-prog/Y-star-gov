@@ -7,6 +7,7 @@ Commands:
   ystar hook-install   Register PreToolUse hook
   ystar init           Generate policy.py contract template
   ystar audit          View causal audit report
+  ystar archive-cieu   Archive CIEU database to JSONL for permanent preservation
   ystar simulate       Simulate A/B effect evaluation
   ystar quality        Evaluate contract quality (coverage/FP rate)
   ystar check          Run policy check on JSONL events file
@@ -17,8 +18,10 @@ Commands:
   ystar trend          Show 7-day CIEU event trend (total/deny/rate)
   ystar demo           5-second wow moment -- governance in action
   ystar doctor         Diagnose environment integrity (--layer1, --layer2)
+  ystar reset-breaker  Reset circuit breaker after manual intervention
   ystar verify         Verify CIEU cryptographic integrity
   ystar seal           Seal CIEU session with Merkle root
+  ystar policy-builder Launch local HTML policy builder (port 7921)
   ystar domain         Discover and use domain packs (list|describe|init)
   ystar version        Show version
 
@@ -56,6 +59,36 @@ from ystar.cli.quality_cmd import (
     _print_rule_suggestions,
     _apply_suggestions,
 )
+
+
+def _cmd_reset_breaker() -> None:
+    """Reset the circuit breaker after manual intervention."""
+    try:
+        from ystar.adapters.orchestrator import get_orchestrator
+        orch = get_orchestrator()
+        if not orch or not hasattr(orch, '_intervention_engine') or not orch._intervention_engine:
+            print("  Intervention engine not initialized.")
+            print("  Circuit breaker is an in-memory state; it resets on restart.")
+            sys.exit(1)
+
+        engine = orch._intervention_engine
+        old_count = getattr(engine, '_circuit_breaker_violation_count', 0)
+        armed = getattr(engine, '_circuit_breaker_armed', False)
+
+        if not armed:
+            print(f"  Circuit breaker is not armed (violation count: {old_count}).")
+            print("  No action needed.")
+            return
+
+        engine.reset_circuit_breaker()
+        print(f"  Circuit breaker RESET (was at {old_count} violations).")
+        print("  Pulse generation resumed.")
+    except ImportError:
+        print("  Orchestrator not available. Circuit breaker resets on restart.")
+        sys.exit(1)
+    except Exception as e:
+        print(f"  Reset failed: {e}")
+        sys.exit(1)
 
 
 def _cmd_report(path: str = "") -> None:
@@ -522,12 +555,15 @@ def main() -> None:
     elif cmd == "archive-cieu":
         _cmd_archive_cieu(rest)
 
+    elif cmd == "reset-breaker":
+        _cmd_reset_breaker()
+
     else:
         print(f"Unknown command: {cmd}\n")
         print("Available commands: demo, setup, hook-install, doctor, verify, report,")
         print("                    seal, policy-builder, audit, check, check-impact,")
         print("                    init, version, simulate, quality, baseline, delta,")
-        print("                    trend, domain, archive-cieu")
+        print("                    trend, domain, archive-cieu, reset-breaker")
         sys.exit(1)
 
 
