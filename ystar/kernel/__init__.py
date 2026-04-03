@@ -13,6 +13,7 @@ from ystar.kernel.dimensions import (
     TemporalConstraint, TemporalContext,
     ExternalContext, AggregateConstraint,
 )
+from ystar.kernel.merge import merge_contracts
 
 __all__ = [
     "check", "CheckResult", "Violation",
@@ -21,4 +22,5 @@ __all__ = [
     "DelegationContract", "DelegationChain",
     "TemporalConstraint", "TemporalContext",
     "ExternalContext", "AggregateConstraint",
+    "merge_contracts",
 ]
