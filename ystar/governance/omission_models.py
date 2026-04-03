@@ -91,6 +91,7 @@ class OmissionType(str, Enum):
     PRE_COMMIT_TEST_REQUIRED      = "pre_commit_test_required"
     THINKING_DISCIPLINE_REQUIRED  = "thinking_discipline_required"
     CROSS_REVIEW_REQUIRED         = "cross_review_required"
+    GIT_PUSH_REQUIRED             = "git_push_required"
 
     # Test-only obligation types (used in test suite)
     TEST_OBLIGATION               = "test_obligation"

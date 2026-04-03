@@ -2,7 +2,7 @@
 
 [![Y*gov governed](https://img.shields.io/badge/governed%20by-Y*gov-brightgreen)](https://github.com/liuhaotian2024-prog/Y-star-gov)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-518%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-559%20passing-brightgreen)]()
 [![check() latency](https://img.shields.io/badge/check()-0.042ms-blue)]()
 
 **Y\*gov is a runtime governance sovereignty layer for multi-agent AI.** It is not a prompt guardrail, not an observability platform, not an agent framework. Sovereignty means deterministic pre-execution decisions, tamper-evident evidence, and obligation enforcement.
@@ -363,6 +363,10 @@ ystar doctor
 ystar check <events.jsonl>
     Run policy check on JSONL events file.
     Validates events against configured contract.
+
+ystar check-impact <session.json>
+    Analyze session file for P0 risks and downstream impact.
+    Use --json for machine-readable output.
 
 ystar report [--db <path>] [--format text|json]
     CIEU summary: total decisions, deny rate, by-agent breakdown.

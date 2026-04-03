@@ -576,3 +576,52 @@ def register_default_triggers(
         deduplicate=True,
         deny_closure_on_open=False,
     ))
+
+    # Trigger: Commit-Push Sync
+    registry.register(ObligationTrigger(
+        trigger_id="commit_push_sync",
+        trigger_tool_pattern=r"Bash",
+        trigger_param_filter={"command": ["git commit"]},
+        obligation_type=OmissionType.GIT_PUSH_REQUIRED,
+        description="After git commit, push to remote within deadline",
+        target_agent="caller",
+        deadline_seconds=300,  # 5 minutes
+        severity="SOFT",
+        grace_period_secs=60,  # 1 minute grace
+        hard_overdue_secs=600,  # 10 minutes before blocking
+        escalate_to_hard=True,
+        escalate_to_actor=escalation_target,
+        fulfillment_event="bash_exec",
+        verification_method="command_contains",
+        verification_target="git push",
+        verification_hint="git push command executed after commit",
+        enabled=True,
+        deduplicate=True,
+        deny_closure_on_open=False,
+    ))
+
+    # Trigger: Knowledge Gap Bootstrap
+    # Note: Disabled by default. This is redundant with research_knowledge_update
+    # for most use cases. Enable if you need separate tracking of "bootstrap" vs
+    # "ongoing research" knowledge updates.
+    registry.register(ObligationTrigger(
+        trigger_id="knowledge_gap_bootstrap",
+        trigger_tool_pattern=r"(WebSearch|WebFetch)",
+        trigger_param_filter=None,  # Trigger on web research
+        obligation_type=OmissionType.KNOWLEDGE_UPDATE_REQUIRED,
+        description="After detecting knowledge gap (web research), update knowledge/ directory",
+        target_agent="caller",
+        deadline_seconds=1800,  # 30 minutes
+        severity="SOFT",
+        grace_period_secs=180,  # 3 minute grace
+        hard_overdue_secs=3600,  # 1 hour before blocking
+        escalate_to_hard=True,
+        escalate_to_actor=escalation_target,
+        fulfillment_event="file_write",
+        verification_method="file_modified",
+        verification_target="knowledge/",
+        verification_hint="knowledge/ directory updated after research",
+        enabled=False,  # Disabled - redundant with research_knowledge_update
+        deduplicate=True,
+        deny_closure_on_open=False,
+    ))

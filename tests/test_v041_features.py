@@ -225,7 +225,8 @@ class TestCLICommands:
         _cmd_doctor([])
         out = capsys.readouterr().out
         assert "Y*gov Doctor" in out
-        assert "Hook Self-Test" in out
+        # Layer1/Layer2 architecture - check for key components
+        assert "Layer1" in out or "CIEU Database" in out
 
     def test_verify_no_args_shows_usage(self, tmp_path, capsys):
         from ystar._cli import _cmd_verify

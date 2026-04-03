@@ -798,28 +798,22 @@ class OmissionEngine:
 
         Validates against:
           1. Built-in OmissionType enum values
-          2. obligation_type from registered OmissionRules
 
         GracefulSkip: Returns False for unregistered types, triggering a warning
         rather than a violation cascade.
 
-        Note: We intentionally do NOT check trigger registry here, as that would
-        create circular validation. Triggers define NEW obligation types, and we
-        validate them against the authoritative sources (OmissionType enum + Rules).
+        Note: We intentionally do NOT check rule registry here, as that would
+        create circular validation. A rule that defines a new obligation type
+        would always pass validation, defeating the purpose of GracefulSkip.
+        Only OmissionType enum values are considered authoritative.
         """
-        # Check against OmissionType enum (authoritative source #1)
+        # Check against OmissionType enum (authoritative source)
         try:
             known_types = {ot.value for ot in OmissionType}
             if obligation_type in known_types:
                 return True
         except Exception:
             pass
-
-        # Check against registered rules (authoritative source #2)
-        all_rules = self.registry.all_enabled()
-        registered_types = {rule.obligation_type for rule in all_rules}
-        if obligation_type in registered_types:
-            return True
 
         # Unregistered type — return False to trigger GracefulSkip
         return False
