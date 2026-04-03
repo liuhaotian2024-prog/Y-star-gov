@@ -102,6 +102,7 @@ class ObligationTrigger:
     fulfillment_event:    str = "file_write"  # what event type fulfills this
     verification_method:  str = "file_modified"  # "file_modified" | "event_received" | "custom"
     verification_target:  Optional[str] = None  # e.g., "knowledge/{role}/" for file_modified
+    required_event_types: List[str] = field(default_factory=list)  # Event types that fulfill this obligation
 
     # Control
     deny_closure_on_open: bool = False  # block session close if unfulfilled
@@ -169,6 +170,7 @@ class ObligationTrigger:
             "fulfillment_event": self.fulfillment_event,
             "verification_method": self.verification_method,
             "verification_target": self.verification_target,
+            "required_event_types": self.required_event_types,
             "deny_closure_on_open": self.deny_closure_on_open,
         }
 
@@ -554,7 +556,7 @@ def register_default_triggers(
         deny_closure_on_open=False,
     ))
 
-    # Trigger: Cross-Review Critical File
+    # Trigger: Cross-Review Critical File (FIXED: proper verification_target)
     registry.register(ObligationTrigger(
         trigger_id="cross_review_critical_file",
         trigger_tool_pattern=r"(Write|Edit)",
@@ -568,10 +570,11 @@ def register_default_triggers(
         hard_overdue_secs=1800,  # 30 minutes before blocking
         escalate_to_hard=True,
         escalate_to_actor=escalation_target,
-        fulfillment_event="file_write",
-        verification_method="file_modified",
-        verification_target="reviews/",  # Explicit review directory for fulfillment
-        verification_hint="review comment added to reviews/ directory",
+        fulfillment_event="file_review_comment",  # Fixed: require review comment as evidence
+        verification_method="event_received",
+        verification_target="file_review_comment",  # Fixed: clear verification target
+        required_event_types=["file_review", "peer_review"],  # Fixed: accept review events
+        verification_hint="review comment event or peer_review event required",
         enabled=False,  # Disabled by default - requires review workflow setup
         deduplicate=True,
         deny_closure_on_open=False,
@@ -622,6 +625,397 @@ def register_default_triggers(
         verification_target="knowledge/",
         verification_hint="knowledge/ directory updated after research",
         enabled=False,  # Disabled - redundant with research_knowledge_update
+        deduplicate=True,
+        deny_closure_on_open=False,
+    ))
+
+    # ── 16 Event-Triggered Obligations (Board Directive 2026-04-03) ──────────
+
+    # 1. commit_push_sync (after git commit) - NOTE: Different from existing commit_push_sync
+    registry.register(ObligationTrigger(
+        trigger_id="commit_push_sync_30min",
+        trigger_tool_pattern=r"Bash",
+        trigger_param_filter={"command": ["git commit"]},
+        obligation_type=OmissionType.COMMIT_PUSH_REQUIRED,
+        description="After git commit, must push within 30min",
+        target_agent="caller",
+        deadline_seconds=1800,  # 30 min
+        severity="HIGH",
+        grace_period_secs=60,
+        hard_overdue_secs=1800,
+        escalate_to_hard=True,
+        escalate_to_actor=escalation_target,
+        fulfillment_event="bash_exec",
+        verification_method="event_received",
+        verification_target="git_push_event",
+        required_event_types=["bash_git_push"],
+        verification_hint="git push command executed",
+        enabled=True,
+        deduplicate=True,
+        deny_closure_on_open=False,
+    ))
+
+    # 2. distribution_verify_post_push (after git push)
+    registry.register(ObligationTrigger(
+        trigger_id="distribution_verify_post_push",
+        trigger_tool_pattern=r"Bash",
+        trigger_param_filter={"command": ["git push"]},
+        obligation_type=OmissionType.DISTRIBUTION_VERIFY_REQUIRED,
+        description="After git push, verify distribution within 5min",
+        target_agent="caller",
+        deadline_seconds=300,  # 5 min
+        severity="MEDIUM",
+        grace_period_secs=30,
+        hard_overdue_secs=600,
+        escalate_to_hard=True,
+        escalate_to_actor=escalation_target,
+        fulfillment_event="distribution_check",
+        verification_method="event_received",
+        verification_target="distribution_check",
+        required_event_types=["distribution_verified"],
+        verification_hint="distribution verification event received",
+        enabled=True,
+        deduplicate=True,
+        deny_closure_on_open=False,
+    ))
+
+    # 3. article_source_verification (CMO writes content)
+    registry.register(ObligationTrigger(
+        trigger_id="article_source_verification",
+        trigger_tool_pattern=r"(Write|Edit)",
+        trigger_param_filter={"file_path": ["content/", "marketing/"]},
+        obligation_type=OmissionType.SOURCE_VERIFICATION_REQUIRED,
+        description="Marketing content must cite sources within 5min",
+        target_agent="caller",
+        deadline_seconds=300,  # 5 min
+        severity="HIGH",
+        grace_period_secs=60,
+        hard_overdue_secs=600,
+        escalate_to_hard=True,
+        escalate_to_actor=escalation_target,
+        fulfillment_event="source_citation",
+        verification_method="event_received",
+        verification_target="source_citation",
+        required_event_types=["source_added"],
+        verification_hint="source citation event received",
+        enabled=True,
+        deduplicate=True,
+        deny_closure_on_open=False,
+    ))
+
+    # 4. p0_bug_response (after P0 bug detected)
+    # NOTE: Only triggers when cieu_decision=DENY AND severity=P0/CRITICAL
+    registry.register(ObligationTrigger(
+        trigger_id="p0_bug_response",
+        trigger_tool_pattern=r"^P0_BUG_DETECTED$",  # Only fire on P0 bug detection events
+        trigger_param_filter={"cieu_decision": "DENY", "severity": ["P0", "CRITICAL"]},
+        obligation_type=OmissionType.P0_BUG_FIX_REQUIRED,
+        description="P0 bug must be fixed within 1 hour",
+        target_agent="caller",
+        deadline_seconds=3600,  # 1 hour
+        severity="CRITICAL",
+        grace_period_secs=0,
+        hard_overdue_secs=3600,
+        escalate_to_hard=True,
+        escalate_to_actor=escalation_target,
+        fulfillment_event="bug_fix",
+        verification_method="event_received",
+        verification_target="p0_fix",
+        required_event_types=["bug_fixed", "p0_resolved"],
+        verification_hint="P0 bug fix event received",
+        enabled=False,  # Disabled - requires event-driven trigger infrastructure
+        deduplicate=True,
+        deny_closure_on_open=True,
+    ))
+
+    # 5. p1_bug_response (after P1 bug detected)
+    # NOTE: Only triggers when cieu_decision=DENY AND severity=P1/HIGH
+    registry.register(ObligationTrigger(
+        trigger_id="p1_bug_response",
+        trigger_tool_pattern=r"^P1_BUG_DETECTED$",  # Only fire on P1 bug detection events
+        trigger_param_filter={"cieu_decision": "DENY", "severity": ["P1", "HIGH"]},
+        obligation_type=OmissionType.P1_BUG_FIX_REQUIRED,
+        description="P1 bug must be fixed within 24 hours",
+        target_agent="caller",
+        deadline_seconds=86400,  # 24 hours
+        severity="HIGH",
+        grace_period_secs=3600,
+        hard_overdue_secs=86400,
+        escalate_to_hard=True,
+        escalate_to_actor=escalation_target,
+        fulfillment_event="bug_fix",
+        verification_method="event_received",
+        verification_target="p1_fix",
+        required_event_types=["bug_fixed", "p1_resolved"],
+        verification_hint="P1 bug fix event received",
+        enabled=False,  # Disabled - requires event-driven trigger infrastructure
+        deduplicate=True,
+        deny_closure_on_open=False,
+    ))
+
+    # 6. escalation_response (after escalation event)
+    # NOTE: Disabled by default - should be triggered by escalation events, not tool calls
+    registry.register(ObligationTrigger(
+        trigger_id="escalation_response",
+        trigger_tool_pattern=r"^ESCALATION_EVENT$",  # Only fire on actual escalation events
+        trigger_param_filter=None,
+        obligation_type=OmissionType.ESCALATION_RESPONSE_REQUIRED,
+        description="Escalation must be responded to within 10min",
+        target_agent=escalation_target,
+        deadline_seconds=600,  # 10 min
+        severity="HIGH",
+        grace_period_secs=60,
+        hard_overdue_secs=1800,
+        escalate_to_hard=True,
+        escalate_to_actor="board",
+        fulfillment_event="escalation_response",
+        verification_method="event_received",
+        verification_target="escalation_response",
+        required_event_types=["escalation_acknowledged", "escalation_resolved"],
+        verification_hint="escalation response event received",
+        enabled=False,  # Disabled - requires event-driven trigger infrastructure
+        deduplicate=True,
+        deny_closure_on_open=False,
+    ))
+
+    # 7. security_incident_response
+    # NOTE: Only triggers when security_alert param is explicitly set
+    registry.register(ObligationTrigger(
+        trigger_id="security_incident_response",
+        trigger_tool_pattern=r"^SECURITY_ALERT$",  # Only fire on security alert events
+        trigger_param_filter={"security_alert": ["true", "1", True]},
+        obligation_type=OmissionType.SECURITY_INCIDENT_RESPONSE_REQUIRED,
+        description="Security incident must be responded to within 30min",
+        target_agent=escalation_target,
+        deadline_seconds=1800,  # 30 min
+        severity="CRITICAL",
+        grace_period_secs=0,
+        hard_overdue_secs=1800,
+        escalate_to_hard=True,
+        escalate_to_actor="board",
+        fulfillment_event="security_response",
+        verification_method="event_received",
+        verification_target="security_response",
+        required_event_types=["security_incident_acknowledged", "security_incident_resolved"],
+        verification_hint="security response event received",
+        enabled=False,  # Disabled - requires event-driven trigger infrastructure
+        deduplicate=True,
+        deny_closure_on_open=True,
+    ))
+
+    # 8. directive_decomposition (CEO issues directive)
+    registry.register(ObligationTrigger(
+        trigger_id="directive_decomposition",
+        trigger_tool_pattern=r"(Write|Edit)",
+        trigger_param_filter={"file_path": [".claude/tasks/"]},
+        obligation_type=OmissionType.DIRECTIVE_DECOMPOSITION_REQUIRED,
+        description="CEO directive must be decomposed into tasks within 15min",
+        target_agent="caller",
+        deadline_seconds=900,  # 15 min
+        severity="MEDIUM",
+        grace_period_secs=120,
+        hard_overdue_secs=1800,
+        escalate_to_hard=True,
+        escalate_to_actor=escalation_target,
+        fulfillment_event="task_created",
+        verification_method="event_received",
+        verification_target="task_decomposition",
+        required_event_types=["task_created", "subtask_created"],
+        verification_hint="task decomposition event received",
+        enabled=True,
+        deduplicate=True,
+        deny_closure_on_open=False,
+    ))
+
+    # 9. test_after_code_change (after src/ or ystar/ edit)
+    registry.register(ObligationTrigger(
+        trigger_id="test_after_code_change",
+        trigger_tool_pattern=r"(Write|Edit)",
+        trigger_param_filter={"file_path": ["src/", "ystar/"]},
+        obligation_type=OmissionType.PRE_COMMIT_TEST_REQUIRED,
+        description="After code change, run tests within 5min",
+        target_agent="caller",
+        deadline_seconds=300,  # 5 min
+        severity="HIGH",
+        grace_period_secs=30,
+        hard_overdue_secs=600,
+        escalate_to_hard=True,
+        escalate_to_actor=escalation_target,
+        fulfillment_event="test_run",
+        verification_method="event_received",
+        verification_target="pytest_run",
+        required_event_types=["test_executed", "pytest_run"],
+        verification_hint="pytest execution event received",
+        enabled=True,
+        deduplicate=True,
+        deny_closure_on_open=False,
+    ))
+
+    # 10. knowledge_sync_after_research (after WebSearch)
+    registry.register(ObligationTrigger(
+        trigger_id="knowledge_sync_after_research",
+        trigger_tool_pattern=r"(WebSearch|WebFetch)",
+        trigger_param_filter=None,
+        obligation_type=OmissionType.KNOWLEDGE_UPDATE_REQUIRED,
+        description="After web research, sync to knowledge/ within 10min",
+        target_agent="caller",
+        deadline_seconds=600,  # 10 min
+        severity="MEDIUM",
+        grace_period_secs=120,
+        hard_overdue_secs=1200,
+        escalate_to_hard=True,
+        escalate_to_actor=escalation_target,
+        fulfillment_event="knowledge_update",
+        verification_method="event_received",
+        verification_target="knowledge_sync",
+        required_event_types=["knowledge_updated", "file_write_knowledge"],
+        verification_hint="knowledge update event received",
+        enabled=True,
+        deduplicate=True,
+        deny_closure_on_open=False,
+    ))
+
+    # 11. session_report_before_close
+    registry.register(ObligationTrigger(
+        trigger_id="session_report_before_close",
+        trigger_tool_pattern=r"(session_end|TaskComplete)",
+        trigger_param_filter=None,
+        obligation_type=OmissionType.REQUIRED_RESULT_PUBLICATION,
+        description="Before session close, publish work report",
+        target_agent="caller",
+        deadline_seconds=300,  # 5 min
+        severity="HIGH",
+        grace_period_secs=60,
+        hard_overdue_secs=600,
+        escalate_to_hard=True,
+        escalate_to_actor=escalation_target,
+        fulfillment_event="report_published",
+        verification_method="event_received",
+        verification_target="work_report",
+        required_event_types=["report_written", "work_report_published"],
+        verification_hint="work report published event received",
+        enabled=True,
+        deduplicate=True,
+        deny_closure_on_open=True,
+    ))
+
+    # 12. handoff_documentation
+    registry.register(ObligationTrigger(
+        trigger_id="handoff_documentation",
+        trigger_tool_pattern=r"(TaskComplete|task_closed)",
+        trigger_param_filter=None,
+        obligation_type=OmissionType.REQUIRED_RESULT_PUBLICATION,
+        description="After task completion, update session_handoff.md",
+        target_agent="caller",
+        deadline_seconds=300,  # 5 min
+        severity="MEDIUM",
+        grace_period_secs=60,
+        hard_overdue_secs=600,
+        escalate_to_hard=True,
+        escalate_to_actor=escalation_target,
+        fulfillment_event="handoff_updated",
+        verification_method="event_received",
+        verification_target="handoff_update",
+        required_event_types=["handoff_documented", "session_handoff_updated"],
+        verification_hint="session handoff update event received",
+        enabled=True,
+        deduplicate=True,
+        deny_closure_on_open=False,
+    ))
+
+    # 13. blocker_escalation_immediate
+    # NOTE: Only triggers when status param is explicitly "blocked"
+    registry.register(ObligationTrigger(
+        trigger_id="blocker_escalation_immediate",
+        trigger_tool_pattern=r"^BLOCKER_DETECTED$",  # Only fire on blocker detection events
+        trigger_param_filter={"status": ["blocked", "BLOCKED"]},
+        obligation_type=OmissionType.REQUIRED_ESCALATION,
+        description="When blocked, escalate immediately (1min)",
+        target_agent="caller",
+        deadline_seconds=60,  # 1 min
+        severity="CRITICAL",
+        grace_period_secs=0,
+        hard_overdue_secs=60,
+        escalate_to_hard=True,
+        escalate_to_actor=escalation_target,
+        fulfillment_event="escalation",
+        verification_method="event_received",
+        verification_target="blocker_escalated",
+        required_event_types=["escalation_event", "blocker_reported"],
+        verification_hint="escalation event received",
+        enabled=False,  # Disabled - requires event-driven trigger infrastructure
+        deduplicate=True,
+        deny_closure_on_open=False,
+    ))
+
+    # 14. cieu_violation_root_cause
+    registry.register(ObligationTrigger(
+        trigger_id="cieu_violation_root_cause",
+        trigger_tool_pattern=r".*",
+        trigger_param_filter={"cieu_decision": "DENY"},
+        obligation_type=OmissionType.CASE_DOCUMENTATION_REQUIRED,
+        description="After CIEU violation, document root cause within 30min",
+        target_agent="caller",
+        deadline_seconds=1800,  # 30 min
+        severity="HIGH",
+        grace_period_secs=300,
+        hard_overdue_secs=3600,
+        escalate_to_hard=True,
+        escalate_to_actor=escalation_target,
+        fulfillment_event="root_cause_doc",
+        verification_method="event_received",
+        verification_target="root_cause_documented",
+        required_event_types=["case_documented", "root_cause_analysis_complete"],
+        verification_hint="root cause documentation event received",
+        enabled=True,
+        deduplicate=True,
+        deny_closure_on_open=False,
+    ))
+
+    # 15. cross_agent_review_request
+    registry.register(ObligationTrigger(
+        trigger_id="cross_agent_review_request",
+        trigger_tool_pattern=r"(Write|Edit)",
+        trigger_param_filter={"file_path": ["AGENTS.md", "CLAUDE.md"]},
+        obligation_type=OmissionType.CROSS_REVIEW_REQUIRED,
+        description="Constitutional changes require cross-agent review",
+        target_agent=escalation_target,
+        deadline_seconds=600,  # 10 min
+        severity="CRITICAL",
+        grace_period_secs=0,
+        hard_overdue_secs=600,
+        escalate_to_hard=True,
+        escalate_to_actor="board",
+        fulfillment_event="constitutional_review",
+        verification_method="event_received",
+        verification_target="constitutional_review_complete",
+        required_event_types=["constitutional_review", "cross_review_complete"],
+        verification_hint="constitutional review event received",
+        enabled=True,
+        deduplicate=True,
+        deny_closure_on_open=True,
+    ))
+
+    # 16. daily_standup_check
+    registry.register(ObligationTrigger(
+        trigger_id="daily_standup_check",
+        trigger_tool_pattern=r"(session_start|boot_complete)",
+        trigger_param_filter=None,
+        obligation_type=OmissionType.REQUIRED_STATUS_UPDATE,
+        description="Daily session start requires status check-in",
+        target_agent="caller",
+        deadline_seconds=600,  # 10 min
+        severity="LOW",
+        grace_period_secs=300,
+        hard_overdue_secs=1800,
+        escalate_to_hard=False,
+        escalate_to_actor=escalation_target,
+        fulfillment_event="status_update",
+        verification_method="event_received",
+        verification_target="daily_checkin",
+        required_event_types=["status_updated", "daily_standup_complete"],
+        verification_hint="daily status update event received",
+        enabled=False,  # Disabled by default - enable if daily standups required
         deduplicate=True,
         deny_closure_on_open=False,
     ))

@@ -93,6 +93,16 @@ class OmissionType(str, Enum):
     CROSS_REVIEW_REQUIRED         = "cross_review_required"
     GIT_PUSH_REQUIRED             = "git_push_required"
 
+    # Event-triggered obligations (Board directive 2026-04-03)
+    COMMIT_PUSH_REQUIRED          = "commit_push_required"
+    DISTRIBUTION_VERIFY_REQUIRED  = "distribution_verify_required"
+    SOURCE_VERIFICATION_REQUIRED  = "source_verification_required"
+    P0_BUG_FIX_REQUIRED           = "p0_bug_fix_required"
+    P1_BUG_FIX_REQUIRED           = "p1_bug_fix_required"
+    ESCALATION_RESPONSE_REQUIRED  = "escalation_response_required"
+    SECURITY_INCIDENT_RESPONSE_REQUIRED = "security_incident_response_required"
+    DIRECTIVE_DECOMPOSITION_REQUIRED = "directive_decomposition_required"
+
     # Test-only obligation types (used in test suite)
     TEST_OBLIGATION               = "test_obligation"
     OBLIGATION1                   = "obligation1"
