@@ -534,10 +534,10 @@ def register_default_triggers(
     # Trigger: Thinking Discipline Check
     registry.register(ObligationTrigger(
         trigger_id="thinking_discipline_check",
-        trigger_tool_pattern=r".*",  # Any tool completion
+        trigger_tool_pattern=r"(Write|Edit)",  # Only file modifications, not every tool call
         trigger_param_filter=None,
         obligation_type="thinking_discipline_required",
-        description="After task completion, apply 4-question thinking DNA",
+        description="After significant work (file write/edit), apply 4-question thinking DNA",
         target_agent="caller",
         deadline_seconds=300,  # 5 minutes
         severity="SOFT",
@@ -558,7 +558,7 @@ def register_default_triggers(
     registry.register(ObligationTrigger(
         trigger_id="cross_review_critical_file",
         trigger_tool_pattern=r"(Write|Edit)",
-        trigger_param_filter=None,  # Will check file path pattern
+        trigger_param_filter={"file_path": ["src/", "ystar/"]},  # Only trigger for core code changes
         obligation_type="cross_review_required",
         description="Critical file changes require cross-agent review",
         target_agent="*",  # Any other agent can review
@@ -570,9 +570,9 @@ def register_default_triggers(
         escalate_to_actor=escalation_target,
         fulfillment_event="file_write",
         verification_method="file_modified",
-        verification_target="",  # Checked against trigger_path_patterns
-        verification_hint="review comment added or file re-checked",
-        enabled=True,
+        verification_target="reviews/",  # Explicit review directory for fulfillment
+        verification_hint="review comment added to reviews/ directory",
+        enabled=False,  # Disabled by default - requires review workflow setup
         deduplicate=True,
         deny_closure_on_open=False,
     ))
