@@ -70,7 +70,7 @@ python_functions = ["test_*"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ystar*"]
-exclude = ["tests*", "*.egg-info", "scripts*", "__pycache__"]
+exclude = ["tests*", "*.egg-info", "*.pyc", "__pycache__"]
 
 [tool.setuptools.package-data]
 "ystar" = ["py.typed"]
