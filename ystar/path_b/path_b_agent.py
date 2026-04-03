@@ -20,7 +20,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, List, Tuple, Any, Dict, Callable
-import hashlib, time, uuid, os
+import hashlib, logging, time, uuid, os
+
+_log = logging.getLogger(__name__)
 
 from ystar.kernel.dimensions import IntentContract
 from ystar.kernel.engine import check, CheckResult
@@ -576,8 +578,34 @@ class PathBAgent:
         """
         Record an external agent observation.
         This is the input to Path B's governance cycle.
+
+        Writes to CIEU for audit trail (critical for governance transparency).
         """
         self._observation_history.append(observation)
+
+        # Write to CIEU for audit trail
+        if self.cieu_store is not None:
+            try:
+                self.cieu_store.write_dict({
+                    "event_type": "external_observation",
+                    "agent_id": observation.agent_id,
+                    "session_id": observation.session_id,
+                    "action_type": observation.action_type,
+                    "task_description": observation.params.get("tool") if observation.params else None,
+                    "decision": "deny" if observation.has_violation() else "allow",
+                    "passed": not observation.has_violation(),
+                    "violations": [
+                        v.to_dict() if hasattr(v, "to_dict") else {"reason": str(v)}
+                        for v in observation.violations
+                    ] if observation.violations else [],
+                    "drift_detected": observation.has_violation(),
+                    "observation_id": observation.observation_id,
+                    "timestamp": observation.timestamp,
+                    "evidence_grade": "governance",
+                })
+            except Exception as exc:
+                # Non-critical: observation is still in memory even if CIEU write fails
+                _log.debug("Failed to write external_observation to CIEU: %s", exc)
 
         # Initialize budget for new agents
         if observation.agent_id not in self._budgets:

@@ -822,3 +822,96 @@ def test_orchestrator_run_path_b_cycle_error_is_nonfatal():
     assert mock_cieu.write_dict.called
     call_args = mock_cieu.write_dict.call_args[0][0]
     assert "path_b_cycle_error" in call_args["event_type"]
+
+
+# ── Test: observe() writes to CIEU (audit blind spot fix) ────────────────────
+
+def test_observe_writes_to_cieu():
+    """PathBAgent.observe() must write to CIEU for audit trail."""
+    import tempfile
+    import os
+    from ystar.governance.cieu_store import CIEUStore
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cieu_db = os.path.join(tmpdir, "test_observe.db")
+        cieu = CIEUStore(cieu_db)
+
+        agent = PathBAgent(cieu_store=cieu)
+
+        obs = ExternalObservation(
+            agent_id="test-agent",
+            session_id="test-session",
+            action_type="tool_call",
+            params={"tool": "Read", "path": "/etc/passwd"},
+            violations=[
+                Violation(
+                    dimension="deny",
+                    field="path",
+                    message="Attempted to access /etc/passwd",
+                    actual="/etc/passwd",
+                    constraint="deny=['/etc']",
+                    severity=0.9,
+                )
+            ],
+        )
+
+        agent.observe(obs)
+
+        # Verify CIEU has the external_observation record
+        events = cieu.query(event_type="external_observation", limit=10)
+        assert len(events) > 0, "external_observation not written to CIEU"
+
+        event = events[0]
+        assert event.agent_id == "test-agent"
+        assert event.session_id == "test-session"
+        assert event.event_type == "external_observation"
+        assert event.decision == "deny"  # has violation -> deny
+
+
+def test_observe_writes_compliant_to_cieu():
+    """PathBAgent.observe() writes allow events for compliant observations."""
+    import tempfile
+    import os
+    from ystar.governance.cieu_store import CIEUStore
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cieu_db = os.path.join(tmpdir, "test_observe_ok.db")
+        cieu = CIEUStore(cieu_db)
+
+        agent = PathBAgent(cieu_store=cieu)
+
+        obs = ExternalObservation(
+            agent_id="good-agent",
+            session_id="session-1",
+            action_type="file_read",
+            params={"tool": "Read", "path": "/home/user/file.txt"},
+            violations=[],
+        )
+
+        agent.observe(obs)
+
+        events = cieu.query(event_type="external_observation", limit=10)
+        assert len(events) == 1, "compliant observation not written to CIEU"
+        assert events[0].decision == "allow"
+        assert events[0].agent_id == "good-agent"
+
+
+def test_observe_cieu_failure_nonfatal():
+    """If CIEU write fails, observe() still records in memory."""
+    mock_cieu = Mock()
+    mock_cieu.write_dict = Mock(side_effect=RuntimeError("DB locked"))
+
+    agent = PathBAgent(cieu_store=mock_cieu)
+
+    obs = ExternalObservation(
+        agent_id="agent-x",
+        action_type="tool_call",
+        violations=[],
+    )
+
+    # Should NOT raise
+    agent.observe(obs)
+
+    # Observation is still in memory
+    assert len(agent._observation_history) == 1
+    assert agent._observation_history[0].agent_id == "agent-x"
