@@ -45,6 +45,7 @@ from ystar.cli.quality_cmd import (
 )
 from ystar.cli.domain_cmd import main_domain_cmd
 from ystar.cli.impact_cmd import _cmd_check_impact
+from ystar.cli.archive_cmd import _cmd_archive_cieu
 
 # Backward compatibility: these were previously defined inline
 from ystar.cli.init_cmd import (
@@ -518,12 +519,15 @@ def main() -> None:
     elif cmd == "check-impact":
         _cmd_check_impact(rest)
 
+    elif cmd == "archive-cieu":
+        _cmd_archive_cieu(rest)
+
     else:
         print(f"Unknown command: {cmd}\n")
         print("Available commands: demo, setup, hook-install, doctor, verify, report,")
         print("                    seal, policy-builder, audit, check, check-impact,")
         print("                    init, version, simulate, quality, baseline, delta,")
-        print("                    trend, domain")
+        print("                    trend, domain, archive-cieu")
         sys.exit(1)
 
 

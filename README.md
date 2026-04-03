@@ -398,6 +398,19 @@ ystar trend
     Show 7-day CIEU event trend with daily breakdown.
     Displays total events, deny count, deny rate, and trend indicators (↑↓→).
 
+ystar archive-cieu [--experiment <name>] [--output-dir <path>] [--db-path <path>]
+    Archive CIEU database to JSONL format for permanent preservation.
+    
+    Default: Creates daily archive at data/cieu_archive/YYYY-MM-DD.jsonl
+    With --experiment: Creates archive at data/experiments/<name>_cieu.jsonl
+    
+    Archive files use JSONL format (one JSON object per line) for easy 
+    parsing and version control.
+    
+    Rule: Always run 'ystar archive-cieu' before clearing CIEU database.
+    
+    Doctor check warns if archive is >7 days old.
+
 ystar domain [list|describe|init]
     Discover and use domain packs.
     list: show available domain packs

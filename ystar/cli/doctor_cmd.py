@@ -220,6 +220,29 @@ def _doctor_layer1() -> Tuple[bool, int, int]:
     else:
         warn("Engine Config — No session config found")
 
+    # 7. Check Archive Freshness
+    print()
+    print("  [7] Archive Freshness")
+    archive_meta = pathlib.Path('data/cieu_archive/.archive_metadata.json')
+    if archive_meta.exists():
+        try:
+            with open(archive_meta, encoding='utf-8') as f:
+                meta = json.load(f)
+            from datetime import datetime as dt
+            last_archive = dt.fromisoformat(meta['last_archive'])
+            days_since = (dt.now() - last_archive).days
+
+            if days_since > 7:
+                fail(f"Archive Freshness — {days_since} days since last archive (>7 days)",
+                     "Run 'ystar archive-cieu' to preserve CIEU data")
+            else:
+                ok(f"Archive Freshness — Last archived {days_since} days ago")
+        except Exception as e:
+            warn(f"Archive Freshness — Error reading metadata: {e}")
+    else:
+        fail("Archive Freshness — No archive found",
+             "Run 'ystar archive-cieu' to create first archive")
+
     # Layer1 summary
     all_ok = (fail_count == 0)
     return all_ok, ok_count, fail_count
