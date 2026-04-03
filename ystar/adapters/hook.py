@@ -34,6 +34,7 @@ P1-5 拆分完成（1208行→4文件）：
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import time
 import uuid
@@ -172,8 +173,9 @@ def _result_to_response(result: PolicyResult) -> Dict[str, Any]:
 
 def check_hook(
     hook_payload: Dict[str, Any],
-    policy: Policy,
+    policy: Optional[Policy] = None,
     agent_id: Optional[str] = None,
+    agents_md_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     处理一个 OpenClaw PreToolUse hook，返回 hook 响应。
@@ -185,10 +187,14 @@ def check_hook(
     无 .ystar_session.json：
       → Policy.check()：规则检查 + 基础 CIEU 写入
 
+    Task 2: Policy compilation is now cached internally. If policy is None,
+    check_hook will build it from AGENTS.md with session-level caching.
+
     Args:
-        hook_payload: OpenClaw 发来的原始 hook dict
-        policy:       Policy 对象（从 Policy.from_agents_md() 获得）
-        agent_id:     覆盖 payload 里的 agent_id（可选）
+        hook_payload:   OpenClaw 发来的原始 hook dict
+        policy:         Policy 对象（可选，为 None 时自动从 AGENTS.md 构建）
+        agent_id:       覆盖 payload 里的 agent_id（可选）
+        agents_md_path: AGENTS.md 路径（可选，默认为 cwd/AGENTS.md）
 
     Returns:
         {} 表示允许，{"action":"block",...} 表示拒绝
@@ -196,12 +202,20 @@ def check_hook(
     tool_name  = hook_payload.get("tool_name", "")
     tool_input = hook_payload.get("tool_input", {})
 
+    # ── Task 2: Build Policy with caching if not provided ──────────────────
+    if policy is None:
+        policy = _get_or_build_policy(agents_md_path)
+
+    if policy is None:
+        # No AGENTS.md found, create empty policy
+        policy = Policy({})
+
     # ── P0-2: 检测 agent 身份 ──────────────────────────────────────
     who = agent_id or _detect_agent_id(hook_payload)
     session_id_payload = hook_payload.get("session_id", "")
 
     # ── Directive #024: CIEU Boot Record（首次调用时写入）──────────
-    session_cfg_boot = _load_session_config()
+    session_cfg_boot = _load_session_config_cached()
     cieu_db_boot = session_cfg_boot.get("cieu_db", ".ystar_cieu.db") if session_cfg_boot else ".ystar_cieu.db"
     _write_boot_record(who, session_id_payload or "unknown", cieu_db_boot)
 
@@ -219,7 +233,7 @@ def check_hook(
     immutable_deny = _check_immutable_paths(tool_name, params_early)
     if immutable_deny is not None:
         cieu_db = ".ystar_cieu.db"
-        session_cfg_imm = _load_session_config()
+        session_cfg_imm = _load_session_config_cached()
         if session_cfg_imm:
             cieu_db = session_cfg_imm.get("cieu_db", cieu_db)
         contract = policy._rules.get(who)
@@ -233,7 +247,7 @@ def check_hook(
     tool_deny = _check_tool_restriction(who, tool_name)
     if tool_deny is not None:
         cieu_db = ".ystar_cieu.db"
-        session_cfg_td = _load_session_config()
+        session_cfg_td = _load_session_config_cached()
         if session_cfg_td:
             cieu_db = session_cfg_td.get("cieu_db", cieu_db)
         contract = policy._rules.get(who)
@@ -248,7 +262,7 @@ def check_hook(
     if write_deny is not None:
         # 写入 CIEU 记录（deny）
         cieu_db = ".ystar_cieu.db"
-        session_cfg_early = _load_session_config()
+        session_cfg_early = _load_session_config_cached()
         if session_cfg_early:
             cieu_db = session_cfg_early.get("cieu_db", cieu_db)
         contract = policy._rules.get(who)
@@ -272,7 +286,7 @@ def check_hook(
                 )
                 if immutable_result is not None:
                     cieu_db = ".ystar_cieu.db"
-                    session_cfg_bash = _load_session_config()
+                    session_cfg_bash = _load_session_config_cached()
                     if session_cfg_bash:
                         cieu_db = session_cfg_bash.get("cieu_db", cieu_db)
                     contract = policy._rules.get(who)
@@ -289,7 +303,7 @@ def check_hook(
                 )
                 if boundary_result is not None:
                     cieu_db = ".ystar_cieu.db"
-                    session_cfg_bash2 = _load_session_config()
+                    session_cfg_bash2 = _load_session_config_cached()
                     if session_cfg_bash2:
                         cieu_db = session_cfg_bash2.get("cieu_db", cieu_db)
                     contract = policy._rules.get(who)
@@ -300,7 +314,7 @@ def check_hook(
                     return _result_to_response(boundary_result)
 
     # ── 尝试完整治理路径（有 session 配置时自动升级）────────────────
-    session_cfg = _load_session_config()
+    session_cfg = _load_session_config_cached()
     if session_cfg:
         try:
             response = _check_hook_full(
@@ -470,8 +484,101 @@ def _check_hook_full(
     return {}
 
 
+# ── Task 2: Session-level Caching ──────────────────────────────────────────
+# Policy cache: session_id → (Policy, mtime of AGENTS.md)
+# Avoids recompiling Policy from AGENTS.md on every hook call
+_policy_cache: Dict[str, tuple[Policy, float]] = {}
+
+# Session config cache: config_path → (config_dict, mtime)
+# Avoids re-parsing .ystar_session.json on every hook call
+_session_cache: Dict[str, tuple[Dict[str, Any], float]] = {}
+
 # 缓存：避免每次 hook 都重建 omission adapter
 _omission_cache_key: Optional[str] = None
+
+
+def _load_session_config_cached() -> Optional[Dict[str, Any]]:
+    """
+    Load session config with mtime-based caching.
+
+    Task 2: Add session level cache to avoid re-parsing .ystar_session.json
+    on every hook call in the same session.
+    """
+    from pathlib import Path
+
+    # Find .ystar_session.json in cwd or home
+    dirs = [os.getcwd(), str(Path.home())]
+    cfg_path = None
+    for d in dirs:
+        p = Path(d) / ".ystar_session.json"
+        if p.exists():
+            cfg_path = str(p)
+            break
+
+    if not cfg_path:
+        return None
+
+    # Check cache
+    try:
+        current_mtime = os.path.getmtime(cfg_path)
+        if cfg_path in _session_cache:
+            cached_cfg, cached_mtime = _session_cache[cfg_path]
+            if current_mtime == cached_mtime:
+                return cached_cfg  # Return cached config
+
+        # Load and cache (call the original uncached function)
+        cfg = _load_session_config()
+        if cfg:
+            _session_cache[cfg_path] = (cfg, current_mtime)
+        return cfg
+    except Exception:
+        # Fall back to uncached load
+        return _load_session_config()
+
+
+def _get_or_build_policy(agents_md_path: Optional[str] = None) -> Optional[Policy]:
+    """
+    Get Policy from cache or build from AGENTS.md with mtime-based caching.
+
+    Task 2: Session-level Policy cache to avoid recompiling on every hook call.
+
+    Cache key: agents_md_path (normalized absolute path)
+    Cache invalidation: when AGENTS.md mtime changes
+
+    Returns:
+        Policy object, or None if AGENTS.md doesn't exist
+    """
+    from pathlib import Path
+
+    # Determine AGENTS.md path
+    if agents_md_path is None:
+        agents_md_path = os.path.join(os.getcwd(), "AGENTS.md")
+
+    # Normalize to absolute path for consistent cache key
+    agents_md_path = os.path.abspath(agents_md_path)
+
+    # Check if file exists
+    if not os.path.exists(agents_md_path):
+        return None
+
+    # Check cache
+    try:
+        current_mtime = os.path.getmtime(agents_md_path)
+        if agents_md_path in _policy_cache:
+            cached_policy, cached_mtime = _policy_cache[agents_md_path]
+            if current_mtime == cached_mtime:
+                _log.debug("Policy cache HIT for %s", agents_md_path)
+                return cached_policy
+
+        # Cache miss or stale — rebuild Policy
+        _log.debug("Policy cache MISS for %s, rebuilding", agents_md_path)
+        policy = Policy.from_agents_md_multi(agents_md_path)
+        _policy_cache[agents_md_path] = (policy, current_mtime)
+        return policy
+
+    except Exception as exc:
+        _log.warning("Failed to build Policy from %s: %s", agents_md_path, exc)
+        return None
 
 
 def _filter_obligations_by_agent(
@@ -517,6 +624,9 @@ def _setup_omission_from_contract(
     v0.49: 支持 obligation_agent_scope — 只注册属于当前 agent 的义务。
     缓存 key = session_id + agent_id，不同 agent 可以有不同的义务集。
 
+    P0 Performance: 优化后只在首次调用时加载，后续调用直接返回。
+    这避免了每次 hook 调用都重新注册 60 条 obligation 规则。
+
     omission 违规事件同时写入 CIEUStore，形成统一的因果日志。
     """
     global _omission_cache_key
@@ -524,8 +634,10 @@ def _setup_omission_from_contract(
     session_id = session_cfg.get("session_id", "")
     cache_key = f"{session_id}:{agent_id}"
     if cache_key and cache_key == _omission_cache_key:
+        _log.debug("Omission setup cache hit for %s", cache_key)
         return   # 同一 session + agent，已经配置过
 
+    _log.debug("Omission setup cache miss, initializing for %s", cache_key)
     try:
         from ystar.domains.openclaw.adapter import configure_omission_governance
         from ystar.governance.omission_rules import reset_registry
@@ -821,7 +933,7 @@ def _process_obligation_triggers(
         for trigger in triggers:
             # Generic path pattern matching for Write/Edit triggers
             # Check if this trigger requires path pattern matching
-            scfg = _load_session_config()
+            scfg = _load_session_config_cached()
             trigger_patterns = None
             if scfg:
                 trigger_patterns = scfg.get("trigger_path_patterns", {}).get(

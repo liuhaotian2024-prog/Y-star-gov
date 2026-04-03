@@ -673,12 +673,25 @@ def test_governance_pipeline_e2e():
         assert obs is not None, "Observation should be created"
 
         # Step 6: Simulate time passing to make obligation overdue
-        # Update obligations to be overdue
+        # Update obligations to be overdue (account for grace_period_secs)
         for ob in store.list_obligations():
-            ob.due_at = time.time() - 10  # 10 seconds overdue
+            # Set due_at far enough in the past to exceed effective_due_at = due_at + grace_period_secs
+            ob.due_at = time.time() - 1000  # 1000 seconds overdue (exceeds any grace period)
+            ob.grace_period_secs = 0  # Disable grace period for test clarity
             store.update_obligation(ob)
         # Run scan to detect violations
-        engine.scan()
+        scan_result = engine.scan()
+
+        # Debug: check what scan produced
+        violations_after_scan = store.list_violations()
+        obligations_after_scan = store.list_obligations()
+
+        # Verify scan detected violations
+        assert len(violations_after_scan) > 0, (
+            f"Scan should detect violations. Scan result: {scan_result.summary()}, "
+            f"Violations: {len(violations_after_scan)}, "
+            f"Obligations: {[(ob.obligation_id, ob.status, ob.due_at, ob.effective_due_at) for ob in obligations_after_scan]}"
+        )
 
         # Step 7: Re-observe and verify non-zero KPIs
         report2 = report_engine.baseline_report()
@@ -690,7 +703,14 @@ def test_governance_pipeline_e2e():
             obs2.omission_detection_rate > 0,
             obs2.obligation_expiry_rate > 0,
         ])
-        assert has_nonzero, f"At least one KPI should be non-zero. KPIs: {obs2.raw_kpis}"
+        assert has_nonzero, (
+            f"At least one KPI should be non-zero. "
+            f"Violations detected: {len(violations_after_scan)}, "
+            f"Report obligations: created={report2.obligations.created_total}, "
+            f"hard_overdue={report2.obligations.hard_overdue}, "
+            f"soft_overdue={report2.obligations.soft_overdue}, "
+            f"KPIs: {obs2.raw_kpis}"
+        )
 
         # Step 8: Run tighten() and verify suggestions are generated
         result = gloop.tighten()

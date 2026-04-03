@@ -32,6 +32,11 @@ if not _log.handlers:
     _log.addHandler(_h)
     _log.setLevel(logging.WARNING)
 
+# ── P0 Performance: Session config cache ────────────────────────────────
+# hook_wrapper.py can inject cached session config here to avoid re-reading
+# .ystar_session.json on every hook call.
+_SESSION_CONFIG_CACHE: Optional[Dict[str, Any]] = None
+
 
 def _detect_agent_id(hook_payload: Dict[str, Any]) -> str:
     """
@@ -112,7 +117,16 @@ def _load_session_config(search_dirs: Optional[list] = None) -> Optional[Dict[st
     """
     查找并加载 .ystar_session.json。
     ystar init 完成后写入此文件，check_hook 启动时自动读取。
+
+    P0 Performance: 支持从 _SESSION_CONFIG_CACHE 读取（hook_wrapper 注入）。
     """
+    global _SESSION_CONFIG_CACHE
+
+    # Check cache first (injected by hook_wrapper.py for performance)
+    if _SESSION_CONFIG_CACHE is not None:
+        _log.debug("Session config loaded from in-memory cache")
+        return _SESSION_CONFIG_CACHE
+
     dirs = search_dirs or [os.getcwd(), str(Path.home())]
     for d in dirs:
         p = Path(d) / ".ystar_session.json"

@@ -230,15 +230,16 @@ def test_report_engine_produces_kpis(temp_session_dir):
     from ystar.governance.reporting import ReportEngine
 
     report_engine = ReportEngine(omission_store=store, cieu_store=cieu_store)
-    kpis = report_engine.baseline_report()
+    report = report_engine.baseline_report()
 
     # Step 3: Verify KPIs are non-zero
-    assert kpis is not None, "Expected KPIs to be returned"
-    assert "obligation_fulfillment_rate" in kpis
-    assert "omission_detection_rate" in kpis
+    assert report is not None, "Expected Report to be returned"
+    assert report.kpis is not None, "Expected KPIs dict in report"
+    assert "obligation_fulfillment_rate" in report.kpis
+    assert "omission_detection_rate" in report.kpis
 
     # With violations present, detection rate should be > 0
-    odr = kpis.get("omission_detection_rate", 0.0)
+    odr = report.kpis.get("omission_detection_rate", 0.0)
     assert odr > 0.0, f"Expected non-zero omission_detection_rate, got {odr}"
 
 
@@ -297,14 +298,10 @@ def test_governance_loop_produces_suggestions(temp_session_dir):
     from ystar.governance.governance_loop import GovernanceLoop
 
     report_engine = ReportEngine(omission_store=store, cieu_store=cieu_store)
-    gov_loop = GovernanceLoop(
-        report_engine=report_engine,
-        cieu_store=cieu_store,
-        config={"observation_mode": "pull", "suggestion_enabled": True},
-    )
+    gov_loop = GovernanceLoop(report_engine=report_engine)
 
     # Step 3: Run observe-tighten cycle
-    gov_loop.observe()
+    gov_loop.observe_from_report_engine()
     result = gov_loop.tighten()
 
     # Step 4: Verify suggestions were generated
@@ -349,11 +346,7 @@ def test_full_governance_pipeline_smoke():
         from ystar.governance.governance_loop import GovernanceLoop
 
         report_engine = ReportEngine(omission_store=store, cieu_store=cieu_store)
-        gov_loop = GovernanceLoop(
-            report_engine=report_engine,
-            cieu_store=cieu_store,
-            config={"observation_mode": "pull"},
-        )
+        gov_loop = GovernanceLoop(report_engine=report_engine)
 
         # Create entity and trigger obligation
         entity = TrackedEntity(
@@ -380,16 +373,18 @@ def test_full_governance_pipeline_smoke():
         engine.scan()
 
         # Run governance cycle
-        gov_loop.observe()
+        gov_loop.observe_from_report_engine()
         result = gov_loop.tighten()
 
         # Basic assertions - pipeline produced output
         assert result is not None
         assert result.overall_health in ("healthy", "degraded", "critical")
 
-        # Verify CIEU events were recorded
-        events = cieu_store.query(event_type="observation_cycle")
-        assert len(events) > 0, "Expected observation_cycle events in CIEU"
+        # Verify CIEU events were recorded by OmissionEngine during scan()
+        # OmissionEngine writes omission_violation events to CIEU when violations are detected
+        all_events = cieu_store.query(limit=100)
+        omission_events = [e for e in all_events if e.event_type and e.event_type.startswith("omission_violation:")]
+        assert len(omission_events) > 0, f"Expected omission_violation events in CIEU. Got {len(all_events)} total events."
 
 
 if __name__ == "__main__":
