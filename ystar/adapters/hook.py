@@ -4,10 +4,10 @@ Runtime Ingress Controller — the single entry point for all tool-call governan
 
 Despite the filename 'hook.py', this module is the runtime ingress controller, not a thin adapter.
 
-ystar.adapters.hook  —  OpenClaw hook 纯翻译层  v0.48.0
-=========================================================
+ystar.adapters.hook  —  Runtime Ingress Controller  v0.48.0
+============================================================
 
-适配层的唯一职责：格式翻译。
+Runtime Ingress Controller的职责：
   输入：OpenClaw PreToolUse hook payload（dict）
   输出：{"action": "block"|"", "message": "..."}
 
@@ -18,10 +18,10 @@ ystar.adapters.hook  —  OpenClaw hook 纯翻译层  v0.48.0
 
 用户接口零变化，行为根据上下文自动选择深度。
 
-三个判断问题验证这个文件属于适配层：
-  Q1: 给 LangChain 用要改吗？     → 要改（OpenClaw 专属格式）✓ 适配层
-  Q2: 需要记住上一次发生了什么？  → 不需要 ✓ 适配层
-  Q3: 翻译格式还是判断对错？      → 翻译格式 ✓ 适配层
+职责边界：
+  Q1: 给 LangChain 用要改吗？     → 要改（OpenClaw 专属格式）
+  Q2: 需要记住上一次发生了什么？  → 不需要
+  Q3: 翻译格式还是判断对错？      → 翻译格式
 
 治理逻辑（Omission/Lineage/Drift/Gate）在 domains/openclaw/adapter.py。
 
