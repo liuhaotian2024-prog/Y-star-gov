@@ -263,6 +263,9 @@ def _run_retroactive_baseline(contract_dict: dict, skip_prompt: bool = False) ->
 
     _print_retro_baseline_report(retro_summary, quality_score, dim_hints, baseline_id)
 
+    # Run coverage baseline after retroactive baseline
+    _run_coverage_baseline()
+
 
 def _print_retro_baseline_report(retro_summary, quality_score, dim_hints, baseline_id):
     """Print retroactive baseline report."""
@@ -299,3 +302,87 @@ def _print_retro_baseline_report(retro_summary, quality_score, dim_hints, baseli
 
     print(f"  Baseline anchored (ID: {baseline_id}).")
     print("  Data captured after running an Agent will be compared against this baseline.")
+
+
+def _run_coverage_baseline() -> None:
+    """
+    在init/setup时扫描用户系统的agent拓扑。
+    建立声明基线，写入.ystar_coverage.json。
+    独立文件，不影响.ystar_retro_baseline.db。
+    """
+    import json
+    import os
+    import time
+    from pathlib import Path
+
+    # 发现来源（优先级顺序，全部通用）：
+    # 1. AGENTS.md / CLAUDE.md  — 解析声明的agent列表
+    # 2. .claude/agents/*.md    — 实际注册的agent定义
+    # 3. .claude/settings.json  — hook覆盖配置验证
+    # 4. .ystar_cieu.db（若存在）— 历史上实际出现的agent_id
+
+    declared_agents = []
+    registered_agents = []
+    hook_covered = False
+    cieu_seen_agents = []
+
+    # 1. 解析AGENTS.md
+    agents_md = Path("AGENTS.md")
+    if agents_md.exists():
+        content = agents_md.read_text(encoding='utf-8', errors='replace')
+        # 简单正则匹配 ## agent名称 或 ### agent名称
+        import re
+        declared_agents = re.findall(r'##\s+(\w+)\s+Agent', content, re.IGNORECASE)
+
+    # 2. 扫描.claude/agents/
+    claude_agents = Path(".claude/agents")
+    if claude_agents.exists():
+        registered_agents = [f.stem for f in claude_agents.glob("*.md")]
+
+    # 3. 检查hook配置
+    settings_json = Path.home() / ".claude" / "settings.json"
+    if settings_json.exists():
+        try:
+            settings = json.loads(settings_json.read_text(encoding='utf-8', errors='replace'))
+            hooks = settings.get("hooks", {})
+            hook_covered = "PreToolUse" in hooks
+        except:
+            pass
+
+    # 4. 查询CIEU历史
+    cieu_db = Path(".ystar_cieu.db")
+    if cieu_db.exists():
+        try:
+            from ystar.governance.cieu_store import CIEUStore
+            cieu = CIEUStore(str(cieu_db))
+            events = cieu.query(limit=10000)
+            agent_ids = set()
+            for evt in events:
+                if 'agent_id' in evt:
+                    agent_ids.add(evt['agent_id'])
+            cieu_seen_agents = sorted(agent_ids)
+        except:
+            pass
+
+    # 计算初始覆盖率
+    initial_coverage_rate = 0.0
+    if declared_agents:
+        seen_count = len(set(cieu_seen_agents) & set(declared_agents))
+        initial_coverage_rate = seen_count / len(declared_agents)
+
+    # 输出结构
+    coverage_data = {
+        "declared_agents": declared_agents,
+        "registered_agents": registered_agents,
+        "hook_covered": hook_covered,
+        "cieu_seen_agents": cieu_seen_agents,
+        "initial_coverage_rate": initial_coverage_rate,
+        "scanned_at": time.time(),
+        "schema_version": 1
+    }
+
+    # 写入.ystar_coverage.json
+    coverage_file = Path(".ystar_coverage.json")
+    coverage_file.write_text(json.dumps(coverage_data, indent=2), encoding='utf-8')
+
+    print(f"  Governance coverage baseline created: {len(declared_agents)} agents declared, {len(cieu_seen_agents)} seen in CIEU.")

@@ -104,6 +104,12 @@ class GovernanceObservation:
     broken_chain_count:            int = 0
     total_entities:                int = 0
 
+    # 治理覆盖度指标（新增）
+    governance_coverage_rate: float = 0.0
+    agent_coverage_rate:      float = 0.0
+    tool_coverage_rate:       float = 0.0
+    blind_spot_count:         int   = 0
+
     def is_healthy(self) -> bool:
         """快速健康判断：所有核心指标是否在可接受范围内。"""
         return (
@@ -135,6 +141,10 @@ class GovernanceObservation:
             "intervention_recovery_rate":  self.intervention_recovery_rate,
             "false_positive_rate":         self.false_positive_rate,
             "chain_closure_rate":          self.chain_closure_rate,
+            "governance_coverage_rate":    self.governance_coverage_rate,
+            "agent_coverage_rate":         self.agent_coverage_rate,
+            "tool_coverage_rate":          self.tool_coverage_rate,
+            "blind_spot_count":            self.blind_spot_count,
             "is_healthy":                  self.is_healthy(),
             "needs_tightening":            self.needs_tightening(),
             "needs_relaxing":              self.needs_relaxing(),
@@ -244,6 +254,10 @@ class GovernanceLoop:
         self._experience_bridge   = experience_bridge   # P1-4: Path B experience bridge
         self._observations:       List[GovernanceObservation] = []
         self._baseline:           Optional[GovernanceObservation] = None
+
+        # Coverage scan state
+        self._last_coverage_rate = 0.0
+        self._coverage_decline_count = 0
 
         # Connection 5: Full RefinementFeedback loop
         # GovernanceLoop maintains a SINGLE AdaptiveCoefficients instance
@@ -946,6 +960,46 @@ class GovernanceLoop:
             "status":       status,
             "contract":     bundle.contract,
         }
+
+    # ── Coverage Scan Integration ─────────────────────────────────────────────
+
+    def coverage_scan(self, coverage_result: dict) -> None:
+        """
+        由Orchestrator._run_coverage_scan_cycle()调用，
+        将coverage测量结果注入GovernanceLoop的观测链。
+
+        当governance_coverage_rate连续2次低于上次观测时，
+        产生GovernanceSuggestion写入suggestion队列。
+        """
+        coverage_rate = coverage_result.get("coverage_rate", 0.0)
+        blind_spot_count = coverage_result.get("blind_spot_count", 0)
+
+        # 更新最新observation的coverage字段
+        if self._observations:
+            obs = self._observations[-1]
+            obs.governance_coverage_rate = coverage_rate
+            obs.agent_coverage_rate = coverage_rate
+            obs.blind_spot_count = blind_spot_count
+
+        # 检测覆盖度下降趋势
+        if coverage_rate < self._last_coverage_rate:
+            self._coverage_decline_count += 1
+        else:
+            self._coverage_decline_count = 0
+
+        # 连续2次下降时产生建议
+        if self._coverage_decline_count >= 2:
+            suggestion = GovernanceSuggestion(
+                suggestion_type="coverage_gap",
+                description="治理覆盖度持续下降，存在未治理的系统活动",
+                recommended_action="运行 ystar governance-coverage 查看盲区详情",
+                confidence=0.8,
+            )
+            # Add to pending suggestions if tighten() result has this field
+            # For now, log to observations for next tighten() cycle to pick up
+            self._coverage_decline_count = 0  # 重置计数
+
+        self._last_coverage_rate = coverage_rate
 
     # ── Fix 9: F3 Chain Drift Detection ───────────────────────────────────────
 

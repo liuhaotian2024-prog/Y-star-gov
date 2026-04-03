@@ -18,12 +18,13 @@ Commands:
   ystar trend          Show 7-day CIEU event trend (total/deny/rate)
   ystar demo           5-second wow moment -- governance in action
   ystar doctor         Diagnose environment integrity (--layer1, --layer2)
-  ystar reset-breaker  Reset circuit breaker after manual intervention
-  ystar verify         Verify CIEU cryptographic integrity
-  ystar seal           Seal CIEU session with Merkle root
-  ystar policy-builder Launch local HTML policy builder (port 7921)
-  ystar domain         Discover and use domain packs (list|describe|init)
-  ystar version        Show version
+  ystar reset-breaker      Reset circuit breaker after manual intervention
+  ystar verify             Verify CIEU cryptographic integrity
+  ystar seal               Seal CIEU session with Merkle root
+  ystar policy-builder     Launch local HTML policy builder (port 7921)
+  ystar domain             Discover and use domain packs (list|describe|init)
+  ystar governance-coverage Show governance coverage report (agent/tool coverage)
+  ystar version            Show version
 
 Quick start (3 steps to integrate with OpenClaw):
   pip install ystar
@@ -89,6 +90,71 @@ def _cmd_reset_breaker() -> None:
     except Exception as e:
         print(f"  Reset failed: {e}")
         sys.exit(1)
+
+
+def _cmd_governance_coverage() -> None:
+    """Show governance coverage report."""
+    import json
+    import time
+    from pathlib import Path
+
+    # 读取coverage数据
+    coverage_file = Path(".ystar_coverage.json")
+    if not coverage_file.exists():
+        print("No coverage baseline found. Run 'ystar init' or 'ystar setup' first.")
+        sys.exit(1)
+
+    try:
+        coverage_data = json.loads(coverage_file.read_text(encoding='utf-8', errors='replace'))
+    except Exception as e:
+        print(f"Failed to read coverage file: {e}")
+        sys.exit(1)
+
+    declared_agents = set(coverage_data.get("declared_agents", []))
+
+    # 查询CIEU获取最新覆盖情况
+    cieu_db_path = _auto_detect_db_path("")
+    if not Path(cieu_db_path).exists():
+        print(f"CIEU database not found: {cieu_db_path}")
+        sys.exit(1)
+
+    from ystar.governance.cieu_store import CIEUStore
+    cieu = CIEUStore(cieu_db_path)
+    events = cieu.query(limit=10000)
+
+    # 统计实际出现的agent
+    seen_agents = set()
+    for evt in events:
+        if 'agent_id' in evt:
+            seen_agents.add(evt['agent_id'])
+
+    # 计算覆盖度
+    if declared_agents:
+        seen_count = len(seen_agents & declared_agents)
+        coverage_rate = seen_count / len(declared_agents)
+        blind_spots = declared_agents - seen_agents
+    else:
+        coverage_rate = 1.0
+        seen_count = 0
+        blind_spots = set()
+
+    # 输出报告
+    print("\nY*gov Governance Coverage Report")
+    print("=" * 50)
+    print(f"Agent覆盖度:  {seen_count} / {len(declared_agents)} 声明的agent有治理记录  ({coverage_rate*100:.1f}%)")
+    print(f"盲区数量:     {len(blind_spots)} 个声明的agent无治理记录")
+
+    if blind_spots:
+        print("\n盲区详情:")
+        for agent in sorted(blind_spots):
+            print(f"  - {agent}")
+        print("\n建议:")
+        print("  1. 检查这些agent是否实际运行")
+        print("  2. 确认它们的工具调用是否经过hook")
+        print("  3. 运行 'ystar trend' 查看覆盖度历史趋势")
+
+    print(f"\n上次扫描: {time.strftime('%Y-%m-%d %H:%M', time.localtime(coverage_data.get('scanned_at', 0)))}")
+    print()
 
 
 def _cmd_report(path: str = "") -> None:
@@ -558,12 +624,16 @@ def main() -> None:
     elif cmd == "reset-breaker":
         _cmd_reset_breaker()
 
+    elif cmd == "governance-coverage":
+        _cmd_governance_coverage()
+
     else:
         print(f"Unknown command: {cmd}\n")
         print("Available commands: demo, setup, hook-install, doctor, verify, report,")
         print("                    seal, policy-builder, audit, check, check-impact,")
         print("                    init, version, simulate, quality, baseline, delta,")
-        print("                    trend, domain, archive-cieu, reset-breaker")
+        print("                    trend, domain, archive-cieu, reset-breaker,")
+        print("                    governance-coverage")
         sys.exit(1)
 
 

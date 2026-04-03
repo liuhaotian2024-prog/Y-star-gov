@@ -48,6 +48,10 @@ GOVERNANCE_LOOP_INTERVAL_SECS  = 300.0   # 5 minutes
 INTERVENTION_SCAN_INTERVAL_CALLS = 10
 INTERVENTION_SCAN_INTERVAL_SECS  = 60.0   # 1 minute
 
+# Coverage scan (governance coverage measurement) runs least frequently
+COVERAGE_SCAN_INTERVAL_CALLS = 200   # 比GovernanceLoop更稀疏
+COVERAGE_SCAN_INTERVAL_SECS  = 1800.0  # 30分钟
+
 # CausalEngine advisory: only on write/exec actions (high-risk)
 CAUSAL_HIGH_RISK_TOOLS = {"Write", "Edit", "MultiEdit", "Bash", "Task"}
 
@@ -68,6 +72,8 @@ class Orchestrator:
         self._last_governance_loop_call: int = 0
         self._last_intervention_scan_at: float = 0.0
         self._last_intervention_scan_call: int = 0
+        self._last_coverage_scan_at: float = 0.0
+        self._last_coverage_scan_call: int = 0
 
         # Cached references (lazily populated)
         self._governance_loop: Optional[Any] = None
@@ -293,6 +299,10 @@ class Orchestrator:
         if tool_name in CAUSAL_HIGH_RISK_TOOLS and self._causal_engine is not None:
             self._run_causal_advisory(agent_id, tool_name, params)
 
+        # 4. Coverage scan (every 200 calls or 30min)
+        if self._should_run_coverage_scan(now):
+            self._run_coverage_scan_cycle(now)
+
         return None
 
     # ── Periodic Triggers ────────────────────────────────────────────────────
@@ -314,6 +324,15 @@ class Orchestrator:
             self._governance_loop is not None
             and (calls_since >= GOVERNANCE_LOOP_INTERVAL_CALLS
                  or time_since >= GOVERNANCE_LOOP_INTERVAL_SECS)
+        )
+
+    def _should_run_coverage_scan(self, now: float) -> bool:
+        """Check if coverage scan should run."""
+        calls_since = self._call_count - self._last_coverage_scan_call
+        time_since = now - self._last_coverage_scan_at
+        return (
+            calls_since >= COVERAGE_SCAN_INTERVAL_CALLS
+            or time_since >= COVERAGE_SCAN_INTERVAL_SECS
         )
 
     # ── 1. InterventionEngine Scan ───────────────────────────────────────────
@@ -753,6 +772,88 @@ class Orchestrator:
                     )
         except Exception:
             pass
+
+    # ── 4. Coverage Scan ─────────────────────────────────────────────────────
+
+    def _run_coverage_scan_cycle(self, now: float) -> None:
+        """
+        fail-safe包裹，不block hook。
+
+        逻辑：
+        1. 读.ystar_coverage.json（不存在则自动生成）
+        2. 查询最近N分钟的CIEU，统计实际出现的agent_id
+        3. 计算三维覆盖度
+        4. 写入CIEU（event_type: governance_coverage_scan）
+        5. 如果blind_spot_count > 上次记录：产生GovernanceSuggestion
+        """
+        with self._lock:
+            self._last_coverage_scan_at = now
+            self._last_coverage_scan_call = self._call_count
+
+        try:
+            self._do_coverage_scan(now)
+        except Exception as e:
+            _log.debug("Coverage scan failed (non-fatal): %s", e)
+
+    def _do_coverage_scan(self, now: float) -> None:
+        """Core coverage scan logic."""
+        import json
+        from pathlib import Path
+
+        # 1. 读取或创建.ystar_coverage.json
+        coverage_file = Path(".ystar_coverage.json")
+        if not coverage_file.exists():
+            # 自动生成（轻量版，无用户交互）
+            try:
+                from ystar.cli.init_cmd import _run_coverage_baseline
+                _run_coverage_baseline()
+            except Exception:
+                return  # Cannot create baseline, skip scan
+
+        try:
+            coverage_data = json.loads(coverage_file.read_text(encoding='utf-8', errors='replace'))
+        except Exception:
+            return  # Cannot read coverage file, skip scan
+
+        declared_agents = set(coverage_data.get("declared_agents", []))
+
+        # 2. 查询最近30分钟CIEU
+        if self._cieu_store:
+            events = self._cieu_store.query(limit=5000)
+            recent_agents = set()
+            for evt in events:
+                if evt.get('timestamp', 0) > now - 1800:  # 30分钟
+                    if 'agent_id' in evt:
+                        recent_agents.add(evt['agent_id'])
+
+            # 3. 计算覆盖度
+            if declared_agents:
+                seen_count = len(recent_agents & declared_agents)
+                coverage_rate = seen_count / len(declared_agents)
+                blind_spot_count = len(declared_agents - recent_agents)
+            else:
+                coverage_rate = 1.0
+                seen_count = 0
+                blind_spot_count = 0
+
+            # 4. 写入CIEU
+            self._cieu_store.write({
+                "event_type": "governance_coverage_scan",
+                "coverage_rate": coverage_rate,
+                "agent_coverage_rate": coverage_rate,
+                "blind_spot_count": blind_spot_count,
+                "declared_count": len(declared_agents),
+                "seen_count": seen_count,
+                "timestamp": now,
+            })
+
+            # 5. 通知GovernanceLoop（如果存在）
+            if hasattr(self, '_governance_loop') and self._governance_loop:
+                coverage_result = {
+                    "coverage_rate": coverage_rate,
+                    "blind_spot_count": blind_spot_count,
+                }
+                self._governance_loop.coverage_scan(coverage_result)
 
     # ── CIEU Buffer ──────────────────────────────────────────────────────────
 
