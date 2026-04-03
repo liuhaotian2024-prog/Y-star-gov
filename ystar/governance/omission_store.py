@@ -415,12 +415,14 @@ class OmissionStore:
                 UPDATE obligations SET
                     status=?, fulfilled_by_event_id=?, violation_code=?,
                     escalated=?, escalated_at=?, reminder_sent_at=?,
-                    notes=?, updated_at=?
+                    notes=?, updated_at=?,
+                    due_at=?, grace_period_secs=?, hard_overdue_secs=?
                 WHERE obligation_id=?
             """, (
                 ob.status.value, ob.fulfilled_by_event_id, ob.violation_code,
                 1 if ob.escalated else 0, ob.escalated_at,
                 ob.reminder_sent_at, ob.notes, ob.updated_at,
+                ob.due_at, ob.grace_period_secs, ob.hard_overdue_secs,
                 ob.obligation_id,
             ))
 

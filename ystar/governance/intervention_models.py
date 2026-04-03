@@ -175,6 +175,11 @@ class GateCheckResult:
     # GAP 4 FIX: Advisory causal recommendation (does NOT change gate decision)
     causal_recommendation:  Optional[str] = None
 
+    @property
+    def reason(self) -> Optional[str]:
+        """Alias for blocking_omission_type for backward compatibility."""
+        return self.blocking_omission_type
+
     def to_dict(self) -> dict:
         return {
             "decision":               self.decision.value,

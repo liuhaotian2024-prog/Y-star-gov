@@ -159,11 +159,12 @@ def test_obligations_produce_violations(temp_session_dir):
     )
     engine.ingest_event(event)
 
-    # Step 3: Manually set obligation to be overdue
+    # Step 3: Manually set obligation to be overdue (beyond grace period)
     obligations = store.list_obligations(entity_id="task_002")
     assert len(obligations) > 0
     ob = obligations[0]
-    ob.due_at = time.time() - 10  # Overdue by 10 seconds
+    # Grace period is 30s, so set overdue by 40s to ensure violation is created
+    ob.due_at = time.time() - 40
     store.update_obligation(ob)
 
     # Step 4: Run scan to detect violation
@@ -219,10 +220,11 @@ def test_report_engine_produces_kpis(temp_session_dir):
     )
     engine.ingest_event(event)
 
-    # Make obligation overdue and scan
+    # Make obligation overdue and scan (beyond grace period)
     obligations = store.list_obligations(entity_id="task_003")
     ob = obligations[0]
-    ob.due_at = time.time() - 10
+    # Grace period is 30s, so set overdue by 40s to ensure violation is created
+    ob.due_at = time.time() - 40
     store.update_obligation(ob)
     engine.scan()
 
@@ -286,9 +288,10 @@ def test_governance_loop_produces_suggestions(temp_session_dir):
         )
         engine.ingest_event(event)
 
-    # Make all obligations overdue
+    # Make all obligations overdue (beyond grace period)
     for ob in store.list_obligations():
-        ob.due_at = time.time() - 10
+        # Grace period is 30s, so set overdue by 40s to ensure violation is created
+        ob.due_at = time.time() - 40
         store.update_obligation(ob)
 
     engine.scan()
@@ -366,9 +369,10 @@ def test_full_governance_pipeline_smoke():
         )
         engine.ingest_event(event)
 
-        # Make overdue and scan
+        # Make overdue and scan (beyond grace period)
         for ob in store.list_obligations():
-            ob.due_at = time.time() - 1
+            # Grace period is 30s, so set overdue by 40s to ensure violation is created
+            ob.due_at = time.time() - 40
             store.update_obligation(ob)
         engine.scan()
 
