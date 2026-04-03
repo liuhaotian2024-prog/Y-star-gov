@@ -594,3 +594,231 @@ def test_external_governance_loop_summary():
     assert summary["total_observations"] == 10
     assert summary["total_violations"] == 5
     assert summary["violation_rate"] == 0.5
+
+
+# ── Test: Orchestrator Path B Lifecycle Integration ─────────────────────────
+
+def test_orchestrator_path_b_field_name_constraint_not_applied_constraint():
+    """
+    Verify that ExternalGovernanceCycle uses 'constraint' (not 'applied_constraint').
+    This is the field name correctness test (Task 1).
+    """
+    cycle = ExternalGovernanceCycle()
+    assert hasattr(cycle, 'constraint'), "ExternalGovernanceCycle must have 'constraint' field"
+    assert not hasattr(cycle, 'applied_constraint'), \
+        "ExternalGovernanceCycle must NOT have 'applied_constraint' field"
+    assert cycle.constraint is None
+
+
+def test_orchestrator_path_b_agent_build():
+    """
+    Test that Orchestrator._build_path_b_agent creates a PathBAgent
+    when cieu_store is available.
+    """
+    from ystar.adapters.orchestrator import Orchestrator
+
+    orch = Orchestrator()
+    mock_cieu = Mock()
+    mock_cieu.write_dict = Mock(return_value=True)
+    orch._cieu_store = mock_cieu
+
+    agent = orch._build_path_b_agent()
+    assert agent is not None
+    assert isinstance(agent, PathBAgent)
+
+
+def test_orchestrator_path_b_agent_build_no_cieu():
+    """
+    Test that _build_path_b_agent returns None when cieu_store is unavailable.
+    """
+    from ystar.adapters.orchestrator import Orchestrator
+
+    orch = Orchestrator()
+    orch._cieu_store = None
+    agent = orch._build_path_b_agent()
+    assert agent is None
+
+
+def test_orchestrator_status_includes_path_b():
+    """
+    Test that Orchestrator.status() reports has_path_b_agent.
+    """
+    from ystar.adapters.orchestrator import Orchestrator
+
+    orch = Orchestrator()
+    s = orch.status()
+    assert "has_path_b_agent" in s
+    assert s["has_path_b_agent"] is False
+
+
+def test_orchestrator_get_session_contract_fallback():
+    """
+    Test that _get_session_contract returns empty IntentContract
+    when no session config is available.
+    """
+    from ystar.adapters.orchestrator import Orchestrator
+
+    orch = Orchestrator()
+    contract = orch._get_session_contract()
+    assert contract is not None
+    assert isinstance(contract, IntentContract)
+
+
+def test_orchestrator_get_session_contract_from_cache():
+    """
+    Test that _get_session_contract uses cached session_cfg.
+    """
+    from ystar.adapters.orchestrator import Orchestrator
+
+    orch = Orchestrator()
+    orch._session_cfg = {
+        "contract": {
+            "deny": ["/etc/passwd"],
+            "deny_commands": ["rm -rf"],
+        }
+    }
+    contract = orch._get_session_contract()
+    assert "/etc/passwd" in contract.deny
+    assert "rm -rf" in contract.deny_commands
+
+
+def test_orchestrator_metalearning_relax_below_threshold():
+    """
+    Test that metalearning relax is NOT triggered when C_over_tightened <= 10.
+    """
+    from ystar.adapters.orchestrator import Orchestrator
+
+    orch = Orchestrator()
+    orch._cieu_store = Mock()
+    orch._cieu_store.write_dict = Mock()
+
+    # Create a mock tighten_result with C_over_tightened = 5 (below threshold)
+    mock_cr = Mock()
+    mock_cr.diagnosis = {"C_over_tightened": 5, "D_normal": 95}
+    mock_tighten = Mock()
+    mock_tighten.commission_result = mock_cr
+
+    # Should not log any relax event
+    orch._check_metalearning_relax(mock_tighten)
+    # No relax CIEU event should be written
+    orch._cieu_store.write_dict.assert_not_called()
+
+
+def test_orchestrator_metalearning_relax_above_threshold():
+    """
+    Test that metalearning relax IS triggered when C_over_tightened > 10.
+    """
+    from ystar.adapters.orchestrator import Orchestrator
+
+    orch = Orchestrator()
+    mock_cieu = Mock()
+    mock_cieu.write_dict = Mock(return_value=True)
+    orch._cieu_store = mock_cieu
+
+    # Create mock commission result with C_over_tightened = 15
+    mock_additions = Mock()
+    mock_additions.deny = ["/tmp/overtight"]
+    mock_additions.deny_commands = ["echo overtight"]
+
+    mock_quality = Mock()
+    mock_quality.quality_score = 0.45
+
+    mock_cr = Mock()
+    mock_cr.diagnosis = {"C_over_tightened": 15, "D_normal": 85}
+    mock_cr.contract_additions = mock_additions
+    mock_cr.quality = mock_quality
+
+    mock_tighten = Mock()
+    mock_tighten.commission_result = mock_cr
+
+    orch._check_metalearning_relax(mock_tighten)
+
+    # Should have written a metalearning_relax_applied CIEU event
+    assert mock_cieu.write_dict.called
+    call_args = mock_cieu.write_dict.call_args[0][0]
+    assert "metalearning_relax_applied" in call_args["event_type"]
+
+
+def test_orchestrator_metalearning_relax_no_commission_result():
+    """
+    Test that metalearning relax is skipped when commission_result is None.
+    """
+    from ystar.adapters.orchestrator import Orchestrator
+
+    orch = Orchestrator()
+    orch._cieu_store = Mock()
+    orch._cieu_store.write_dict = Mock()
+
+    mock_tighten = Mock()
+    mock_tighten.commission_result = None
+
+    orch._check_metalearning_relax(mock_tighten)
+    orch._cieu_store.write_dict.assert_not_called()
+
+
+def test_orchestrator_run_path_b_cycle_logs_correct_field():
+    """
+    Test that _run_path_b_cycle uses cycle.constraint (not applied_constraint).
+    This verifies Task 1: field name correctness.
+    """
+    from ystar.adapters.orchestrator import Orchestrator
+
+    orch = Orchestrator()
+    mock_cieu = Mock()
+    mock_cieu.write_dict = Mock(return_value=True)
+    orch._cieu_store = mock_cieu
+
+    # Create a PathBAgent with a mock that returns a cycle with constraint
+    mock_agent = Mock()
+    mock_cycle = ExternalGovernanceCycle()
+    mock_cycle.constraint = IntentContract(name="test_constraint")
+    mock_cycle.applied = True
+    mock_agent.run_one_cycle = Mock(return_value=mock_cycle)
+    orch._path_b_agent = mock_agent
+
+    orch._run_path_b_cycle("test_agent", 0.0)
+
+    # Verify CIEU event was logged with correct constraint name
+    assert mock_cieu.write_dict.called
+    call_args = mock_cieu.write_dict.call_args[0][0]
+    assert "path_b_cycle" in call_args["event_type"]
+    assert "test_constraint" in call_args["task_description"]
+
+
+def test_orchestrator_run_path_b_cycle_none_agent():
+    """
+    Test that _run_path_b_cycle is a no-op when path_b_agent is None.
+    """
+    from ystar.adapters.orchestrator import Orchestrator
+
+    orch = Orchestrator()
+    orch._path_b_agent = None
+    orch._cieu_store = Mock()
+    orch._cieu_store.write_dict = Mock()
+
+    orch._run_path_b_cycle("test", 0.0)
+    orch._cieu_store.write_dict.assert_not_called()
+
+
+def test_orchestrator_run_path_b_cycle_error_is_nonfatal():
+    """
+    Test that Path B cycle errors are caught and logged (non-fatal).
+    """
+    from ystar.adapters.orchestrator import Orchestrator
+
+    orch = Orchestrator()
+    mock_cieu = Mock()
+    mock_cieu.write_dict = Mock(return_value=True)
+    orch._cieu_store = mock_cieu
+
+    mock_agent = Mock()
+    mock_agent.run_one_cycle = Mock(side_effect=RuntimeError("boom"))
+    orch._path_b_agent = mock_agent
+
+    # Should not raise
+    orch._run_path_b_cycle("test", 0.0)
+
+    # Should log error event
+    assert mock_cieu.write_dict.called
+    call_args = mock_cieu.write_dict.call_args[0][0]
+    assert "path_b_cycle_error" in call_args["event_type"]

@@ -1,21 +1,22 @@
 # Layer: Foundation
 """
-ystar.adapters.orchestrator  —  Runtime Governance Orchestrator  v0.46.0
+ystar.adapters.orchestrator  —  Runtime Governance Orchestrator  v0.47.0
 ========================================================================
 
 Connects the advanced governance mechanisms to the hook path using
 periodic/batched invocation so that hook latency stays low.
 
-Four subsystems are wired:
+Five subsystems are wired:
 
   1. InterventionEngine  — scan→pulse chain on every hook call (lightweight)
   2. GovernanceLoop      — meta-learning cycle every N calls or M seconds
   3. Path A (SRGCS)      — self-governance suggestions, piggy-backed on GovernanceLoop
-  4. CausalEngine        — advisory causal reasoning on high-risk actions
+  4. Path B (External)   — external agent governance, runs after GovernanceLoop
+  5. CausalEngine        — advisory causal reasoning on high-risk actions
 
 Design constraints:
   - Hook latency: InterventionEngine gate_check is O(1) — always runs.
-    GovernanceLoop/PathA run only periodically (batched).
+    GovernanceLoop/PathA/PathB run only periodically (batched).
   - Fail-safe: all orchestration failures are caught and logged to CIEU.
     The hook NEVER blocks due to orchestrator failure.
   - Agent-agnostic: works with any agent_id or role naming scheme.
@@ -54,7 +55,7 @@ CAUSAL_HIGH_RISK_TOOLS = {"Write", "Edit", "MultiEdit", "Bash", "Task"}
 class Orchestrator:
     """
     Singleton orchestrator that coordinates InterventionEngine,
-    GovernanceLoop, Path A, and CausalEngine on the hook path.
+    GovernanceLoop, Path A, Path B, and CausalEngine on the hook path.
 
     All methods are fail-safe: exceptions are caught and optionally
     logged to CIEU. The hook is never blocked by orchestrator failures.
@@ -71,10 +72,14 @@ class Orchestrator:
         # Cached references (lazily populated)
         self._governance_loop: Optional[Any] = None
         self._path_a_agent: Optional[Any] = None
+        self._path_b_agent: Optional[Any] = None
         self._cieu_store: Optional[Any] = None
         self._intervention_engine: Optional[Any] = None
         self._omission_adapter: Optional[Any] = None
         self._causal_engine: Optional[Any] = None
+
+        # Session config (cached for _get_session_contract)
+        self._session_cfg: Dict[str, Any] = {}
 
         # CIEU buffer for batched GovernanceLoop ingestion
         self._cieu_buffer: List[Dict[str, Any]] = []
@@ -110,7 +115,8 @@ class Orchestrator:
         configure them here. This fixes the race condition where orchestrator
         tries to access adapters before hook.py has configured them.
         """
-        # 0. Extract session config values
+        # 0. Extract session config values and cache for later use
+        self._session_cfg = session_cfg
         cieu_db = session_cfg.get("cieu_db", ".ystar_cieu.db")
         contract_dict = session_cfg.get("contract", {})
 
@@ -192,6 +198,16 @@ class Orchestrator:
                 _log.warning("GovernanceLoop init timed out or failed, using light path")
         except Exception as e:
             _log.warning("Failed to initialize GovernanceLoop: %s", e, exc_info=True)
+
+        # 5. PathBAgent — external governance agent
+        # Initialized independently from GovernanceLoop: if GovernanceLoop hangs
+        # or fails, Path B should still be available for external agent governance.
+        try:
+            self._path_b_agent = self._build_path_b_agent()
+            if self._path_b_agent is not None:
+                _log.info("PathBAgent initialized")
+        except Exception as e:
+            _log.warning("Failed to initialize PathBAgent: %s", e, exc_info=True)
 
     def _build_governance_loop(self) -> Optional[Any]:
         """
@@ -358,7 +374,7 @@ class Orchestrator:
         except Exception:
             pass  # Never block the hook
 
-    # ── 2. GovernanceLoop + Path A ───────────────────────────────────────────
+    # ── 2. GovernanceLoop + Path A + Path B ────────────────────────────────
 
     def _run_governance_loop_cycle(self, agent_id: str, now: float) -> None:
         """
@@ -367,7 +383,9 @@ class Orchestrator:
           2. observe_from_report_engine() — collect governance observations
           3. tighten() — run meta-learning, produce suggestions
           4. Submit suggestions to ConstraintRegistry (if available)
-          5. Optionally trigger Path A for high-confidence suggestions
+          5. Metalearning relax: detect C_over_tightened and relax
+          6. Optionally trigger Path A for high-confidence suggestions
+          7. Run Path B external governance cycle
 
         This is the meta-learning feedback loop that makes governance
         improve over time based on actual runtime data.
@@ -381,6 +399,8 @@ class Orchestrator:
 
         gloop = self._governance_loop
         if gloop is None:
+            # Even without GovernanceLoop, Path B can still run independently
+            self._run_path_b_cycle(agent_id, now)
             return
 
         try:
@@ -404,6 +424,8 @@ class Orchestrator:
                 tighten_result = None
 
             if tighten_result is None:
+                # Still run Path B even if tighten failed
+                self._run_path_b_cycle(agent_id, now)
                 return
 
             # Step 4: Submit governance suggestions to ConstraintRegistry
@@ -414,7 +436,12 @@ class Orchestrator:
                 except Exception:
                     pass
 
-            # Step 5: Log the governance cycle to CIEU
+            # Step 5: Metalearning relax — detect C_over_tightened and relax
+            # When commission_result shows >10 C_over_tightened violations,
+            # governance is being too aggressive. Extract relax suggestions.
+            self._check_metalearning_relax(tighten_result)
+
+            # Step 6: Log the governance cycle to CIEU
             self._log_orchestration_event(
                 "governance_loop_cycle",
                 {
@@ -427,14 +454,145 @@ class Orchestrator:
                 },
             )
 
-            # Step 6: Path A — if there are high-confidence suggestions and
+            # Step 7: Path A — if there are high-confidence suggestions and
             # the system is degraded, trigger a Path A self-governance cycle.
             if (tighten_result.overall_health in ("degraded", "critical")
                     and tighten_result.governance_suggestions):
                 self._run_path_a_cycle(tighten_result, now)
 
+            # Step 8: Path B — external governance cycle
+            self._run_path_b_cycle(agent_id, now)
+
         except Exception:
             pass  # Never block the hook
+
+    # ── 2b. Metalearning Relax ──────────────────────────────────────────────
+
+    # Board threshold: if C_over_tightened count exceeds this, trigger relax
+    METALEARNING_RELAX_THRESHOLD = 10
+
+    def _check_metalearning_relax(self, tighten_result: Any) -> None:
+        """
+        Detect over-tightening from metalearning diagnosis and apply relax.
+
+        When commission_result.diagnosis shows >10 C_over_tightened violations,
+        governance is being too aggressive (false positive source). Extract
+        relax suggestions from the commission result and write a runtime relax
+        contract to reduce false positives.
+        """
+        cr = tighten_result.commission_result
+        if cr is None:
+            return
+
+        # Extract C_over_tightened count from commission diagnosis
+        c_count = 0
+        if hasattr(cr, 'diagnosis') and isinstance(cr.diagnosis, dict):
+            c_count = cr.diagnosis.get("C_over_tightened", 0)
+
+        if c_count <= self.METALEARNING_RELAX_THRESHOLD:
+            return
+
+        # Over-tightened: build relax contract from commission result
+        try:
+            from ystar.kernel.dimensions import IntentContract
+
+            # Extract relax suggestions from commission result:
+            # 1. contract_additions contains the rules that were tightened
+            # 2. If quality indicates high false_positive_rate, relax those rules
+            relax_deny = []
+            relax_deny_commands = []
+
+            if hasattr(cr, 'contract_additions') and cr.contract_additions:
+                additions = cr.contract_additions
+                # The additions that were over-tightened should be relaxed
+                # by NOT applying them (inverse signal)
+                if hasattr(additions, 'deny'):
+                    relax_deny = list(additions.deny)
+                if hasattr(additions, 'deny_commands'):
+                    relax_deny_commands = list(additions.deny_commands)
+
+            quality_score = 0.7
+            if hasattr(cr, 'quality') and cr.quality is not None:
+                quality_score = getattr(cr.quality, 'quality_score', 0.7)
+
+            relax_contract = IntentContract(
+                name=f"metalearning_relax:c_over_tightened:{c_count}",
+                deny=relax_deny,
+                deny_commands=relax_deny_commands,
+            )
+
+            # Write runtime relax (eng-platform implements write_runtime_relax)
+            try:
+                from ystar.adapters.runtime_contracts import write_runtime_relax
+                write_runtime_relax(
+                    contract=relax_contract,
+                    session_contract=self._get_session_contract(),
+                    quality_score=quality_score,
+                    cieu_store=self._cieu_store,
+                    agent_id="governance_loop",
+                )
+            except ImportError:
+                # runtime_contracts not yet implemented by eng-platform
+                _log.info("runtime_contracts not available yet, logging relax to CIEU only")
+            except Exception as e:
+                _log.warning("write_runtime_relax failed: %s", e)
+
+            # Always log the relax event to CIEU for observability
+            self._log_orchestration_event(
+                "metalearning_relax_applied",
+                {
+                    "c_over_tightened": c_count,
+                    "threshold": self.METALEARNING_RELAX_THRESHOLD,
+                    "relax_deny_count": len(relax_deny),
+                    "relax_deny_commands_count": len(relax_deny_commands),
+                    "quality_score": quality_score,
+                },
+            )
+        except Exception as e:
+            _log.warning("Metalearning relax extraction failed: %s", e)
+
+    # ── 2c. Path B External Governance ──────────────────────────────────────
+
+    def _run_path_b_cycle(self, agent_id: str, now: float) -> None:
+        """
+        Run one Path B external governance cycle.
+
+        Path B governs external agents using the same architectural pattern
+        as Path A (observation -> constraint -> compliance check). Unlike
+        Path A, Path B is directed outward at external agents.
+
+        Path B runs independently from GovernanceLoop: even if GovernanceLoop
+        hangs or fails, Path B should still govern external agents.
+        """
+        if self._path_b_agent is None:
+            return
+
+        try:
+            cycle = self._path_b_agent.run_one_cycle()
+
+            # Log Path B cycle to CIEU
+            # Use cycle.constraint (NOT cycle.applied_constraint)
+            # ExternalGovernanceCycle field is "constraint" (path_b_agent.py:468)
+            constraint_name = None
+            if cycle.constraint is not None:
+                constraint_name = cycle.constraint.name
+
+            self._log_orchestration_event(
+                "path_b_cycle",
+                {
+                    "cycle_id": cycle.cycle_id,
+                    "applied": cycle.applied,
+                    "compliant": cycle.compliant,
+                    "agent_id": cycle.observation.agent_id if cycle.observation else None,
+                    "constraint": constraint_name,
+                    "causal_confidence": cycle.causal_confidence,
+                },
+            )
+        except Exception as e:
+            self._log_orchestration_event(
+                "path_b_cycle_error",
+                {"error": f"Path B cycle failed (non-fatal): {e}"},
+            )
 
     def _run_path_a_cycle(
         self,
@@ -508,6 +666,56 @@ class Orchestrator:
             )
         except Exception:
             return None
+
+    def _build_path_b_agent(self) -> Optional[Any]:
+        """Build a PathBAgent wired to the current CIEU store."""
+        try:
+            from ystar.path_b.path_b_agent import PathBAgent
+
+            if self._cieu_store is None:
+                return None
+
+            omission_store = None
+            if self._omission_adapter and hasattr(self._omission_adapter, 'engine'):
+                omission_store = self._omission_adapter.engine.store
+
+            return PathBAgent(
+                cieu_store=self._cieu_store,
+                omission_store=omission_store,
+                causal_engine=self._causal_engine,
+            )
+        except Exception as e:
+            _log.warning("Failed to build PathBAgent: %s", e)
+            return None
+
+    # ── Session Contract Helper ─────────────────────────────────────────────
+
+    def _get_session_contract(self):
+        """Load session.json contract as the baseline IntentContract."""
+        import os
+        import json
+        from ystar.kernel.dimensions import IntentContract
+
+        # Try session_cfg cache first
+        contract_dict = self._session_cfg.get("contract", {})
+        if contract_dict:
+            try:
+                return IntentContract.from_dict(contract_dict)
+            except Exception:
+                pass
+
+        # Fallback: read session.json from working directory
+        session_path = os.path.join(os.getcwd(), "session.json")
+        if not os.path.exists(session_path):
+            return IntentContract()
+
+        try:
+            with open(session_path) as f:
+                cfg = json.load(f)
+            cd = cfg.get("contract", {})
+            return IntentContract.from_dict(cd)
+        except Exception:
+            return IntentContract()
 
     # ── 3. CausalEngine Advisory ─────────────────────────────────────────────
 
@@ -617,6 +825,7 @@ class Orchestrator:
             "cieu_buffer_size": len(self._cieu_buffer),
             "has_governance_loop": self._governance_loop is not None,
             "has_path_a_agent": self._path_a_agent is not None,
+            "has_path_b_agent": self._path_b_agent is not None,
             "has_intervention_engine": self._intervention_engine is not None,
             "has_causal_engine": self._causal_engine is not None,
             "has_omission_adapter": self._omission_adapter is not None,
