@@ -10,12 +10,13 @@ Commands:
   ystar simulate       Simulate A/B effect evaluation
   ystar quality        Evaluate contract quality (coverage/FP rate)
   ystar check          Run policy check on JSONL events file
+  ystar check-impact   Analyze session file for P0 risks and downstream impact
   ystar report         Generate governance report
   ystar baseline       Capture current governance state as baseline
   ystar delta          Compare current state against baseline
   ystar trend          Show 7-day CIEU event trend (total/deny/rate)
   ystar demo           5-second wow moment -- governance in action
-  ystar doctor         Diagnose environment integrity
+  ystar doctor         Diagnose environment integrity (--layer1, --layer2)
   ystar verify         Verify CIEU cryptographic integrity
   ystar seal           Seal CIEU session with Merkle root
   ystar domain         Discover and use domain packs (list|describe|init)
@@ -43,6 +44,7 @@ from ystar.cli.quality_cmd import (
     _cmd_pretrain, _cmd_policy_builder,
 )
 from ystar.cli.domain_cmd import main_domain_cmd
+from ystar.cli.impact_cmd import _cmd_check_impact
 
 # Backward compatibility: these were previously defined inline
 from ystar.cli.init_cmd import (
@@ -513,11 +515,15 @@ def main() -> None:
     elif cmd == "domain":
         main_domain_cmd(rest)
 
+    elif cmd == "check-impact":
+        _cmd_check_impact(rest)
+
     else:
         print(f"Unknown command: {cmd}\n")
         print("Available commands: demo, setup, hook-install, doctor, verify, report,")
-        print("                    seal, policy-builder, audit, check, init, version,")
-        print("                    simulate, quality, baseline, delta, trend, domain")
+        print("                    seal, policy-builder, audit, check, check-impact,")
+        print("                    init, version, simulate, quality, baseline, delta,")
+        print("                    trend, domain")
         sys.exit(1)
 
 

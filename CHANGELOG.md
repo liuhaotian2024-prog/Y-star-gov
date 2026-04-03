@@ -5,7 +5,7 @@ All notable changes to Y*gov will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.48.0] - 2026-03-31
+## [0.48.0] - 2026-04-03
 
 ### Added
 - Foundation Sovereignty: Complete authority deepening across scope/compiler/provider layers
@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CIEU boot record and session config as single source of truth
 - Immutable path protection (P5 TIER1) with tool restrictions
 - Bash command write path extraction and validation
+- CI/CD: GitHub Actions pytest automation (Python 3.11+3.12)
+- Complete CLI Reference documentation
 
 ### Changed
 - Generalized CausalEngine: Configurable DAG, domain-agnostic design
@@ -20,10 +22,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed all hardcoded role names and paths for fully generic multi-agent support
 
 ### Fixed
+- All 559 tests passing (4 e2e governance pipeline tests fixed for grace period handling)
+- P0: Custom obligation timing keys now properly registered and supported
+- P0: CIEUStore.log() → .write() restored omission setup CIEU recording
+- P0: Accountability pack custom obligation key fallback
+- Omission store registration and orchestrator pipeline wiring
 - Silent exception handlers replaced with logged warnings
 - FIX-6: Delegation chain loading
 - FIX-7: Bash path normalization
 - Synced setup.py version to 0.48.0 (was stuck at 0.41.1)
+- Windows hook installation now uses .bat wrapper
+
+### Performance
+- Reduced high-frequency obligation trigger overhead
+- Optimized check_hook() with agent_id routing (only loads relevant obligations)
 
 ## [0.47.0] - 2026-03-31
 
