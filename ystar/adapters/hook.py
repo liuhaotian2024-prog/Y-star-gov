@@ -313,6 +313,44 @@ def check_hook(
                     _log.warning("DENY Bash command (write boundary): %s → %s", who, path)
                     return _result_to_response(boundary_result)
 
+    # ── I1: 外部CLAUDE.md读取检测 ──────────────────────────────────
+    if tool_name == "Read":
+        file_path = params_early.get("file_path", "")
+        if file_path and "CLAUDE.md" in file_path:
+            # 检查是否在当前工作目录之外
+            from pathlib import Path
+            try:
+                current_dir = Path(os.getcwd()).resolve()
+                read_path = Path(file_path).resolve()
+
+                # 如果读取的CLAUDE.md不在当前目录或子目录下，记录为外部读取
+                if not str(read_path).startswith(str(current_dir)):
+                    cieu_db = ".ystar_cieu.db"
+                    session_cfg_ext = _load_session_config_cached()
+                    if session_cfg_ext:
+                        cieu_db = session_cfg_ext.get("cieu_db", cieu_db)
+
+                    # 写入external_config_read事件
+                    from ystar.governance.cieu_store import CIEUStore
+                    try:
+                        store = CIEUStore(cieu_db)
+                        store.write_dict({
+                            "session_id":    session_id_payload or "unknown",
+                            "agent_id":      who,
+                            "event_type":    "external_config_read",
+                            "decision":      "allow",  # 不阻止，只记录
+                            "passed":        True,
+                            "file_path":     str(read_path),
+                            "evidence_grade": "observation",
+                            "params":        {"file_path": str(read_path), "external": True},
+                        })
+                        _log.warning("EXTERNAL CONFIG READ: %s → %s (context poisoning risk)",
+                                   who, str(read_path))
+                    except Exception as e:
+                        _log.error("Failed to write external_config_read event: %s", e)
+            except Exception as e:
+                _log.error("Failed to check external CLAUDE.md read: %s", e)
+
     # ── 尝试完整治理路径（有 session 配置时自动升级）────────────────
     session_cfg = _load_session_config_cached()
     if session_cfg:
