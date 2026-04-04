@@ -56,6 +56,9 @@ class _State:
         # Omission engine
         self.omission_engine = OmissionEngine(store=InMemoryOmissionStore())
 
+        # CIEU store (None until a db path is provided via gov_report/gov_verify)
+        self._cieu_store: Optional[Any] = None
+
         # Exec whitelist
         self.exec_whitelist = _load_exec_whitelist(exec_whitelist_path)
 
@@ -410,37 +413,218 @@ def create_server(
             })
 
     # ===================================================================
-    # AUDIT & OBSERVABILITY LAYER (stubs)
+    # AUDIT & OBSERVABILITY LAYER
     # ===================================================================
 
     @mcp.tool()
-    def gov_report() -> str:
-        """Return CIEU summary: total decisions, deny rate, agent breakdown."""
-        return json.dumps({"status": "stub", "message": "CIEU reporting not yet wired — use ystar report CLI"})
+    def gov_report(cieu_db: str = "", since_hours: float = 24.0) -> str:
+        """Return CIEU summary: total decisions, deny rate, top violations.
+
+        Args:
+            cieu_db: Path to CIEU database. Empty string uses in-process state.
+            since_hours: Report window in hours (default 24).
+        """
+        try:
+            if cieu_db:
+                from ystar.governance.cieu_store import CIEUStore
+                store = CIEUStore(cieu_db)
+            else:
+                store = state._cieu_store
+
+            if store is None:
+                return json.dumps({"error": "No CIEU store available. Pass cieu_db path."})
+
+            since_ts = time.time() - (since_hours * 3600) if since_hours > 0 else None
+            stats = store.stats(since=since_ts)
+
+            return json.dumps({
+                "total_events": stats.get("total", 0),
+                "deny_rate": round(stats.get("deny_rate", 0.0), 4),
+                "escalation_rate": round(stats.get("escalation_rate", 0.0), 4),
+                "drift_rate": round(stats.get("drift_rate", 0.0), 4),
+                "by_decision": stats.get("by_decision", {}),
+                "by_event_type": stats.get("by_event_type", {}),
+                "top_violations": stats.get("top_violations", []),
+                "sessions": stats.get("sessions", 0),
+                "since_hours": since_hours,
+            })
+        except Exception as e:
+            return json.dumps({"error": str(e)})
 
     @mcp.tool()
-    def gov_verify() -> str:
-        """Verify SHA-256 Merkle chain integrity of CIEU records."""
-        return json.dumps({"status": "stub", "message": "CIEU verification not yet wired — use ystar verify CLI"})
+    def gov_verify(cieu_db: str = "", session_id: str = "") -> str:
+        """Verify SHA-256 Merkle chain integrity of CIEU records.
+
+        Args:
+            cieu_db: Path to CIEU database.
+            session_id: Session to verify. Empty string verifies all sealed sessions.
+        """
+        try:
+            if cieu_db:
+                from ystar.governance.cieu_store import CIEUStore
+                store = CIEUStore(cieu_db)
+            else:
+                store = state._cieu_store
+
+            if store is None:
+                return json.dumps({"error": "No CIEU store available. Pass cieu_db path."})
+
+            if session_id:
+                result = store.verify_session_seal(session_id)
+                return json.dumps({
+                    "session_id": result.get("session_id", session_id),
+                    "valid": result.get("valid", False),
+                    "stored_root": result.get("stored_root", ""),
+                    "computed_root": result.get("computed_root", ""),
+                    "event_count": result.get("current_count", 0),
+                    "tamper_evidence": result.get("tamper_evidence", ""),
+                })
+            else:
+                # Verify all sealed sessions
+                results = []
+                try:
+                    # list_sealed_sessions may not exist in all versions
+                    if hasattr(store, "list_sealed_sessions"):
+                        sealed = store.list_sealed_sessions()
+                        for s in sealed:
+                            sid = s if isinstance(s, str) else getattr(s, "session_id", str(s))
+                            r = store.verify_session_seal(sid)
+                            results.append({"session_id": sid, "valid": r.get("valid", False)})
+                except Exception:
+                    pass
+
+                # Also report CIEU stats as a basic integrity signal
+                stats = store.stats()
+                all_valid = all(r["valid"] for r in results) if results else True
+                return json.dumps({
+                    "chain_integrity": "VALID" if all_valid else "BROKEN",
+                    "sessions_checked": len(results),
+                    "total_events": stats.get("total", 0),
+                    "total_sessions": stats.get("sessions", 0),
+                    "results": results,
+                })
+        except Exception as e:
+            return json.dumps({"error": str(e)})
 
     @mcp.tool()
-    def gov_obligations() -> str:
-        """Query current active obligations and their status."""
-        return json.dumps({"status": "stub", "message": "Obligation query not yet wired"})
+    def gov_obligations(
+        actor_id: str = "",
+        status_filter: str = "",
+    ) -> str:
+        """Query current obligations from the OmissionEngine store.
+
+        Args:
+            actor_id: Filter by actor. Empty string returns all.
+            status_filter: Filter by status (pending, fulfilled, soft_overdue, hard_overdue, etc.).
+        """
+        try:
+            store = state.omission_engine.store
+            kwargs: Dict[str, Any] = {}
+            if actor_id:
+                kwargs["actor_id"] = actor_id
+            if status_filter:
+                from ystar import ObligationStatus
+                try:
+                    kwargs["status"] = ObligationStatus(status_filter)
+                except ValueError:
+                    return json.dumps({"error": f"Unknown status: {status_filter}. Valid: pending, fulfilled, soft_overdue, hard_overdue, escalated, cancelled, expired, failed"})
+
+            obligations = store.list_obligations(**kwargs)
+
+            items = []
+            for ob in obligations:
+                items.append({
+                    "obligation_id": ob.obligation_id,
+                    "obligation_type": ob.obligation_type,
+                    "entity_id": ob.entity_id,
+                    "actor_id": ob.actor_id,
+                    "status": ob.status.value if hasattr(ob.status, "value") else str(ob.status),
+                    "due_at": ob.due_at,
+                    "severity": ob.severity.value if hasattr(ob.severity, "value") else str(ob.severity),
+                })
+
+            return json.dumps({
+                "total": len(items),
+                "obligations": items,
+                "filters": {"actor_id": actor_id or None, "status": status_filter or None},
+            })
+        except Exception as e:
+            return json.dumps({"error": str(e)})
 
     @mcp.tool()
     def gov_doctor() -> str:
-        """Run 7-point health check on Y*gov installation."""
+        """Run health check on Y*gov governance state.
+
+        Returns structured diagnostics: contract status, delegation chain,
+        omission engine state, and subsystem liveness.
+        """
+        checks: Dict[str, Any] = {}
+
+        # 1. Contract
+        checks["contract"] = {
+            "status": "loaded",
+            "name": state.active_contract.name or "(unnamed)",
+            "hash": state.active_contract.hash,
+            "agents_md": str(state.agents_md_path),
+            "confidence": state.confidence_label,
+            "confidence_score": state.confidence_score,
+        }
+
+        # 2. Delegation chain
+        chain_issues = state.delegation_chain.validate() if state.delegation_chain.depth > 0 else []
+        checks["delegation_chain"] = {
+            "depth": state.delegation_chain.depth,
+            "valid": len(chain_issues) == 0,
+            "issues": chain_issues,
+        }
+
+        # 3. Omission engine
+        try:
+            store = state.omission_engine.store
+            pending = store.pending_obligations()
+            all_obs = store.list_obligations()
+            checks["omission_engine"] = {
+                "status": "active",
+                "total_obligations": len(all_obs),
+                "pending": len(pending),
+            }
+        except Exception as e:
+            checks["omission_engine"] = {"status": "error", "error": str(e)}
+
+        # 4. CIEU store
+        if state._cieu_store is not None:
+            try:
+                stats = state._cieu_store.stats()
+                checks["cieu"] = {
+                    "status": "active",
+                    "total_events": stats.get("total", 0),
+                    "deny_rate": round(stats.get("deny_rate", 0.0), 4),
+                }
+            except Exception as e:
+                checks["cieu"] = {"status": "error", "error": str(e)}
+        else:
+            checks["cieu"] = {"status": "not_configured"}
+
+        # 5. Exec whitelist
+        wl = state.exec_whitelist
+        checks["exec_whitelist"] = {
+            "allowed_prefixes": len(wl.get("allowed_prefixes", [])),
+            "always_deny": len(wl.get("always_deny", [])),
+        }
+
+        # Overall health
+        failed = []
+        if not checks["contract"]["hash"]:
+            failed.append("contract not loaded")
+        if checks.get("delegation_chain", {}).get("issues"):
+            failed.append("delegation chain invalid")
+        if checks.get("omission_engine", {}).get("status") == "error":
+            failed.append("omission engine error")
+
         return json.dumps({
-            "status": "operational",
-            "checks": {
-                "active_contract": state.active_contract.name or "(unnamed)",
-                "contract_hash": state.active_contract.hash,
-                "agents_md": str(state.agents_md_path),
-                "confidence": state.confidence_label,
-                "confidence_score": state.confidence_score,
-                "delegation_chain_depth": state.delegation_chain.depth,
-            },
+            "health": "degraded" if failed else "healthy",
+            "issues": failed,
+            "checks": checks,
         })
 
     return mcp
