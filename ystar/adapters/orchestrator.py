@@ -937,6 +937,124 @@ class Orchestrator:
             "last_intervention_scan_at": self._last_intervention_scan_at,
         }
 
+    # ── Governance Heartbeat ────────────────────────────────────────────────
+
+    def governance_heartbeat(self) -> Dict[str, Any]:
+        """
+        Produce a structured governance health snapshot.
+
+        Returns a dict with:
+          - timestamp: when the heartbeat was taken
+          - alive: True if orchestrator is initialized and has processed calls
+          - call_count: total hook calls processed
+          - subsystems: dict of subsystem name → bool (alive/dead)
+          - last_intervention_scan_age_s: seconds since last intervention scan
+          - last_governance_loop_age_s: seconds since last governance loop cycle
+          - cieu_chain_ok: True if CIEU chain integrity is valid (None if unchecked)
+          - active_obligations: count of pending obligations (None if unavailable)
+          - active_pulses: count of active intervention pulses (None if unavailable)
+          - contract_hash: SHA-256 hash of the active IntentContract
+          - circuit_breaker_armed: True if circuit breaker has tripped
+          - health: "healthy" | "degraded" | "dead"
+        """
+        now = time.time()
+        hb: Dict[str, Any] = {
+            "timestamp": now,
+            "alive": self._initialized and self._call_count > 0,
+            "call_count": self._call_count,
+        }
+
+        # Subsystem liveness
+        hb["subsystems"] = {
+            "intervention_engine": self._intervention_engine is not None,
+            "governance_loop": self._governance_loop is not None,
+            "omission_adapter": self._omission_adapter is not None,
+            "causal_engine": self._causal_engine is not None,
+            "path_a": self._path_a_agent is not None,
+            "path_b": self._path_b_agent is not None,
+            "cieu_store": self._cieu_store is not None,
+        }
+
+        # Age of last periodic scans
+        hb["last_intervention_scan_age_s"] = (
+            round(now - self._last_intervention_scan_at, 1)
+            if self._last_intervention_scan_at > 0 else None
+        )
+        hb["last_governance_loop_age_s"] = (
+            round(now - self._last_governance_loop_at, 1)
+            if self._last_governance_loop_at > 0 else None
+        )
+
+        # CIEU chain integrity (lightweight: verify last 10 records)
+        hb["cieu_chain_ok"] = None
+        if self._cieu_store is not None:
+            try:
+                verify = self._cieu_store.verify()
+                hb["cieu_chain_ok"] = bool(verify)
+            except Exception:
+                hb["cieu_chain_ok"] = None
+
+        # Active obligations
+        hb["active_obligations"] = None
+        if self._omission_adapter is not None:
+            try:
+                engine = self._omission_adapter.engine
+                pending = engine.store.pending_obligations()
+                hb["active_obligations"] = len(pending)
+            except Exception:
+                pass
+
+        # Active intervention pulses
+        hb["active_pulses"] = None
+        if self._intervention_engine is not None:
+            try:
+                pulse_store = self._intervention_engine._pulse_store
+                active = [p for p in pulse_store.list_all()
+                          if p.status.value == "active"]
+                hb["active_pulses"] = len(active)
+            except Exception:
+                pass
+
+        # Contract hash
+        hb["contract_hash"] = None
+        try:
+            contract = self._get_session_contract()
+            if contract and contract.hash:
+                hb["contract_hash"] = contract.hash
+        except Exception:
+            pass
+
+        # Circuit breaker
+        hb["circuit_breaker_armed"] = False
+        if self._intervention_engine is not None:
+            hb["circuit_breaker_armed"] = getattr(
+                self._intervention_engine, "_circuit_breaker_armed", False
+            )
+
+        # Overall health assessment
+        subsystems_alive = sum(1 for v in hb["subsystems"].values() if v)
+        subsystems_total = len(hb["subsystems"])
+
+        if not hb["alive"]:
+            hb["health"] = "dead"
+        elif hb["circuit_breaker_armed"]:
+            hb["health"] = "degraded"
+        elif subsystems_alive < 3:
+            hb["health"] = "degraded"
+        else:
+            hb["health"] = "healthy"
+
+        # Log heartbeat to CIEU
+        self._log_orchestration_event("governance_heartbeat", {
+            "health": hb["health"],
+            "subsystems_alive": subsystems_alive,
+            "subsystems_total": subsystems_total,
+            "call_count": self._call_count,
+            "circuit_breaker_armed": hb["circuit_breaker_armed"],
+        })
+
+        return hb
+
 
 # ── Module-level Singleton ───────────────────────────────────────────────────
 

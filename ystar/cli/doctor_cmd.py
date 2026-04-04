@@ -378,6 +378,62 @@ def _doctor_layer1() -> Tuple[bool, int, int]:
         except Exception as e:
             warn(f"Monotonicity check failed: {e}")
 
+    # 10. Governance Heartbeat
+    print()
+    print("  [10] Governance Heartbeat")
+    try:
+        from ystar.adapters.orchestrator import get_orchestrator
+        orch = get_orchestrator()
+        hb = orch.governance_heartbeat()
+
+        if hb["health"] == "dead":
+            fail("Governance Heartbeat — DEAD (orchestrator not initialized)",
+                 "Run agent commands to trigger hook initialization")
+        elif hb["health"] == "degraded":
+            reasons = []
+            if hb.get("circuit_breaker_armed"):
+                reasons.append("circuit breaker armed")
+            subsystems = hb.get("subsystems", {})
+            dead_subs = [k for k, v in subsystems.items() if not v]
+            if dead_subs:
+                reasons.append(f"dead subsystems: {', '.join(dead_subs)}")
+            fail(f"Governance Heartbeat — DEGRADED ({'; '.join(reasons)})",
+                 "Check subsystem initialization and circuit breaker status")
+        else:
+            sub_alive = sum(1 for v in hb.get("subsystems", {}).values() if v)
+            sub_total = len(hb.get("subsystems", {}))
+            extra = []
+            if hb.get("call_count", 0) > 0:
+                extra.append(f"{hb['call_count']} calls")
+            if hb.get("active_obligations") is not None:
+                extra.append(f"{hb['active_obligations']} obligations")
+            if hb.get("active_pulses") is not None:
+                extra.append(f"{hb['active_pulses']} pulses")
+            detail = f", {', '.join(extra)}" if extra else ""
+            ok(f"Governance Heartbeat — HEALTHY ({sub_alive}/{sub_total} subsystems{detail})")
+
+        # Heartbeat age warning (if intervention scan is stale)
+        from ystar.adapters.orchestrator import (
+            INTERVENTION_SCAN_INTERVAL_SECS,
+            GOVERNANCE_LOOP_INTERVAL_SECS,
+        )
+        scan_age = hb.get("last_intervention_scan_age_s")
+        if scan_age is not None and scan_age > INTERVENTION_SCAN_INTERVAL_SECS * 3:
+            warn(f"Intervention scan is stale ({int(scan_age)}s ago, expected every {int(INTERVENTION_SCAN_INTERVAL_SECS)}s)")
+
+        loop_age = hb.get("last_governance_loop_age_s")
+        if loop_age is not None and loop_age > GOVERNANCE_LOOP_INTERVAL_SECS * 3:
+            warn(f"Governance loop is stale ({int(loop_age)}s ago, expected every {int(GOVERNANCE_LOOP_INTERVAL_SECS)}s)")
+
+        # CIEU chain integrity from heartbeat
+        if hb.get("cieu_chain_ok") is False:
+            fail("CIEU chain integrity — BROKEN (detected via heartbeat)",
+                 "Run 'ystar verify' for full chain verification")
+        elif hb.get("cieu_chain_ok") is True:
+            ok("CIEU chain integrity — verified via heartbeat")
+    except Exception as e:
+        warn(f"Governance Heartbeat — check failed: {e}")
+
     # CIEU statistics for Path B constraint activity
     try:
         from ystar.governance.cieu_store import CIEUStore as _CStore
