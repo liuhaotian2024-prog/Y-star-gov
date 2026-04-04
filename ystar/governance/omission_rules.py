@@ -119,12 +119,14 @@ class OmissionRule:
 # 宪法守卫：以下常量作为测试断言的参考基准，
 # 任何低于此值的默认时限都意味着可能在不加 domain pack 时造成误伤。
 KERNEL_SAFE_DEFAULT_DUE_SECS = 3600.0    # 1 小时：无 domain pack 时的安全兜底
+KERNEL_SAFE_DEFAULT_VIOLATION_SECS = 1800.0  # 30 分钟：violation 触发的宽限期
 KERNEL_REQUIRE_DOMAIN_PACK   = False      # 设为 True 可强制要求接入必须配置 domain pack
 
 def _make_default_escalation(
     reminder_secs: Optional[float] = None,
     escalate_secs: Optional[float] = None,
     deny_closure: bool = False,
+    violation_secs: Optional[float] = None,
 ) -> EscalationPolicy:
     actions = [EscalationAction.VIOLATION]
     if reminder_secs is not None:
@@ -135,7 +137,7 @@ def _make_default_escalation(
         actions.append(EscalationAction.DENY_CLOSURE)
     return EscalationPolicy(
         reminder_after_secs  = reminder_secs,
-        violation_after_secs = 0,
+        violation_after_secs = violation_secs if violation_secs is not None else KERNEL_SAFE_DEFAULT_VIOLATION_SECS,
         escalate_after_secs  = escalate_secs,
         actions              = actions,
         deny_closure_on_open = deny_closure,

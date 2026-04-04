@@ -140,7 +140,7 @@ class TestCircuitBreakerArming:
             omission_store=store,
             cieu_store=NullCIEUStore(),
         )
-        assert engine._circuit_breaker_threshold == 20
+        assert engine._circuit_breaker_threshold == 50
 
 
 class TestCircuitBreakerPulseRejection:

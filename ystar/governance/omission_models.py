@@ -167,7 +167,7 @@ class EscalationPolicy:
     def default(cls) -> "EscalationPolicy":
         return cls(
             reminder_after_secs  = None,
-            violation_after_secs = 0,     # 立即标为 violation
+            violation_after_secs = 1800.0,  # 30 分钟宽限期（与 deadline 一致）
             escalate_after_secs  = None,
             actions              = [EscalationAction.VIOLATION],
         )

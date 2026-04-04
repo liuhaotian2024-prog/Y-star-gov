@@ -70,7 +70,7 @@ def apply_ystar_dev_omission_pack(
         severity            = Severity.CRITICAL,
         escalation_policy   = EscalationPolicy(
             reminder_after_secs  = 300.0,
-            violation_after_secs = 0,
+            violation_after_secs = 1800.0,
             escalate_after_secs  = 900.0,
             actions              = [EscalationAction.REMINDER, EscalationAction.VIOLATION,
                                     EscalationAction.ESCALATE],
@@ -94,7 +94,7 @@ def apply_ystar_dev_omission_pack(
         severity            = Severity.CRITICAL,
         escalation_policy   = EscalationPolicy(
             reminder_after_secs  = 120.0,
-            violation_after_secs = 0,
+            violation_after_secs = 1800.0,
             actions              = [EscalationAction.REMINDER, EscalationAction.VIOLATION,
                                     EscalationAction.DENY_CLOSURE],
             deny_closure_on_open = True,
@@ -117,7 +117,7 @@ def apply_ystar_dev_omission_pack(
         violation_code      = "required_cieu_archive_omission",
         severity            = Severity.CRITICAL,
         escalation_policy   = EscalationPolicy(
-            violation_after_secs = 0,
+            violation_after_secs = 1800.0,
             actions              = [EscalationAction.VIOLATION, EscalationAction.DENY_CLOSURE],
             deny_closure_on_open = True,
         ),
@@ -140,7 +140,7 @@ def apply_ystar_dev_omission_pack(
         severity            = Severity.HIGH,
         escalation_policy   = EscalationPolicy(
             reminder_after_secs  = 120.0,
-            violation_after_secs = 0,
+            violation_after_secs = 1800.0,
             actions              = [EscalationAction.REMINDER, EscalationAction.VIOLATION],
         ),
     )
@@ -161,7 +161,7 @@ def apply_ystar_dev_omission_pack(
         severity            = Severity.HIGH,
         escalation_policy   = EscalationPolicy(
             reminder_after_secs  = 120.0,
-            violation_after_secs = 0,
+            violation_after_secs = 1800.0,
             actions              = [EscalationAction.REMINDER, EscalationAction.VIOLATION],
         ),
     )
@@ -183,7 +183,7 @@ def apply_ystar_dev_omission_pack(
         severity            = Severity.CRITICAL,
         escalation_policy   = EscalationPolicy(
             reminder_after_secs  = 600.0,
-            violation_after_secs = 0,
+            violation_after_secs = 1800.0,
             actions              = [EscalationAction.REMINDER, EscalationAction.VIOLATION,
                                     EscalationAction.DENY_CLOSURE],
             deny_closure_on_open = True,

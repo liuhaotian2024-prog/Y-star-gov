@@ -138,7 +138,7 @@ def apply_finance_pack(
             violation_code      = "required_risk_assessment_omission",
             severity            = Severity.CRITICAL,
             escalation_policy   = EscalationPolicy(
-                violation_after_secs = 0,
+                violation_after_secs = 1800.0,
                 escalate_after_secs  = 5.0,
                 actions              = [EscalationAction.VIOLATION, EscalationAction.ESCALATE,
                                         EscalationAction.DENY_CLOSURE],
@@ -163,7 +163,7 @@ def apply_finance_pack(
             severity            = Severity.HIGH,
             escalation_policy   = EscalationPolicy(
                 reminder_after_secs  = 15.0,
-                violation_after_secs = 0,
+                violation_after_secs = 1800.0,
                 escalate_after_secs  = 60.0,
                 actions              = [EscalationAction.REMINDER, EscalationAction.VIOLATION],
             ),
@@ -238,7 +238,7 @@ def apply_healthcare_pack(
             severity            = Severity.CRITICAL,
             escalation_policy   = EscalationPolicy(
                 reminder_after_secs  = 1800.0,
-                violation_after_secs = 0,
+                violation_after_secs = 1800.0,
                 escalate_after_secs  = 7200.0,
                 actions              = [EscalationAction.REMINDER, EscalationAction.VIOLATION,
                                         EscalationAction.ESCALATE, EscalationAction.DENY_CLOSURE],
@@ -264,7 +264,7 @@ def apply_healthcare_pack(
             severity            = Severity.CRITICAL,
             escalation_policy   = EscalationPolicy(
                 reminder_after_secs  = 600.0,
-                violation_after_secs = 0,
+                violation_after_secs = 1800.0,
                 actions              = [EscalationAction.REMINDER, EscalationAction.VIOLATION,
                                         EscalationAction.DENY_CLOSURE],
                 deny_closure_on_open = True,
@@ -470,7 +470,7 @@ def apply_legal_pack(
             severity            = Severity.CRITICAL,
             escalation_policy   = EscalationPolicy(
                 reminder_after_secs  = 43200.0,
-                violation_after_secs = 0,
+                violation_after_secs = 1800.0,
                 escalate_after_secs  = 172800.0,
                 actions              = [EscalationAction.REMINDER, EscalationAction.VIOLATION,
                                         EscalationAction.ESCALATE, EscalationAction.DENY_CLOSURE],
@@ -496,7 +496,7 @@ def apply_legal_pack(
             severity            = Severity.HIGH,
             escalation_policy   = EscalationPolicy(
                 reminder_after_secs  = 86400.0,
-                violation_after_secs = 0,
+                violation_after_secs = 1800.0,
                 escalate_after_secs  = 259200.0,
                 actions              = [EscalationAction.REMINDER, EscalationAction.VIOLATION,
                                         EscalationAction.DENY_CLOSURE],
@@ -522,7 +522,7 @@ def apply_legal_pack(
             severity            = Severity.CRITICAL,
             escalation_policy   = EscalationPolicy(
                 reminder_after_secs  = 43200.0,
-                violation_after_secs = 0,
+                violation_after_secs = 1800.0,
                 actions              = [EscalationAction.REMINDER, EscalationAction.VIOLATION,
                                         EscalationAction.DENY_CLOSURE],
                 deny_closure_on_open = True,
@@ -602,7 +602,7 @@ def apply_crypto_pack(
             violation_code      = "required_liquidation_monitoring_omission",
             severity            = Severity.CRITICAL,
             escalation_policy   = EscalationPolicy(
-                violation_after_secs = 0,
+                violation_after_secs = 1800.0,
                 escalate_after_secs  = 10.0,
                 actions              = [EscalationAction.VIOLATION, EscalationAction.ESCALATE,
                                         EscalationAction.DENY_CLOSURE],
@@ -629,7 +629,7 @@ def apply_crypto_pack(
             severity            = Severity.HIGH,
             escalation_policy   = EscalationPolicy(
                 reminder_after_secs  = 30.0,
-                violation_after_secs = 0,
+                violation_after_secs = 1800.0,
                 escalate_after_secs  = 120.0,
                 actions              = [EscalationAction.REMINDER, EscalationAction.VIOLATION,
                                         EscalationAction.DENY_CLOSURE],
@@ -653,7 +653,7 @@ def apply_crypto_pack(
             violation_code      = "required_slippage_check_omission",
             severity            = Severity.MEDIUM,
             escalation_policy   = EscalationPolicy(
-                violation_after_secs = 0,
+                violation_after_secs = 1800.0,
                 actions              = [EscalationAction.VIOLATION],
             ),
         )
@@ -731,7 +731,7 @@ def apply_pharma_pack(
             severity            = Severity.CRITICAL,
             escalation_policy   = EscalationPolicy(
                 reminder_after_secs  = 604800.0,  # 7 days reminder
-                violation_after_secs = 0,
+                violation_after_secs = 1800.0,
                 escalate_after_secs  = 1728000.0,  # 20 days
                 actions              = [EscalationAction.REMINDER, EscalationAction.VIOLATION,
                                         EscalationAction.ESCALATE, EscalationAction.DENY_CLOSURE],
@@ -758,7 +758,7 @@ def apply_pharma_pack(
             severity            = Severity.CRITICAL,
             escalation_policy   = EscalationPolicy(
                 reminder_after_secs  = 172800.0,  # 2 days reminder
-                violation_after_secs = 0,
+                violation_after_secs = 1800.0,
                 escalate_after_secs  = 864000.0,   # 10 days
                 actions              = [EscalationAction.REMINDER, EscalationAction.VIOLATION,
                                         EscalationAction.ESCALATE, EscalationAction.DENY_CLOSURE],
@@ -784,7 +784,7 @@ def apply_pharma_pack(
             violation_code      = "required_audit_trail_omission",
             severity            = Severity.HIGH,
             escalation_policy   = EscalationPolicy(
-                violation_after_secs = 0,
+                violation_after_secs = 1800.0,
                 actions              = [EscalationAction.VIOLATION, EscalationAction.DENY_CLOSURE],
                 deny_closure_on_open = True,
             ),

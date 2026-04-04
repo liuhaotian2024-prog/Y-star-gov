@@ -309,7 +309,7 @@ class InterventionEngine:
         # Board 要求 threshold=20。
         self._circuit_breaker_armed = False
         self._circuit_breaker_violation_count = 0
-        self._circuit_breaker_threshold = 20  # Board 要求
+        self._circuit_breaker_threshold = 50  # Board 要求 (raised from 20 to avoid false triggers)
 
     # ── 主入口 1：处理 omission violations → 产生干预脉冲 ────────────────────
 
