@@ -49,7 +49,7 @@ from ystar.cli.quality_cmd import (
 )
 from ystar.cli.domain_cmd import main_domain_cmd
 from ystar.cli.impact_cmd import _cmd_check_impact
-from ystar.cli.archive_cmd import _cmd_archive_cieu
+from ystar.cli.archive_cmd import _cmd_archive_cieu, _cmd_archive
 
 # Backward compatibility: these were previously defined inline
 from ystar.cli.init_cmd import (
@@ -623,6 +623,9 @@ def main() -> None:
     elif cmd == "archive-cieu":
         _cmd_archive_cieu(rest)
 
+    elif cmd == "archive":
+        _cmd_archive(rest)
+
     elif cmd == "reset-breaker":
         _cmd_reset_breaker()
 
@@ -634,7 +637,7 @@ def main() -> None:
         print("Available commands: demo, setup, hook-install, doctor, verify, report,")
         print("                    seal, policy-builder, audit, check, check-impact,")
         print("                    init, version, simulate, quality, baseline, delta,")
-        print("                    trend, domain, archive-cieu, reset-breaker,")
+        print("                    trend, domain, archive, archive-cieu, reset-breaker,")
         print("                    governance-coverage")
         sys.exit(1)
 
