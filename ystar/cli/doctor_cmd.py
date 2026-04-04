@@ -143,6 +143,10 @@ def _doctor_layer1() -> Tuple[bool, int, int]:
     print()
     print("  [3] Contract File")
     contract_file = pathlib.Path("AGENTS.md")
+
+    # Detect if this is the Y*gov framework repo itself (not a user project)
+    is_framework_repo = (pathlib.Path("ystar") / "__init__.py").exists()
+
     if contract_file.exists():
         try:
             lines = contract_file.read_text(encoding="utf-8").splitlines()
@@ -150,8 +154,11 @@ def _doctor_layer1() -> Tuple[bool, int, int]:
         except Exception as e:
             fail(f"Contract File — AGENTS.md exists but unreadable: {e}")
     else:
-        fail("Contract File — AGENTS.md not found",
-             "Create AGENTS.md with governance rules")
+        if is_framework_repo:
+            warn("Contract File — AGENTS.md not found (framework repo, skipping)")
+        else:
+            fail("Contract File — AGENTS.md not found",
+                 "Create AGENTS.md with governance rules")
 
     # 4. Check Interrupt Gate (pending obligations)
     print()

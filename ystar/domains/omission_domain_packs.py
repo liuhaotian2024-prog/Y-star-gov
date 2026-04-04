@@ -10,6 +10,9 @@ ystar.omission_domain_packs  —  Domain-Specific Omission Rule Configurations
     healthcare — 医疗工作流：delegation 5min，status 更新 30min，严格 closure
     devops     — CI/CD 流水线：快速 ack，blocker 必须立即上报
     research   — 研究场景：宽松时限，重结果发布
+    legal      — 法律合规场景：审计可追溯，多层审批，文档归档
+    crypto     — 加密货币交易：24/7 运行，极低延迟，实时风控
+    pharma     — 制药监管场景：SAE 15天上报，死亡 7天，审计追踪强制
 
 使用方式：
     from ystar.domains.omission_domain_packs import apply_finance_pack
@@ -403,6 +406,397 @@ def apply_research_pack(registry: RuleRegistry) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Legal/Compliance Domain Pack
+# ══════════════════════════════════════════════════════════════════════════════
+
+def apply_legal_pack(
+    registry: RuleRegistry,
+    strict:   bool = False,
+    contract: Any  = None,
+) -> None:
+    """
+    法律合规 domain omission 配置。
+
+    核心原则：审计可追溯性优先。时限严格但允许合理延期。
+    多层审批流程，文档保留要求。
+
+    时限覆盖：
+        delegation    : 300s → 3600s（1小时分配案件）
+        acknowledgement: 120s → 3600s（1小时确认收到）
+        status_update : 600s → 86400s（每日状态更新）
+        result_pub    : 60s → 7200s（2小时发布法律意见）
+        upstream_notify: 180s → 3600s（1小时上报）
+        escalation    : 120s → 1800s（30分钟上报阻塞）
+
+    strict=True 时额外添加：
+        - 利益冲突检查：新案件必须在24小时内完成conflict check
+        - 审批链完整性：重大决策必须有完整approval chain
+    """
+    overrides = {
+        "rule_a_delegation":          (3600.0,  300.0),
+        "rule_b_acknowledgement":     (3600.0,  300.0),
+        "rule_c_status_update":       (86400.0, 3600.0),
+        "rule_d_result_publication":  (7200.0,  600.0),
+        "rule_e_upstream_notification":(3600.0, 300.0),
+        "rule_f_escalation":          (1800.0,  120.0),
+        "rule_g_closure":             (86400.0, 3600.0),
+    }
+    for rule_id, (due, grace) in overrides.items():
+        registry.override_timing(rule_id, due_within_secs=due, grace_period_secs=grace)
+
+    # escalation 规则：CRITICAL severity，必须有audit trail
+    rule_esc = registry.get("rule_f_escalation")
+    if rule_esc:
+        rule_esc.severity = Severity.CRITICAL
+        rule_esc.escalation_policy.escalate_to = "general_counsel"
+        rule_esc.escalation_policy.escalate_after_secs = 3600.0
+        if EscalationAction.ESCALATE not in rule_esc.escalation_policy.actions:
+            rule_esc.escalation_policy.actions.append(EscalationAction.ESCALATE)
+
+    if strict:
+        # 利益冲突检查规则
+        conflict_check_rule = OmissionRule(
+            rule_id             = "legal_conflict_check",
+            name                = "Conflict Check Required",
+            description         = "New matters must have conflict check within 24 hours",
+            trigger_event_types = [GEventType.ENTITY_CREATED],
+            entity_types        = ["legal_matter", "new_client", "engagement"],
+            actor_selector      = _select_current_owner,
+            obligation_type     = "required_conflict_check_omission",
+            required_event_types= ["conflict_check_passed_event", "conflict_check_failed_event",
+                                   "conflict_waived_event"],
+            due_within_secs     = 86400.0,  # 24 hours
+            violation_code      = "required_conflict_check_omission",
+            severity            = Severity.CRITICAL,
+            escalation_policy   = EscalationPolicy(
+                reminder_after_secs  = 43200.0,
+                violation_after_secs = 0,
+                escalate_after_secs  = 172800.0,
+                actions              = [EscalationAction.REMINDER, EscalationAction.VIOLATION,
+                                        EscalationAction.ESCALATE, EscalationAction.DENY_CLOSURE],
+                escalate_to          = "general_counsel",
+                deny_closure_on_open = True,
+            ),
+            deny_closure_on_open= True,
+        )
+        registry.register(conflict_check_rule)
+
+        # 审批链完整性规则
+        approval_chain_rule = OmissionRule(
+            rule_id             = "legal_approval_chain",
+            name                = "Approval Chain Required",
+            description         = "Major decisions require complete approval chain",
+            trigger_event_types = [GEventType.ENTITY_CREATED],
+            entity_types        = ["settlement", "legal_opinion", "major_decision"],
+            actor_selector      = _select_current_owner,
+            obligation_type     = "required_approval_chain_omission",
+            required_event_types= ["approval_obtained_event", "approval_chain_complete_event"],
+            due_within_secs     = 172800.0,  # 48 hours
+            violation_code      = "required_approval_chain_omission",
+            severity            = Severity.HIGH,
+            escalation_policy   = EscalationPolicy(
+                reminder_after_secs  = 86400.0,
+                violation_after_secs = 0,
+                escalate_after_secs  = 259200.0,
+                actions              = [EscalationAction.REMINDER, EscalationAction.VIOLATION,
+                                        EscalationAction.DENY_CLOSURE],
+                escalate_to          = "general_counsel",
+                deny_closure_on_open = True,
+            ),
+            deny_closure_on_open= True,
+        )
+        registry.register(approval_chain_rule)
+
+        # 文档归档规则
+        archive_rule = OmissionRule(
+            rule_id             = "legal_document_archive",
+            name                = "Document Archive Required",
+            description         = "Closed matters must have documents archived",
+            trigger_event_types = [GEventType.RESULT_PUBLICATION_EVENT],
+            entity_types        = ["legal_matter", "litigation", "contract_review"],
+            actor_selector      = _select_current_owner,
+            obligation_type     = "required_document_archive_omission",
+            required_event_types= ["documents_archived_event", "retention_applied_event"],
+            due_within_secs     = 86400.0,  # 24 hours after closure
+            violation_code      = "required_document_archive_omission",
+            severity            = Severity.CRITICAL,
+            escalation_policy   = EscalationPolicy(
+                reminder_after_secs  = 43200.0,
+                violation_after_secs = 0,
+                actions              = [EscalationAction.REMINDER, EscalationAction.VIOLATION,
+                                        EscalationAction.DENY_CLOSURE],
+                deny_closure_on_open = True,
+            ),
+            deny_closure_on_open= True,
+        )
+        registry.register(archive_rule)
+
+    # 合约时限优先于 domain pack 预设（用户意图 > 场景经验值）
+    _apply_contract_timing_overrides(registry, contract)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Crypto Domain Pack
+# ══════════════════════════════════════════════════════════════════════════════
+
+def apply_crypto_pack(
+    registry: RuleRegistry,
+    strict:   bool = False,
+    contract: Any  = None,
+) -> None:
+    """
+    加密货币交易 domain omission 配置。
+
+    核心原则：24/7 全天候运行，极低延迟，实时风控。
+    时限比 finance pack 更严格，因为链上确认不可逆且清算风险高。
+
+    时限覆盖：
+        delegation    : 300s → 15s（快速分配订单到执行agent）
+        acknowledgement: 120s → 5s（必须立即确认收到订单）
+        status_update : 600s → 30s（持续监控仓位状态）
+        result_pub    : 60s → 3s（交易结果立即发布）
+        upstream_notify: 180s → 10s（立即上报执行情况）
+        escalation    : 120s → 3s（阻塞必须实时上报）
+        closure       : 600s → 30s（快速结算关闭）
+
+    strict=True 时额外添加：
+        - 清算监控规则：health_factor 低于阈值必须立即报警
+        - 链上确认规则：交易必须有 on-chain confirmation
+        - 滑点检查规则：实际滑点必须在容忍范围内
+    """
+    # 覆盖内置规则时限（比 finance 更严格）
+    overrides = {
+        "rule_a_delegation":          (15.0,  0.0),
+        "rule_b_acknowledgement":     (5.0,   0.0),
+        "rule_c_status_update":       (30.0,  0.0),
+        "rule_d_result_publication":  (3.0,   0.0),
+        "rule_e_upstream_notification":(10.0, 0.0),
+        "rule_f_escalation":          (3.0,   0.0),
+        "rule_g_closure":             (30.0,  0.0),
+    }
+    for rule_id, (due, grace) in overrides.items():
+        registry.override_timing(rule_id, due_within_secs=due, grace_period_secs=grace)
+
+    # 更新 escalation policies 以适应 crypto 的高风险特性
+    for rule_id in ("rule_a_delegation", "rule_f_escalation"):
+        rule = registry.get(rule_id)
+        if rule:
+            rule.severity = Severity.CRITICAL
+            rule.escalation_policy.escalate_after_secs = 5.0
+            if EscalationAction.ESCALATE not in rule.escalation_policy.actions:
+                rule.escalation_policy.actions.append(EscalationAction.ESCALATE)
+
+    if strict:
+        # 清算监控规则
+        liquidation_rule = OmissionRule(
+            rule_id             = "crypto_liquidation_monitoring",
+            name                = "Liquidation Monitoring Required",
+            description         = "Positions with health_factor < 1.2 must have monitoring alert",
+            trigger_event_types = [GEventType.ENTITY_CREATED, GEventType.ENTITY_ASSIGNED],
+            entity_types        = ["leveraged_position", "futures_position", "perpetual_position"],
+            actor_selector      = _select_current_owner,
+            obligation_type     = "required_liquidation_monitoring_omission",
+            required_event_types= ["liquidation_alert_event", "health_check_event",
+                                   "position_reduced_event"],
+            due_within_secs     = 5.0,  # 5 seconds to set up monitoring
+            violation_code      = "required_liquidation_monitoring_omission",
+            severity            = Severity.CRITICAL,
+            escalation_policy   = EscalationPolicy(
+                violation_after_secs = 0,
+                escalate_after_secs  = 10.0,
+                actions              = [EscalationAction.VIOLATION, EscalationAction.ESCALATE,
+                                        EscalationAction.DENY_CLOSURE],
+                escalate_to          = "risk_manager",
+                deny_closure_on_open = True,
+            ),
+            deny_closure_on_open= True,
+        )
+        registry.register(liquidation_rule)
+
+        # 链上确认规则
+        onchain_confirm_rule = OmissionRule(
+            rule_id             = "crypto_onchain_confirmation",
+            name                = "On-Chain Confirmation Required",
+            description         = "Executed trades must have on-chain confirmation",
+            trigger_event_types = [GEventType.RESULT_PUBLICATION_EVENT],
+            entity_types        = ["trade_execution", "withdrawal", "deposit"],
+            actor_selector      = _select_current_owner,
+            obligation_type     = "required_onchain_confirmation_omission",
+            required_event_types= ["onchain_confirmed_event", "settlement_confirmed_event",
+                                   "blockchain_verified_event"],
+            due_within_secs     = 60.0,  # 1 minute for blockchain confirmation
+            violation_code      = "required_onchain_confirmation_omission",
+            severity            = Severity.HIGH,
+            escalation_policy   = EscalationPolicy(
+                reminder_after_secs  = 30.0,
+                violation_after_secs = 0,
+                escalate_after_secs  = 120.0,
+                actions              = [EscalationAction.REMINDER, EscalationAction.VIOLATION,
+                                        EscalationAction.DENY_CLOSURE],
+                deny_closure_on_open = True,
+            ),
+            deny_closure_on_open= True,
+        )
+        registry.register(onchain_confirm_rule)
+
+        # 滑点检查规则
+        slippage_check_rule = OmissionRule(
+            rule_id             = "crypto_slippage_check",
+            name                = "Slippage Check Required",
+            description         = "Executed trades must have slippage verification",
+            trigger_event_types = [GEventType.RESULT_PUBLICATION_EVENT],
+            entity_types        = ["trade_execution", "swap", "order_fill"],
+            actor_selector      = _select_current_owner,
+            obligation_type     = "required_slippage_check_omission",
+            required_event_types= ["slippage_verified_event", "execution_quality_event"],
+            due_within_secs     = 10.0,  # 10 seconds to verify slippage
+            violation_code      = "required_slippage_check_omission",
+            severity            = Severity.MEDIUM,
+            escalation_policy   = EscalationPolicy(
+                violation_after_secs = 0,
+                actions              = [EscalationAction.VIOLATION],
+            ),
+        )
+        registry.register(slippage_check_rule)
+
+    # 合约时限优先于 domain pack 预设（用户意图 > 场景经验值）
+    _apply_contract_timing_overrides(registry, contract)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Pharma Regulatory Domain Pack
+# ══════════════════════════════════════════════════════════════════════════════
+
+def apply_pharma_pack(
+    registry: RuleRegistry,
+    strict:   bool = False,
+    contract: Any  = None,
+) -> None:
+    """
+    制药监管 domain omission 配置（FDA/ICH 合规场景）。
+
+    核心原则：患者安全优先，审计可追溯性，严格的时间窗口。
+    SAE（严重不良事件）和死亡报告有法定时限。
+
+    时限覆盖：
+        delegation    : 300s → 86400s（1天分配审查任务）
+        acknowledgement: 120s → 7200s（2小时确认）
+        status_update : 600s → 86400s（每日更新）
+        result_pub    : 60s → 86400s（1天内发布结果）
+        upstream_notify: 180s → 7200s（2小时上报）
+        escalation    : 120s → 3600s（1小时上报阻塞）
+        closure       : 600s → 259200s（3天完成文档归档）
+
+    strict=True 时额外添加：
+        - SAE 报告规则：严重不良事件必须在 15 天内上报（ICH E2A / 21 CFR 312.32）
+        - 死亡报告规则：死亡事件必须在 7 天内上报（21 CFR 312.32）
+        - 审计追踪规则：数据修改必须有电子签名和审计记录（21 CFR Part 11）
+    """
+    # 覆盖内置规则时限（宽松，但严格遵守监管时限）
+    overrides = {
+        "rule_a_delegation":          (86400.0,  3600.0),
+        "rule_b_acknowledgement":     (7200.0,   600.0),
+        "rule_c_status_update":       (86400.0,  3600.0),
+        "rule_d_result_publication":  (86400.0,  3600.0),
+        "rule_e_upstream_notification":(7200.0,  600.0),
+        "rule_f_escalation":          (3600.0,   300.0),
+        "rule_g_closure":             (259200.0, 7200.0),  # 3 days for documentation
+    }
+    for rule_id, (due, grace) in overrides.items():
+        registry.override_timing(rule_id, due_within_secs=due, grace_period_secs=grace)
+
+    # escalation 规则：CRITICAL severity，上报到 principal investigator
+    rule_esc = registry.get("rule_f_escalation")
+    if rule_esc:
+        rule_esc.severity = Severity.CRITICAL
+        rule_esc.escalation_policy.escalate_to = "principal_investigator"
+        rule_esc.escalation_policy.escalate_after_secs = 7200.0
+        if EscalationAction.ESCALATE not in rule_esc.escalation_policy.actions:
+            rule_esc.escalation_policy.actions.append(EscalationAction.ESCALATE)
+
+    if strict:
+        # SAE 报告规则（15天法定时限，来自 ICH E2A / 21 CFR 312.32）
+        sae_rule = OmissionRule(
+            rule_id             = "pharma_sae_reporting",
+            name                = "Serious Adverse Event Reporting Required",
+            description         = "SAEs must be reported within 15 days (ICH E2A / 21 CFR 312.32)",
+            trigger_event_types = [GEventType.ENTITY_CREATED],
+            entity_types        = ["serious_adverse_event", "sae", "unanticipated_problem"],
+            actor_selector      = _select_current_owner,
+            obligation_type     = "required_sae_reporting_omission",
+            required_event_types= ["sae_reported_event", "regulatory_notification_event",
+                                   "ade_medwatch_filed_event"],
+            due_within_secs     = 1296000.0,  # 15 days
+            violation_code      = "required_sae_reporting_omission",
+            severity            = Severity.CRITICAL,
+            escalation_policy   = EscalationPolicy(
+                reminder_after_secs  = 604800.0,  # 7 days reminder
+                violation_after_secs = 0,
+                escalate_after_secs  = 1728000.0,  # 20 days
+                actions              = [EscalationAction.REMINDER, EscalationAction.VIOLATION,
+                                        EscalationAction.ESCALATE, EscalationAction.DENY_CLOSURE],
+                escalate_to          = "principal_investigator",
+                deny_closure_on_open = True,
+            ),
+            deny_closure_on_open= True,
+        )
+        registry.register(sae_rule)
+
+        # 死亡报告规则（7天法定时限，来自 21 CFR 312.32）
+        death_rule = OmissionRule(
+            rule_id             = "pharma_death_reporting",
+            name                = "Death Reporting Required",
+            description         = "Deaths must be reported within 7 days (21 CFR 312.32)",
+            trigger_event_types = [GEventType.ENTITY_CREATED],
+            entity_types        = ["death_event", "fatal_adverse_event", "subject_death"],
+            actor_selector      = _select_current_owner,
+            obligation_type     = "required_death_reporting_omission",
+            required_event_types= ["death_reported_event", "regulatory_notification_event",
+                                   "fda_notification_event"],
+            due_within_secs     = 604800.0,  # 7 days
+            violation_code      = "required_death_reporting_omission",
+            severity            = Severity.CRITICAL,
+            escalation_policy   = EscalationPolicy(
+                reminder_after_secs  = 172800.0,  # 2 days reminder
+                violation_after_secs = 0,
+                escalate_after_secs  = 864000.0,   # 10 days
+                actions              = [EscalationAction.REMINDER, EscalationAction.VIOLATION,
+                                        EscalationAction.ESCALATE, EscalationAction.DENY_CLOSURE],
+                escalate_to          = "principal_investigator",
+                deny_closure_on_open = True,
+            ),
+            deny_closure_on_open= True,
+        )
+        registry.register(death_rule)
+
+        # 审计追踪规则（21 CFR Part 11 要求）
+        audit_rule = OmissionRule(
+            rule_id             = "pharma_audit_trail",
+            name                = "Audit Trail Required",
+            description         = "Data modifications require electronic signature and audit trail (21 CFR Part 11)",
+            trigger_event_types = [GEventType.ENTITY_CREATED, GEventType.ENTITY_ASSIGNED],
+            entity_types        = ["source_data_modification", "data_entry", "case_report_form"],
+            actor_selector      = _select_current_owner,
+            obligation_type     = "required_audit_trail_omission",
+            required_event_types= ["electronic_signature_event", "audit_logged_event",
+                                   "part11_verification_event"],
+            due_within_secs     = 300.0,  # 5 minutes to log audit trail
+            violation_code      = "required_audit_trail_omission",
+            severity            = Severity.HIGH,
+            escalation_policy   = EscalationPolicy(
+                violation_after_secs = 0,
+                actions              = [EscalationAction.VIOLATION, EscalationAction.DENY_CLOSURE],
+                deny_closure_on_open = True,
+            ),
+            deny_closure_on_open= True,
+        )
+        registry.register(audit_rule)
+
+    # 合约时限优先于 domain pack 预设（用户意图 > 场景经验值）
+    _apply_contract_timing_overrides(registry, contract)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Pack Registry — 按名字获取 pack 函数
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -411,6 +805,9 @@ _PACKS = {
     "healthcare": apply_healthcare_pack,
     "devops":     apply_devops_pack,
     "research":   apply_research_pack,
+    "legal":      apply_legal_pack,
+    "crypto":     apply_crypto_pack,
+    "pharma":     apply_pharma_pack,
 }
 
 
@@ -419,7 +816,7 @@ def apply_domain_pack(name: str, registry: RuleRegistry, **kwargs) -> None:
     按名字应用 domain pack。
 
     参数：
-        name:     "finance" / "healthcare" / "devops" / "research"
+        name:     "finance" / "healthcare" / "devops" / "research" / "legal" / "crypto" / "pharma"
         registry: RuleRegistry 实例
         **kwargs: 传递给具体 pack 函数的额外参数（如 strict=True）
     """

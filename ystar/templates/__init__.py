@@ -23,6 +23,7 @@ Available templates::
     analyst, data_engineer,
     openclaw_agent, openclaw_researcher, openclaw_executor,
     clinician, reception,
+    attorney, paralegal, compliance_officer, auditor,
     readonly, sandboxed
 """
 from __future__ import annotations
@@ -182,6 +183,36 @@ TEMPLATE_DICTS: Dict[str, Dict[str, Any]] = {
         "cannot_run":   ["rm -rf", "sudo", "chmod", "chown",
                          "curl | bash", "wget | sh"],
         "max_calls_per_hour": 50,
+    },
+    "attorney": {
+        "_description": "Legal attorney — matter management and review",
+        "can_write_to": ["./matters/", "./contracts/", "./opinions/"],
+        "cannot_touch": ["audit/", "archive/", "closed_matters/"],
+        "cannot_run":   ["rm -rf audit/", "rm -rf archive/", "DELETE FROM"],
+        "required_roles": ["attorney"],
+        "max_calls_per_hour": 100,
+    },
+    "paralegal": {
+        "_description": "Legal paralegal — support work, no final approval",
+        "can_write_to": ["./matters/", "./contracts/draft/"],
+        "cannot_touch": ["audit/", "archive/", "signed/", "filed/"],
+        "cannot_run":   ["rm -rf", "DELETE FROM", "DROP TABLE"],
+        "required_roles": ["paralegal"],
+    },
+    "compliance_officer": {
+        "_description": "Compliance officer — audit and reporting",
+        "can_write_to": ["./compliance/", "./reports/"],
+        "cannot_touch": ["credentials", ".env"],
+        "cannot_run":   ["DELETE FROM", "DROP TABLE", "TRUNCATE"],
+        "required_roles": ["compliance"],
+        "max_calls_per_hour": 50,
+    },
+    "auditor": {
+        "_description": "Auditor — read-only audit access",
+        "cannot_run":   ["rm", "delete", "DROP", "UPDATE", "INSERT",
+                         "TRUNCATE", "ALTER TABLE"],
+        "cannot_touch": [".env", "credentials", "production_write"],
+        "required_roles": ["auditor"],
     },
 }
 
