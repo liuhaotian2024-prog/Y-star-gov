@@ -310,20 +310,38 @@ class OmissionStore:
     def _init(self) -> None:
         with self._conn() as conn:
             conn.executescript(_SCHEMA)
-            # Schema migration: add v0.48 cancellation fields if missing
+            # Schema migration: add v0.33, v0.43, v0.48 fields if missing
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT name FROM pragma_table_info('obligations')
-                WHERE name IN ('session_id', 'cancelled_at', 'cancellation_reason')
             """)
             existing_cols = {row[0] for row in cursor.fetchall()}
 
+            # v0.48: cancellation fields + rule_id
             if 'session_id' not in existing_cols:
                 cursor.execute("ALTER TABLE obligations ADD COLUMN session_id TEXT")
             if 'cancelled_at' not in existing_cols:
                 cursor.execute("ALTER TABLE obligations ADD COLUMN cancelled_at REAL")
             if 'cancellation_reason' not in existing_cols:
                 cursor.execute("ALTER TABLE obligations ADD COLUMN cancellation_reason TEXT")
+            if 'rule_id' not in existing_cols:
+                cursor.execute("ALTER TABLE obligations ADD COLUMN rule_id TEXT")
+
+            # v0.33: two-phase timeout (soft/hard overdue)
+            if 'soft_violation_at' not in existing_cols:
+                cursor.execute("ALTER TABLE obligations ADD COLUMN soft_violation_at REAL")
+            if 'hard_violation_at' not in existing_cols:
+                cursor.execute("ALTER TABLE obligations ADD COLUMN hard_violation_at REAL")
+            if 'soft_count' not in existing_cols:
+                cursor.execute("ALTER TABLE obligations ADD COLUMN soft_count INTEGER DEFAULT 0")
+
+            # v0.43: restoration fields
+            if 'restored_at' not in existing_cols:
+                cursor.execute("ALTER TABLE obligations ADD COLUMN restored_at REAL")
+            if 'restored_by_event_id' not in existing_cols:
+                cursor.execute("ALTER TABLE obligations ADD COLUMN restored_by_event_id TEXT")
+            if 'restoration_grace_period_multiplier' not in existing_cols:
+                cursor.execute("ALTER TABLE obligations ADD COLUMN restoration_grace_period_multiplier REAL DEFAULT 2.0")
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -420,7 +438,7 @@ class OmissionStore:
         with self._conn() as conn:
             conn.execute("""
                 INSERT OR IGNORE INTO obligations VALUES
-                    (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, (
                 ob.obligation_id, ob.entity_id, ob.actor_id,
                 ob.obligation_type, ob.trigger_event_id,
@@ -433,6 +451,11 @@ class OmissionStore:
                 ob.reminder_sent_at, ob.notes,
                 ob.created_at, ob.updated_at,
                 ob.session_id, ob.cancelled_at, ob.cancellation_reason,
+                ob.rule_id,
+                # v0.33: two-phase timeout
+                ob.soft_violation_at, ob.hard_violation_at, ob.soft_count,
+                # v0.43: restoration
+                ob.restored_at, ob.restored_by_event_id, ob.restoration_grace_period_multiplier,
             ))
 
     def get_obligation(self, obligation_id: str) -> Optional[ObligationRecord]:
@@ -451,7 +474,9 @@ class OmissionStore:
                     escalated=?, escalated_at=?, reminder_sent_at=?,
                     notes=?, updated_at=?,
                     due_at=?, grace_period_secs=?, hard_overdue_secs=?,
-                    session_id=?, cancelled_at=?, cancellation_reason=?
+                    session_id=?, cancelled_at=?, cancellation_reason=?,
+                    soft_violation_at=?, hard_violation_at=?, soft_count=?,
+                    restored_at=?, restored_by_event_id=?, restoration_grace_period_multiplier=?
                 WHERE obligation_id=?
             """, (
                 ob.status.value, ob.fulfilled_by_event_id, ob.violation_code,
@@ -459,6 +484,9 @@ class OmissionStore:
                 ob.reminder_sent_at, ob.notes, ob.updated_at,
                 ob.due_at, ob.grace_period_secs, ob.hard_overdue_secs,
                 ob.session_id, ob.cancelled_at, ob.cancellation_reason,
+                # v0.33 + v0.43 fields
+                ob.soft_violation_at, ob.hard_violation_at, ob.soft_count,
+                ob.restored_at, ob.restored_by_event_id, ob.restoration_grace_period_multiplier,
                 ob.obligation_id,
             ))
 
@@ -595,6 +623,7 @@ class OmissionStore:
             obligation_type      = row["obligation_type"],
             trigger_event_id     = row["trigger_event_id"],
             required_event_types = json.loads(row["required_event_types"] or "[]"),
+            rule_id              = row["rule_id"] if "rule_id" in row.keys() else None,
             due_at               = row["due_at"],
             grace_period_secs    = row["grace_period_secs"] or 0.0,
             hard_overdue_secs    = row["hard_overdue_secs"] or 0.0,
@@ -612,6 +641,14 @@ class OmissionStore:
             session_id           = row["session_id"] if "session_id" in row.keys() else None,
             cancelled_at         = row["cancelled_at"] if "cancelled_at" in row.keys() else None,
             cancellation_reason  = row["cancellation_reason"] if "cancellation_reason" in row.keys() else None,
+            # v0.33: two-phase timeout
+            soft_violation_at    = row["soft_violation_at"] if "soft_violation_at" in row.keys() else None,
+            hard_violation_at    = row["hard_violation_at"] if "hard_violation_at" in row.keys() else None,
+            soft_count           = row["soft_count"] if "soft_count" in row.keys() else 0,
+            # v0.43: restoration
+            restored_at          = row["restored_at"] if "restored_at" in row.keys() else None,
+            restored_by_event_id = row["restored_by_event_id"] if "restored_by_event_id" in row.keys() else None,
+            restoration_grace_period_multiplier = row["restoration_grace_period_multiplier"] if "restoration_grace_period_multiplier" in row.keys() else 2.0,
         )
 
     # ── GovernanceEvent ────────────────────────────────────────────────────

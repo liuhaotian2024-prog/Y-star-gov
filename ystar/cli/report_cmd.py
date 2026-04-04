@@ -132,14 +132,54 @@ def _cmd_audit(args: list) -> None:
         if len(target) > 45:
             target = target[:42] + "..."
 
-        dim = r.violations[0]["dimension"] if r.violations else "?"
+        # Extract dimension from violations structure
+        # Handle two formats:
+        # 1. New format: [{'reason': '{"action": "block", "violations": [...]}'}]
+        # 2. Old format: [{'dimension': 'deny', 'message': '...'}]
+        dim = "?"
+        reason_msg = "?"
+        if r.violations:
+            try:
+                viol = r.violations[0] if isinstance(r.violations, list) else r.violations
+
+                # Format 1: violations with nested 'reason' JSON string
+                if isinstance(viol, dict) and 'reason' in viol:
+                    try:
+                        # Handle Python literal syntax (single quotes)
+                        import ast
+                        reason_data = ast.literal_eval(viol['reason'])
+                        if 'violations' in reason_data and reason_data['violations']:
+                            dim = reason_data['violations'][0].get('dimension', '?')
+                            reason_msg = reason_data['violations'][0].get('message', '?')
+                        else:
+                            reason_msg = reason_data.get('message', '?')
+                            # Try to infer dimension from message
+                            if 'denied' in viol.get('reason', '').lower():
+                                dim = 'denied'
+                    except (ValueError, SyntaxError):
+                        # Fallback: try JSON parsing
+                        try:
+                            reason_data = json.loads(viol['reason'].replace("'", '"'))
+                            if 'violations' in reason_data and reason_data['violations']:
+                                dim = reason_data['violations'][0].get('dimension', '?')
+                                reason_msg = reason_data['violations'][0].get('message', '?')
+                        except Exception:
+                            pass
+
+                # Format 2: direct dimension key
+                elif isinstance(viol, dict) and 'dimension' in viol:
+                    dim = viol['dimension']
+                    reason_msg = viol.get('message', '?')
+
+            except Exception:
+                pass
 
         print(f"  [{idx}] {ts}  {r.agent_id}")
         print(f"       Dimension: {dim}")
         print(f"       Target:    {target}")
 
         if r.violations:
-            print(f"       Reason:    {r.violations[0]['message']}")
+            print(f"       Reason:    {reason_msg}")
 
         if r.params_json:
             try:

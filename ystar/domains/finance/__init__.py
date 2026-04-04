@@ -168,6 +168,12 @@ class FinanceDomainPack(DomainPack):
                     "amount": {"max": ctx.get("max_amount", 10_000_000)},
                     "creation_units": {"max": ctx.get("max_units", 5)},
                 },
+                obligation_timing={
+                    "acknowledgement": 300,       # 5 min to ack order
+                    "status_update": 3600,        # 1 hour status update
+                    "result_publication": 1800,   # 30 min to publish result
+                    "escalation": 600,            # 10 min to escalate issue
+                },
             ),
             "risk_manager": IntentContract(
                 invariant=["ap_authorized == True", "risk_gate_approved == True"],
@@ -175,6 +181,12 @@ class FinanceDomainPack(DomainPack):
                     "amount":            {"max": ctx.get("max_amount", 2_000_000)},
                     "participation_rate": {"max": 0.20},
                     "creation_units":    {"max": ctx.get("max_units", 2)},
+                },
+                obligation_timing={
+                    "acknowledgement": 180,       # 3 min to ack risk check
+                    "status_update": 1800,        # 30 min status update
+                    "result_publication": 3600,   # 1 hour to publish risk decision
+                    "escalation": 300,            # 5 min to escalate risk issue
                 },
             ),
             "execution_agent": IntentContract(
@@ -185,6 +197,12 @@ class FinanceDomainPack(DomainPack):
                     "participation_rate": {"max": 0.15},
                     "creation_units":    {"max": ctx.get("max_units", 0.5)},
                 },
+                obligation_timing={
+                    "acknowledgement": 60,        # 1 min to ack execution request
+                    "status_update": 300,         # 5 min status update
+                    "result_publication": 900,    # 15 min to publish fill
+                    "escalation": 120,            # 2 min to escalate execution issue
+                },
             ),
             "settlement_agent": IntentContract(
                 invariant=["ap_authorized == True", "settlement_confirmed == True"],
@@ -193,10 +211,22 @@ class FinanceDomainPack(DomainPack):
                     "amount":         {"max": ctx.get("max_amount", 500_000)},
                     "settlement_t_plus": {"max": 2},
                 },
+                obligation_timing={
+                    "acknowledgement": 3600,      # 1 hour to ack settlement request
+                    "status_update": 21600,       # 6 hours status update
+                    "result_publication": 86400,  # 24 hours to confirm settlement
+                    "escalation": 1800,           # 30 min to escalate settlement issue
+                },
             ),
             "compliance_officer": IntentContract(
                 invariant=["compliance_role == True"],
                 deny=["unauthorized_exception"],
+                obligation_timing={
+                    "acknowledgement": 1800,      # 30 min to ack compliance check
+                    "status_update": 14400,       # 4 hours status update
+                    "result_publication": 28800,  # 8 hours to publish compliance decision
+                    "escalation": 900,            # 15 min to escalate compliance violation
+                },
             ),
 
             # ── A3 new roles ─────────────────────────────────────────
@@ -213,6 +243,12 @@ class FinanceDomainPack(DomainPack):
                     "amount":                {"max": ctx.get("max_amount", 50_000_000)},
                 },
                 deny=["style_drift_unhedged", "benchmark_deviation_unapproved"],
+                obligation_timing={
+                    "acknowledgement": 900,       # 15 min to ack rebalance request
+                    "status_update": 7200,        # 2 hours status update
+                    "result_publication": 14400,  # 4 hours to publish rebalance result
+                    "escalation": 1800,           # 30 min to escalate portfolio issue
+                },
             ),
 
             "fx_dealer": IntentContract(
@@ -225,6 +261,12 @@ class FinanceDomainPack(DomainPack):
                     "position_concentration": {"max": ctx.get("max_position_concentration", 0.25)},
                 },
                 deny=["sanctioned_currency_pair", "undisclosed_fx_markup"],
+                obligation_timing={
+                    "acknowledgement": 120,       # 2 min to ack FX order
+                    "status_update": 600,         # 10 min status update
+                    "result_publication": 1800,   # 30 min to publish FX fill
+                    "escalation": 180,            # 3 min to escalate FX issue
+                },
             ),
 
             "quant_analyst": IntentContract(
@@ -238,6 +280,12 @@ class FinanceDomainPack(DomainPack):
                                         "max": ctx.get("factor_exposure_max",  1.0)},
                 },
                 deny=["live_execution_without_approval", "model_override_undocumented"],
+                obligation_timing={
+                    "acknowledgement": 1800,      # 30 min to ack model request
+                    "status_update": 10800,       # 3 hours status update
+                    "result_publication": 21600,  # 6 hours to publish model signal
+                    "escalation": 3600,           # 1 hour to escalate model issue
+                },
             ),
 
             "prime_broker": IntentContract(
@@ -250,6 +298,12 @@ class FinanceDomainPack(DomainPack):
                     "amount":                 {"max": ctx.get("max_amount", 100_000_000)},
                 },
                 deny=["rehypothecation_without_consent", "margin_call_suppression"],
+                obligation_timing={
+                    "acknowledgement": 7200,      # 2 hours to ack prime broker request
+                    "status_update": 28800,       # 8 hours status update
+                    "result_publication": 86400,  # 24 hours to publish margin decision
+                    "escalation": 3600,           # 1 hour to escalate margin issue
+                },
             ),
         }
 

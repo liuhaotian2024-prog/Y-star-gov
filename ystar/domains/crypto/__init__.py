@@ -104,6 +104,12 @@ class CryptoDomainPack(DomainPack):
                 },
                 deny = ["market_manipulation", "wash_trade_crypto",
                         "live_order_without_approval"],
+                obligation_timing={
+                    "acknowledgement": 60,        # 1 min to ack signal request
+                    "status_update": 300,         # 5 min status update
+                    "result_publication": 600,    # 10 min to publish signal
+                    "escalation": 120,            # 2 min to escalate market anomaly
+                },
             ),
 
             "risk_manager": IntentContract(
@@ -116,6 +122,12 @@ class CryptoDomainPack(DomainPack):
                     "collateral_ratio":  {"min": ctx.get("min_collateral_ratio", 1.5)},
                 },
                 deny = ["sanctioned_address", "mixer_protocol"],
+                obligation_timing={
+                    "acknowledgement": 30,        # 30 sec to ack risk check
+                    "status_update": 180,         # 3 min status update
+                    "result_publication": 300,    # 5 min to publish risk decision
+                    "escalation": 60,             # 1 min to escalate risk breach
+                },
             ),
 
             "order_agent": IntentContract(
@@ -128,6 +140,12 @@ class CryptoDomainPack(DomainPack):
                 },
                 deny = ["sanctioned_address", "mixer_protocol",
                         "market_manipulation", "wash_trade_crypto"],
+                obligation_timing={
+                    "acknowledgement": 30,        # 30 sec to ack order
+                    "status_update": 120,         # 2 min status update
+                    "result_publication": 300,    # 5 min to complete order
+                    "escalation": 60,             # 1 min to escalate order failure
+                },
             ),
 
             "settlement_agent": IntentContract(
@@ -138,11 +156,23 @@ class CryptoDomainPack(DomainPack):
                 },
                 deny = ["sanctioned_address", "mixer_protocol",
                         "unregistered_exchange", "unverified_withdrawal_address"],
+                obligation_timing={
+                    "acknowledgement": 600,       # 10 min to ack settlement
+                    "status_update": 1800,        # 30 min status update
+                    "result_publication": 3600,   # 1 hour to confirm on-chain
+                    "escalation": 900,            # 15 min to escalate settlement issue
+                },
             ),
 
             "compliance_officer": IntentContract(
                 invariant = ["compliance_role == True"],
                 deny      = ["bypass_kyc", "bypass_aml", "unauthorized_exception"],
+                obligation_timing={
+                    "acknowledgement": 1800,      # 30 min to ack compliance check
+                    "status_update": 7200,        # 2 hours status update
+                    "result_publication": 14400,  # 4 hours to publish AML report
+                    "escalation": 900,            # 15 min to escalate sanctions match
+                },
             ),
 
             "liquidation_monitor": IntentContract(
@@ -154,6 +184,12 @@ class CryptoDomainPack(DomainPack):
                 },
                 deny = ["force_liquidate_without_approval",
                         "suppress_liquidation_alert"],
+                obligation_timing={
+                    "acknowledgement": 60,        # 1 min to ack liquidation alert
+                    "status_update": 300,         # 5 min status update
+                    "result_publication": 600,    # 10 min to publish health status
+                    "escalation": 30,             # 30 sec to escalate critical liquidation
+                },
             ),
         }
 

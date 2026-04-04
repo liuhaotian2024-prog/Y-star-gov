@@ -106,10 +106,22 @@ class DevOpsDomainPack(DomainPack):
                 deny=["production_deploy_direct"],
                 invariant=["change_ticket_exists == True"],
                 value_range={"canary_pct": {"max": 0}},  # dev不能直接部署
+                obligation_timing={
+                    "acknowledgement": 1800,      # 30 min to ack code review request
+                    "status_update": 14400,       # 4 hours status update
+                    "result_publication": 28800,  # 8 hours to complete feature
+                    "escalation": 3600,           # 1 hour to escalate blocker
+                },
             ),
             "code_reviewer": IntentContract(
                 invariant=["review_approved == True"],
                 deny=["skip_review"],
+                obligation_timing={
+                    "acknowledgement": 3600,      # 1 hour to ack review request
+                    "status_update": 14400,       # 4 hours status update
+                    "result_publication": 28800,  # 8 hours to complete review
+                    "escalation": 7200,           # 2 hours to escalate review issue
+                },
             ),
             "deployer": IntentContract(
                 invariant=["review_approved == True",
@@ -119,19 +131,43 @@ class DevOpsDomainPack(DomainPack):
                     "canary_pct":    {"max": ctx.get("max_canary_pct", 0.05)},
                     "affected_pods": {"max": ctx.get("max_pods", 50)},
                 },
+                obligation_timing={
+                    "acknowledgement": 600,       # 10 min to ack deploy request
+                    "status_update": 1800,        # 30 min status update
+                    "result_publication": 3600,   # 1 hour to complete deployment
+                    "escalation": 300,            # 5 min to escalate deploy failure
+                },
             ),
             "sre": IntentContract(
                 invariant=["oncall_notified == True"],
                 optional_invariant=["blast_radius < 0.3"],
                 value_range={"canary_pct": {"max": 0.10}},
+                obligation_timing={
+                    "acknowledgement": 300,       # 5 min to ack incident
+                    "status_update": 900,         # 15 min status update
+                    "result_publication": 3600,   # 1 hour to resolve incident
+                    "escalation": 600,            # 10 min to escalate to senior SRE
+                },
             ),
             "oncall": IntentContract(
                 invariant=["incident_acknowledged == True"],
                 deny=["production_bypass"],
+                obligation_timing={
+                    "acknowledgement": 300,       # 5 min to ack page
+                    "status_update": 900,         # 15 min status update
+                    "result_publication": 1800,   # 30 min to triage incident
+                    "escalation": 600,            # 10 min to escalate critical incident
+                },
             ),
             "release_manager": IntentContract(
                 invariant=["release_window_open == True"],
                 value_range={"canary_pct": {"max": 0.10}},
+                obligation_timing={
+                    "acknowledgement": 3600,      # 1 hour to ack release request
+                    "status_update": 7200,        # 2 hours status update
+                    "result_publication": 14400,  # 4 hours to complete release
+                    "escalation": 1800,           # 30 min to escalate release blocker
+                },
             ),
         }
 

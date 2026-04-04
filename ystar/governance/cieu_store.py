@@ -851,6 +851,112 @@ class CIEUStore:
 
         return [self._row_to_result(r) for r in rows]
 
+    def query_violations_by_agent(
+        self,
+        agent_id: str,
+        session_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[CIEUQueryResult]:
+        """
+        查询特定 agent 的所有 violations（governance analysis 必备）。
+
+        Args:
+            agent_id: Agent identifier
+            session_id: 可选，过滤特定 session
+            limit: 返回数量上限
+
+        Returns: List[CIEUQueryResult] 包含 violations 的事件
+        """
+        conditions = ["agent_id = ?", "passed = 0"]
+        params: List[Any] = [agent_id]
+        if session_id:
+            conditions.append("session_id = ?")
+            params.append(session_id)
+
+        where = "WHERE " + " AND ".join(conditions)
+        params.append(limit)
+
+        with self._conn() as conn:
+            rows = conn.execute(f"""
+                SELECT * FROM cieu_events
+                {where}
+                ORDER BY seq_global DESC
+                LIMIT ?
+            """, params).fetchall()
+
+        return [self._row_to_result(r) for r in rows]
+
+    def query_escalations(
+        self,
+        session_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[CIEUQueryResult]:
+        """
+        查询所有 escalation 决策（用于 governance health 分析）。
+
+        Args:
+            session_id: 可选，过滤特定 session
+            limit: 返回数量上限
+
+        Returns: List[CIEUQueryResult] decision = "escalate" 的事件
+        """
+        conditions = ["decision = 'escalate'"]
+        params: List[Any] = []
+        if session_id:
+            conditions.append("session_id = ?")
+            params.append(session_id)
+
+        where = "WHERE " + " AND ".join(conditions)
+        params.append(limit)
+
+        with self._conn() as conn:
+            rows = conn.execute(f"""
+                SELECT * FROM cieu_events
+                {where}
+                ORDER BY seq_global DESC
+                LIMIT ?
+            """, params).fetchall()
+
+        return [self._row_to_result(r) for r in rows]
+
+    def query_governance_actions(
+        self,
+        action_type: Optional[str] = None,
+        session_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[CIEUQueryResult]:
+        """
+        查询 governance 相关动作（omission, intervention, causal 等）。
+
+        Args:
+            action_type: 可选，过滤特定 event_type（如 "omission_violation", "intervention_pulse"）
+            session_id: 可选，过滤特定 session
+            limit: 返回数量上限
+
+        Returns: List[CIEUQueryResult]
+        """
+        conditions = ["evidence_grade = 'governance'"]
+        params: List[Any] = []
+        if action_type:
+            conditions.append("event_type = ?")
+            params.append(action_type)
+        if session_id:
+            conditions.append("session_id = ?")
+            params.append(session_id)
+
+        where = "WHERE " + " AND ".join(conditions)
+        params.append(limit)
+
+        with self._conn() as conn:
+            rows = conn.execute(f"""
+                SELECT * FROM cieu_events
+                {where}
+                ORDER BY seq_global DESC
+                LIMIT ?
+            """, params).fetchall()
+
+        return [self._row_to_result(r) for r in rows]
+
 
 # ── [FIX-2] NullCIEUStore — 显式 no-op 替代 None ─────────────────────────
 class NullCIEUStore:

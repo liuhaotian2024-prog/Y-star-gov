@@ -245,6 +245,7 @@ class ObligationRecord:
 
     trigger_event_id:    Optional[str] = None   # 触发该义务的事件 ID
     required_event_types:List[str] = field(default_factory=list)  # 满足义务需要的事件类型（任一即可）
+    rule_id:             Optional[str] = None   # 创建此义务的规则 ID（用于审计和调试）
 
     due_at:              Optional[float] = None  # 截止时间 (Unix ts)
     grace_period_secs:   float = 0.0             # 宽限期（过了 due_at 再等多少秒才判定违规）
@@ -321,6 +322,7 @@ class ObligationRecord:
             "obligation_type":      self.obligation_type,
             "trigger_event_id":     self.trigger_event_id,
             "required_event_types": self.required_event_types,
+            "rule_id":              self.rule_id,
             "due_at":               self.due_at,
             "grace_period_secs":    self.grace_period_secs,
             "hard_overdue_secs":    self.hard_overdue_secs,

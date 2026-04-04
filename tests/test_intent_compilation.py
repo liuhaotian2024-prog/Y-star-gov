@@ -144,3 +144,113 @@ class TestIntentCompilationImportBoundary:
                     assert "path_b" not in node.module, (
                         f"{module_path} imports from path_b: {node.module}"
                     )
+
+
+class TestIntentContractMarkdownExport:
+    """Test IntentContract.to_markdown() method for human-readable output."""
+
+    def test_to_markdown_basic_output(self):
+        """to_markdown() should produce well-formatted Markdown output."""
+        from ystar.kernel.dimensions import IntentContract
+
+        contract = IntentContract(
+            name="test_contract",
+            deny=[".env", "/etc/passwd"],
+            deny_commands=["rm -rf", "sudo"],
+            only_paths=["./workspace/"],
+            invariant=["amount > 0"],
+            value_range={"amount": {"min": 1, "max": 1000}},
+        )
+
+        md = contract.to_markdown()
+
+        # Should contain key sections
+        assert "# Intent Contract" in md
+        assert "test_contract" in md
+        assert "### Absolute Denials" in md
+        assert ".env" in md
+        assert "### Denied Commands" in md
+        assert "rm -rf" in md
+        assert "### Allowed Paths Only" in md
+        assert "./workspace/" in md
+        assert "### Invariants (hard)" in md
+        assert "amount > 0" in md
+        assert "### Value Range Constraints" in md
+        assert "min=1, max=1000" in md
+
+    def test_to_markdown_with_metadata(self):
+        """to_markdown(include_metadata=True) should include lifecycle fields."""
+        from ystar.kernel.dimensions import IntentContract
+
+        contract = IntentContract(
+            name="lifecycle_test",
+            deny=[".env"],
+            status="confirmed",
+            confirmed_by="alice@example.com",
+            confirmed_at=1234567890.0,
+            version=2,
+            review_triggers=["personnel_change"],
+        )
+
+        md = contract.to_markdown(include_metadata=True)
+
+        # Should contain lifecycle metadata
+        assert "### Lifecycle Metadata" in md
+        assert "Status**: confirmed" in md
+        assert "Confirmed by**: alice@example.com" in md
+        assert "Confirmed at**:" in md
+        assert "Version**: 2" in md
+        assert "Review triggers**:" in md
+        assert "personnel_change" in md
+
+    def test_to_markdown_empty_contract(self):
+        """to_markdown() should handle empty contracts gracefully."""
+        from ystar.kernel.dimensions import IntentContract
+
+        contract = IntentContract(name="empty")
+        md = contract.to_markdown()
+
+        # Should have header but no constraint sections
+        assert "# Intent Contract" in md
+        assert "empty" in md
+        # Should not crash or produce malformed output
+        assert isinstance(md, str)
+        assert len(md) > 0
+
+    def test_to_markdown_obligation_timing(self):
+        """to_markdown() should format obligation_timing correctly."""
+        from ystar.kernel.dimensions import IntentContract
+
+        contract = IntentContract(
+            obligation_timing={
+                "acknowledgement": 300,
+                "completion": 3600,
+                "delegation": 600,
+            }
+        )
+
+        md = contract.to_markdown()
+
+        assert "### Obligation Timing (seconds)" in md
+        assert "acknowledgement`: 300s" in md
+        assert "completion`: 3600s" in md
+        assert "delegation`: 600s" in md
+
+    def test_to_markdown_field_deny(self):
+        """to_markdown() should format field_deny rules correctly."""
+        from ystar.kernel.dimensions import IntentContract
+
+        contract = IntentContract(
+            field_deny={
+                "environment": ["production", "prod"],
+                "account_type": ["admin", "root"],
+            }
+        )
+
+        md = contract.to_markdown()
+
+        assert "### Field Deny Rules" in md
+        assert "field `environment` must not contain:" in md
+        assert "production" in md
+        assert "field `account_type` must not contain:" in md
+        assert "admin" in md

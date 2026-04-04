@@ -649,6 +649,94 @@ class IntentContract:
 
         return (len(violations) == 0, violations)
 
+    def to_markdown(self, title: str = "Intent Contract", include_metadata: bool = False) -> str:
+        """
+        Render this IntentContract as human-readable Markdown.
+
+        Useful for debugging, reporting, and human review of contracts.
+        Consistent with ConstitutionalContract.to_markdown() API.
+
+        Args:
+            title: The document title
+            include_metadata: If True, include legitimacy and lifecycle fields
+
+        Returns:
+            Markdown-formatted string representation
+        """
+        lines = []
+
+        # Header with hash
+        hash_short = self.hash[:16] if self.hash else "no-hash"
+        lines.append(f"# {title}")
+        if self.name:
+            lines.append(f"**Name**: `{self.name}`")
+        lines.append(f"**Hash**: `{hash_short}...`")
+        lines.append("")
+
+        def section(header: str, items: list, bullet: str = "- ") -> None:
+            if items:
+                lines.append(f"### {header}")
+                for item in items:
+                    lines.append(f"{bullet}{item}")
+                lines.append("")
+
+        # Base 8 dimensions
+        section("Absolute Denials", self.deny)
+        section("Denied Commands", self.deny_commands)
+        section("Allowed Paths Only", self.only_paths)
+        section("Allowed Domains Only", self.only_domains)
+        section("Invariants (hard)", self.invariant)
+        section("Invariants (optional)", self.optional_invariant)
+        section("Postconditions", self.postcondition)
+
+        if self.field_deny:
+            lines.append("### Field Deny Rules")
+            for field_name, blocked in self.field_deny.items():
+                lines.append(f"- field `{field_name}` must not contain:")
+                for b in blocked:
+                    lines.append(f"    - {b}")
+            lines.append("")
+
+        if self.value_range:
+            lines.append("### Value Range Constraints")
+            for param, bounds in self.value_range.items():
+                parts = []
+                if "min" in bounds:
+                    parts.append(f"min={bounds['min']}")
+                if "max" in bounds:
+                    parts.append(f"max={bounds['max']}")
+                lines.append(f"- `{param}`: {', '.join(parts)}")
+            lines.append("")
+
+        if self.obligation_timing:
+            lines.append("### Obligation Timing (seconds)")
+            for key, seconds in self.obligation_timing.items():
+                lines.append(f"- `{key}`: {seconds}s")
+            lines.append("")
+
+        # Contract legitimacy lifecycle (optional)
+        if include_metadata and (self.confirmed_by or self.status):
+            lines.append("### Lifecycle Metadata")
+            if self.status:
+                lines.append(f"- **Status**: {self.status}")
+            if self.confirmed_by:
+                lines.append(f"- **Confirmed by**: {self.confirmed_by}")
+            if self.confirmed_at:
+                import datetime
+                dt = datetime.datetime.fromtimestamp(self.confirmed_at)
+                lines.append(f"- **Confirmed at**: {dt.isoformat()}")
+            if self.valid_until:
+                import datetime
+                dt = datetime.datetime.fromtimestamp(self.valid_until)
+                lines.append(f"- **Valid until**: {dt.isoformat()}")
+            if self.review_triggers:
+                lines.append(f"- **Review triggers**: {', '.join(self.review_triggers)}")
+            if self.version != 1:
+                lines.append(f"- **Version**: {self.version}")
+            lines.append("")
+
+        return "\n".join(lines).rstrip()
+
     def __str__(self) -> str:
         parts = []
         if self.deny:          parts.append(f"deny={self.deny}")

@@ -730,7 +730,7 @@ class GovernanceLoop:
                             detected_at   = _time.time(),
                             overdue_secs  = ob.hard_overdue_secs or 0.0,
                             details       = {"stage": ob.status.value,
-                                             "rule_id": ob.rule_id},
+                                             "rule_id": getattr(ob, 'rule_id', None)},
                         ))
                 if violations:
                     iv_result = self._intervention_engine.process_violations(violations)

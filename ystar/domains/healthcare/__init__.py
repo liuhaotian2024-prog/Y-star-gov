@@ -128,6 +128,12 @@ class HealthcareDomainPack(DomainPack):
                 },
                 deny = ["phi_without_consent", "unencrypted_phi_export",
                         "re_identification_attempt"],
+                obligation_timing={
+                    "acknowledgement": 900,       # 15 min to ack patient request
+                    "status_update": 3600,        # 1 hour status update
+                    "result_publication": 7200,   # 2 hours to publish clinical note
+                    "escalation": 600,            # 10 min to escalate urgent case
+                },
             ),
 
             "nurse": IntentContract(
@@ -140,6 +146,12 @@ class HealthcareDomainPack(DomainPack):
                 },
                 deny = ["phi_without_consent", "unencrypted_phi_export",
                         "re_identification_attempt", "prescribe_without_order"],
+                obligation_timing={
+                    "acknowledgement": 600,       # 10 min to ack patient care task
+                    "status_update": 1800,        # 30 min status update
+                    "result_publication": 3600,   # 1 hour to document care
+                    "escalation": 300,            # 5 min to escalate urgent issue
+                },
             ),
 
             "pharmacist": IntentContract(
@@ -153,6 +165,12 @@ class HealthcareDomainPack(DomainPack):
                 deny = ["phi_without_consent", "unencrypted_phi_export",
                         "re_identification_attempt",
                         "access_non_medication_records_without_approval"],
+                obligation_timing={
+                    "acknowledgement": 1800,      # 30 min to ack prescription
+                    "status_update": 7200,        # 2 hours status update
+                    "result_publication": 14400,  # 4 hours to dispense medication
+                    "escalation": 900,            # 15 min to escalate drug interaction
+                },
             ),
 
             "researcher": IntentContract(
@@ -167,6 +185,12 @@ class HealthcareDomainPack(DomainPack):
                 },
                 deny = ["phi_without_consent", "re_identification_attempt",
                         "unencrypted_phi_export", "direct_patient_identifier_in_output"],
+                obligation_timing={
+                    "acknowledgement": 14400,     # 4 hours to ack research request
+                    "status_update": 86400,       # 24 hours status update
+                    "result_publication": 604800, # 7 days to publish research result
+                    "escalation": 7200,           # 2 hours to escalate IRB issue
+                },
             ),
 
             "data_engineer": IntentContract(
@@ -179,12 +203,24 @@ class HealthcareDomainPack(DomainPack):
                 },
                 deny = ["phi_without_consent", "unencrypted_phi_export",
                         "re_identification_attempt", "raw_phi_in_pipeline"],
+                obligation_timing={
+                    "acknowledgement": 7200,      # 2 hours to ack pipeline request
+                    "status_update": 43200,       # 12 hours status update
+                    "result_publication": 86400,  # 24 hours to complete ETL job
+                    "escalation": 3600,           # 1 hour to escalate pipeline failure
+                },
             ),
 
             "compliance_officer": IntentContract(
                 invariant = ["compliance_role == True"],
                 deny      = ["bypass_hipaa", "bypass_gdpr",
                              "suppress_audit_finding", "unauthorized_exception"],
+                obligation_timing={
+                    "acknowledgement": 3600,      # 1 hour to ack compliance check
+                    "status_update": 28800,       # 8 hours status update
+                    "result_publication": 86400,  # 24 hours to publish compliance report
+                    "escalation": 1800,           # 30 min to escalate HIPAA violation
+                },
             ),
 
             "audit_agent": IntentContract(
@@ -196,6 +232,12 @@ class HealthcareDomainPack(DomainPack):
                 },
                 deny = ["modify_audit_log", "delete_audit_entry",
                         "phi_without_consent", "re_identification_attempt"],
+                obligation_timing={
+                    "acknowledgement": 7200,      # 2 hours to ack audit request
+                    "status_update": 86400,       # 24 hours status update
+                    "result_publication": 259200, # 3 days to publish audit report
+                    "escalation": 3600,           # 1 hour to escalate audit finding
+                },
             ),
         }
 
