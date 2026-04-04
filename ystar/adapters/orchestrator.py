@@ -822,9 +822,12 @@ class Orchestrator:
             events = self._cieu_store.query(limit=5000)
             recent_agents = set()
             for evt in events:
-                if evt.get('timestamp', 0) > now - 1800:  # 30分钟
-                    if 'agent_id' in evt:
-                        recent_agents.add(evt['agent_id'])
+                # evt is CIEUQueryResult object, use attribute access
+                evt_time = getattr(evt, 'created_at', 0) if hasattr(evt, 'created_at') else evt.get('created_at', 0)
+                if evt_time > now - 1800:  # 30分钟
+                    agent_id = getattr(evt, 'agent_id', None) if hasattr(evt, 'agent_id') else evt.get('agent_id')
+                    if agent_id:
+                        recent_agents.add(agent_id)
 
             # 3. 计算覆盖度
             if declared_agents:

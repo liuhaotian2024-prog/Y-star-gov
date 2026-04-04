@@ -358,8 +358,10 @@ def _run_coverage_baseline() -> None:
             events = cieu.query(limit=10000)
             agent_ids = set()
             for evt in events:
-                if 'agent_id' in evt:
-                    agent_ids.add(evt['agent_id'])
+                # evt is CIEUQueryResult object, use attribute access
+                agent_id = getattr(evt, 'agent_id', None) if hasattr(evt, 'agent_id') else evt.get('agent_id') if hasattr(evt, 'get') else None
+                if agent_id:
+                    agent_ids.add(agent_id)
             cieu_seen_agents = sorted(agent_ids)
         except:
             pass

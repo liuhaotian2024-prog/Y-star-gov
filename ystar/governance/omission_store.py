@@ -113,6 +113,25 @@ class InMemoryOmissionStore:
                     return True
         return False
 
+    def cancel_obligation(self, obligation_id: str) -> bool:
+        """
+        Cancel an obligation by setting its status to CANCELLED.
+
+        Args:
+            obligation_id: The ID of the obligation to cancel
+
+        Returns:
+            True if obligation was found and cancelled, False otherwise
+        """
+        ob = self._obligations.get(obligation_id)
+        if ob is None:
+            return False
+
+        ob.status = ObligationStatus.CANCELLED
+        ob.updated_at = time.time()
+        self._obligations[obligation_id] = ob
+        return True
+
     # ── GovernanceEvent ────────────────────────────────────────────────────
 
     def add_event(self, ev: GovernanceEvent) -> None:
@@ -496,6 +515,71 @@ class OmissionStore:
                 (obligation_id,)
             ).fetchone()[0]
         return n > 0
+
+    def cancel_obligation(
+        self,
+        obligation_id: str,
+        reason: Optional[str] = None,
+        write_cieu: bool = True
+    ) -> bool:
+        """
+        Cancel an obligation by setting its status to CANCELLED.
+
+        Args:
+            obligation_id: The ID of the obligation to cancel
+            reason: Optional cancellation reason
+            write_cieu: Whether to write cancellation event to CIEU (default True)
+
+        Returns:
+            True if obligation was found and cancelled, False otherwise
+        """
+        with self._conn() as conn:
+            # Check if obligation exists
+            row = conn.execute(
+                "SELECT obligation_id FROM obligations WHERE obligation_id=?",
+                (obligation_id,)
+            ).fetchone()
+
+            if row is None:
+                return False
+
+            # Update obligation status to CANCELLED
+            now = time.time()
+            conn.execute("""
+                UPDATE obligations
+                SET status = 'cancelled',
+                    updated_at = ?,
+                    cancelled_at = ?,
+                    cancellation_reason = ?
+                WHERE obligation_id = ?
+            """, (now, now, reason or "Manual cancellation", obligation_id))
+
+        # Write CIEU event if requested
+        if write_cieu:
+            try:
+                from ystar.governance.cieu_store import CIEUStore
+                cieu_path = str(self.db_path).replace("_omission.db", ".db")
+                cieu_store = CIEUStore(cieu_path)
+                cieu_store.write_dict({
+                    "session_id": "system",
+                    "agent_id": "omission_store",
+                    "event_type": "obligation_cancelled",
+                    "decision": "allow",
+                    "passed": True,
+                    "params": {
+                        "obligation_id": obligation_id,
+                        "reason": reason or "Manual cancellation",
+                    },
+                    "evidence_grade": "decision",
+                })
+            except Exception as e:
+                # Non-fatal: CIEU write failure shouldn't block cancellation
+                import logging
+                logging.getLogger("ystar.omission").warning(
+                    f"Failed to write obligation cancellation to CIEU: {e}"
+                )
+
+        return True
 
     def _row_to_obligation(self, row: sqlite3.Row) -> ObligationRecord:
         try:

@@ -113,7 +113,7 @@ def _cmd_governance_coverage() -> None:
     declared_agents = set(coverage_data.get("declared_agents", []))
 
     # 查询CIEU获取最新覆盖情况
-    cieu_db_path = _auto_detect_db_path("")
+    cieu_db_path = _auto_detect_db_path()
     if not Path(cieu_db_path).exists():
         print(f"CIEU database not found: {cieu_db_path}")
         sys.exit(1)
@@ -125,8 +125,10 @@ def _cmd_governance_coverage() -> None:
     # 统计实际出现的agent
     seen_agents = set()
     for evt in events:
-        if 'agent_id' in evt:
-            seen_agents.add(evt['agent_id'])
+        # evt is CIEUQueryResult object, use attribute access
+        agent_id = getattr(evt, 'agent_id', None) if hasattr(evt, 'agent_id') else evt.get('agent_id') if hasattr(evt, 'get') else None
+        if agent_id:
+            seen_agents.add(agent_id)
 
     # 计算覆盖度
     if declared_agents:

@@ -1805,6 +1805,7 @@ class DelegationContract:
     hash:             str                        = ""
     content_hash:     str                        = ""
     constitution_source_ref: str                 = ""   # path to actor's constitution (for provider routing)
+    children:         List['DelegationContract'] = field(default_factory=list)  # child delegations (tree structure)
 
     def __post_init__(self):
         import uuid
@@ -1914,6 +1915,7 @@ class DelegationContract:
         if self.delegation_depth: d["delegation_depth"] = self.delegation_depth
         if self.valid_until:      d["valid_until"]      = self.valid_until
         if self.liability_scope:  d["liability_scope"]  = self.liability_scope
+        if self.children:         d["children"]         = [c.to_dict() for c in self.children]
         return d
 
     @classmethod
@@ -1921,6 +1923,8 @@ class DelegationContract:
         """Deserialise from wire format."""
         raw_vu = d.get("valid_until", None)
         valid_until = float(raw_vu) if raw_vu is not None else None
+        children_data = d.get("children", [])
+        children = [cls.from_dict(child) for child in children_data]
         return cls(
             principal        = d["principal"],
             actor            = d["actor"],
@@ -1935,6 +1939,7 @@ class DelegationContract:
             nonce            = d.get("nonce", ""),
             hash             = d.get("hash", ""),
             content_hash     = d.get("content_hash", ""),
+            children         = children,
         )
 
     def is_valid(self, current_time: Optional[float] = None) -> bool:
@@ -2047,8 +2052,12 @@ class DelegationChain:
     """
     Delegation chain: records the full authorisation propagation path.
 
-    Chains a series of DelegationContracts together and provides
-    whole-chain validation, visualisation, and auditing.
+    Supports both linear chain (legacy) and tree structure (v0.48+).
+
+    Tree structure allows CEO to delegate to multiple direct reports simultaneously:
+        CEO -> CTO -> eng-kernel
+            -> CMO
+            -> CSO
 
     Use cases:
         - Answer "who originally authorised this action?"
@@ -2056,7 +2065,7 @@ class DelegationChain:
         - Check that the chain length does not exceed the permitted depth
         - Provide the K9 audit layer with complete authorisation proof
 
-    Example:
+    Example (legacy linear):
         chain = DelegationChain()
         chain.append(org_to_a)    # org → Agent A
         chain.append(a_to_b)      # Agent A → Agent B
@@ -2064,8 +2073,118 @@ class DelegationChain:
 
         errors = chain.validate()
         print(chain.explain())    # print the full authorisation chain
+
+    Example (tree structure):
+        root = DelegationContract(principal="system", actor="CEO", ...)
+        cto = DelegationContract(principal="CEO", actor="CTO", ...)
+        root.children.append(cto)
+        chain = DelegationChain(root=root)
+
+        path = chain.find_path("CTO")
+        valid, violations = chain.validate_tree()
     """
-    links: List[DelegationContract] = field(default_factory=list)
+    links: List[DelegationContract] = field(default_factory=list)  # legacy linear chain
+    root: Optional[DelegationContract] = None  # tree structure root (v0.48+)
+    all_contracts: Dict[str, DelegationContract] = field(default_factory=dict)  # agent_id -> contract index
+
+    def __post_init__(self):
+        """Build agent_id -> contract index if tree structure is used."""
+        if self.root is not None:
+            self._build_index(self.root)
+
+    def _build_index(self, node: DelegationContract):
+        """Recursively build agent_id -> contract index."""
+        self.all_contracts[node.actor] = node
+        for child in node.children:
+            self._build_index(child)
+
+    def find_path(self, agent_id: str) -> List[DelegationContract]:
+        """
+        Find authorization path from root to specified agent (tree mode only).
+
+        Returns path of all DelegationContracts from root to target (inclusive).
+        Returns empty list if agent not found or chain is in linear mode.
+        """
+        if self.root is None:
+            return []
+        path: List[DelegationContract] = []
+        if self._find_path_recursive(self.root, agent_id, path):
+            return path
+        return []
+
+    def _find_path_recursive(self, node: DelegationContract, target: str, path: List[DelegationContract]) -> bool:
+        """Recursive path finding helper."""
+        path.append(node)
+
+        if node.actor == target:
+            return True
+
+        for child in node.children:
+            if self._find_path_recursive(child, target, path):
+                return True
+
+        path.pop()
+        return False
+
+    def validate_tree(self) -> tuple:
+        """
+        Validate tree structure (tree mode only).
+
+        Validation rules:
+        1. Child contract must be subset of parent contract (monotonicity)
+        2. Child delegated_tools must be within parent delegated_tools
+        3. No cycles (agent_id must be unique)
+
+        Returns:
+            (is_valid: bool, violations: List[str])
+        """
+        if self.root is None:
+            return (True, [])
+
+        violations: List[str] = []
+        visited: set = set()
+
+        self._validate_node(self.root, None, visited, violations)
+
+        return (len(violations) == 0, violations)
+
+    def _validate_node(self, node: DelegationContract, parent: Optional[DelegationContract],
+                      visited: set, violations: List[str]):
+        """Recursively validate tree node."""
+        # Check for cycles
+        if node.actor in visited:
+            violations.append(f"Cycle detected: {node.actor} appears multiple times")
+            return
+        visited.add(node.actor)
+
+        # Check monotonicity with parent
+        if parent is not None:
+            # Tool constraints
+            parent_tools = set(parent.action_scope) if parent.action_scope else set()
+            node_tools = set(node.action_scope) if node.action_scope else set()
+
+            # If parent has restrictions and child has tools, check subset
+            if parent.action_scope and node.action_scope:
+                if not node_tools.issubset(parent_tools):
+                    violations.append(
+                        f"{node.actor}'s action_scope exceeds {parent.actor}'s authorization"
+                    )
+            elif parent.action_scope and not node.action_scope:
+                # Parent restricts but child has no scope = child removes restriction
+                violations.append(
+                    f"{node.actor} removes action_scope restriction from {parent.actor}"
+                )
+
+            # Contract constraints (use is_subset_of)
+            ok, vlist = node.contract.is_subset_of(parent.contract)
+            if not ok:
+                violations.append(
+                    f"{node.actor}'s contract exceeds {parent.actor}'s constraints: {'; '.join(vlist)}"
+                )
+
+        # Recursively validate children
+        for child in node.children:
+            self._validate_node(child, node, visited, violations)
 
     def append(self, dc: DelegationContract) -> "DelegationChain":
         """Append a delegation node; returns self for method chaining."""
@@ -2205,7 +2324,13 @@ class DelegationChain:
 
     def to_dict(self) -> dict:
         """序列化到 JSON 兼容的 dict（用于 session.json 持久化）。"""
-        return {"links": [lk.to_dict() for lk in self.links]}
+        d = {}
+        # Support both legacy linear and new tree structure
+        if self.links:
+            d["links"] = [lk.to_dict() for lk in self.links]
+        if self.root is not None:
+            d["root"] = self.root.to_dict()
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "DelegationChain":
@@ -2213,6 +2338,8 @@ class DelegationChain:
         import logging
         _log = logging.getLogger("ystar.dimensions")
         chain = cls()
+
+        # Load legacy linear chain if present
         for i, lk_dict in enumerate(d.get("links", [])):
             try:
                 chain.links.append(DelegationContract.from_dict(lk_dict))
@@ -2220,6 +2347,16 @@ class DelegationChain:
                 _log.warning(
                     "DelegationChain.from_dict: skipped link[%d]: %s", i, exc
                 )
+
+        # Load tree structure if present
+        root_data = d.get("root")
+        if root_data:
+            try:
+                chain.root = DelegationContract.from_dict(root_data)
+                chain._build_index(chain.root)
+            except Exception as exc:
+                _log.warning("DelegationChain.from_dict: failed to load root: %s", exc)
+
         return chain
 
 

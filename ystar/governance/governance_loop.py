@@ -991,8 +991,8 @@ class GovernanceLoop:
         if self._coverage_decline_count >= 2:
             suggestion = GovernanceSuggestion(
                 suggestion_type="coverage_gap",
-                description="治理覆盖度持续下降，存在未治理的系统活动",
-                recommended_action="运行 ystar governance-coverage 查看盲区详情",
+                target_rule_id="governance_coverage",
+                rationale="治理覆盖度持续下降，存在未治理的系统活动。运行 ystar governance-coverage 查看盲区详情",
                 confidence=0.8,
             )
             # Add to pending suggestions if tighten() result has this field
