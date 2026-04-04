@@ -7,9 +7,12 @@ All paths via pathlib. No hardcoded defaults.
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+import yaml
 
 from mcp.server.fastmcp import FastMCP
 
@@ -33,7 +36,7 @@ from ystar.kernel.nl_to_contract import translate_to_contract, validate_contract
 class _State:
     """Mutable server state initialised at startup."""
 
-    def __init__(self, agents_md_path: Path) -> None:
+    def __init__(self, agents_md_path: Path, exec_whitelist_path: Optional[Path] = None) -> None:
         self.agents_md_path = agents_md_path
         self.agents_md_text = agents_md_path.read_text(encoding="utf-8")
 
@@ -52,6 +55,24 @@ class _State:
 
         # Omission engine
         self.omission_engine = OmissionEngine(store=InMemoryOmissionStore())
+
+        # Exec whitelist
+        self.exec_whitelist = _load_exec_whitelist(exec_whitelist_path)
+
+
+def _load_exec_whitelist(path: Optional[Path]) -> Dict[str, List[str]]:
+    """Load exec whitelist YAML. Returns dict with allowed_prefixes and always_deny."""
+    if path is None:
+        # Default: adjacent to this file
+        path = Path(__file__).parent / "exec_whitelist.yaml"
+    if not path.is_file():
+        return {"allowed_prefixes": [], "always_deny": []}
+    with path.open(encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    return {
+        "allowed_prefixes": data.get("allowed_prefixes", []),
+        "always_deny": data.get("always_deny", []),
+    }
 
 
 def _dict_to_contract(d: Dict[str, Any]) -> IntentContract:
@@ -90,14 +111,22 @@ def _violations_to_list(violations: list) -> List[Dict[str, Any]]:
 # Server factory
 # ---------------------------------------------------------------------------
 
-def create_server(agents_md_path: Path) -> FastMCP:
-    """Create and return a configured GOV MCP server."""
+def create_server(
+    agents_md_path: Path,
+    exec_whitelist_path: Optional[Path] = None,
+    **kwargs: Any,
+) -> FastMCP:
+    """Create and return a configured GOV MCP server.
+
+    Extra kwargs (host, port) are forwarded to FastMCP for SSE transport.
+    """
 
     mcp = FastMCP(
         "gov-mcp",
         instructions="Y*gov governance as a standard MCP server",
+        **kwargs,
     )
-    state = _State(agents_md_path)
+    state = _State(agents_md_path, exec_whitelist_path=exec_whitelist_path)
 
     # ===================================================================
     # CORE ENFORCEMENT LAYER
@@ -285,6 +314,100 @@ def create_server(agents_md_path: Path) -> FastMCP:
             "contract_name": state.active_contract.name,
             "contract_hash": state.active_contract.hash,
         })
+
+    # ===================================================================
+    # EXEC LAYER
+    # ===================================================================
+
+    @mcp.tool()
+    def gov_exec(command: str, agent_id: str, timeout_secs: int = 30) -> str:
+        """Execute a command after governance + whitelist check.
+
+        The command is checked against:
+          1. always_deny list (instant reject, no override)
+          2. allowed_prefixes whitelist (must match at least one)
+          3. Y*gov active contract (deny_commands enforcement)
+
+        Returns stdout, stderr, and return code on ALLOW.
+        Returns denial reason on DENY.
+        """
+        t0 = time.perf_counter()
+        whitelist = state.exec_whitelist
+
+        # Phase 1: always_deny (checked first — overrides everything)
+        for pattern in whitelist.get("always_deny", []):
+            if pattern in command:
+                latency_ms = (time.perf_counter() - t0) * 1000
+                return json.dumps({
+                    "decision": "DENY",
+                    "reason": f"always_deny: command contains '{pattern}'",
+                    "agent_id": agent_id,
+                    "command": command,
+                    "latency_ms": round(latency_ms, 4),
+                })
+
+        # Phase 2: allowed_prefixes whitelist
+        cmd_stripped = command.strip()
+        prefix_match = any(
+            cmd_stripped.startswith(prefix) for prefix in whitelist.get("allowed_prefixes", [])
+        )
+        if not prefix_match:
+            latency_ms = (time.perf_counter() - t0) * 1000
+            return json.dumps({
+                "decision": "DENY",
+                "reason": "command does not match any allowed prefix",
+                "agent_id": agent_id,
+                "command": command,
+                "latency_ms": round(latency_ms, 4),
+            })
+
+        # Phase 3: Y*gov contract enforcement
+        contract_result: CheckResult = check(
+            params={"command": command, "tool_name": "Bash"},
+            result={},
+            contract=state.active_contract,
+        )
+        if not contract_result.passed:
+            latency_ms = (time.perf_counter() - t0) * 1000
+            return json.dumps({
+                "decision": "DENY",
+                "reason": "Y*gov contract violation",
+                "violations": _violations_to_list(contract_result.violations),
+                "agent_id": agent_id,
+                "command": command,
+                "latency_ms": round(latency_ms, 4),
+            })
+
+        # All checks passed — execute
+        try:
+            proc = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout_secs,
+            )
+            latency_ms = (time.perf_counter() - t0) * 1000
+            return json.dumps({
+                "decision": "ALLOW",
+                "agent_id": agent_id,
+                "command": command,
+                "returncode": proc.returncode,
+                "stdout": proc.stdout[:4096],
+                "stderr": proc.stderr[:2048],
+                "latency_ms": round(latency_ms, 4),
+            })
+        except subprocess.TimeoutExpired:
+            latency_ms = (time.perf_counter() - t0) * 1000
+            return json.dumps({
+                "decision": "ALLOW",
+                "agent_id": agent_id,
+                "command": command,
+                "returncode": -1,
+                "stdout": "",
+                "stderr": f"Command timed out after {timeout_secs}s",
+                "latency_ms": round(latency_ms, 4),
+            })
 
     # ===================================================================
     # AUDIT & OBSERVABILITY LAYER (stubs)
