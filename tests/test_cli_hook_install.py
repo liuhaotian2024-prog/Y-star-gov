@@ -186,7 +186,7 @@ class TestHookInstallIntegration:
 
         # 先执行setup
         from ystar.cli.setup_cmd import _cmd_setup
-        with patch('builtins.input', side_effect=['test', '', '', '', '']):
+        with patch('builtins.input', side_effect=['test', '', '', '', '', 'n']):
             _cmd_setup()
 
         # 再执行hook-install

@@ -8,6 +8,72 @@ import json
 import pathlib
 
 
+def _generate_delegation_chain_if_needed(project: str, deny_paths: list, deny_cmds: list) -> dict:
+    """
+    Generate delegation chain if multiple agents detected in .claude/agents/.
+
+    Creates a simple tree structure:
+    - First agent becomes root with full permissions
+    - Other agents become children with default restricted permissions
+
+    Returns:
+        Delegation chain dict (tree structure) or empty dict if not multi-agent setup
+    """
+    claude_agents_dir = pathlib.Path.home() / ".claude" / "agents"
+
+    if not claude_agents_dir.exists():
+        return {}
+
+    agents = [f.stem for f in claude_agents_dir.glob("*.md")]
+
+    # Only generate delegation chain if multiple agents detected
+    if len(agents) <= 1:
+        return {}
+
+    from ystar.kernel.dimensions import DelegationContract, DelegationChain, IntentContract
+
+    # Assume first agent is root (typically CEO)
+    root_agent = agents[0]
+
+    # Create root node with full permissions
+    root_contract = DelegationContract(
+        principal="system",
+        actor=root_agent,
+        contract=IntentContract(
+            name=f"{root_agent}_root",
+            deny=deny_paths,
+            deny_commands=deny_cmds,
+        ),
+        action_scope=[],  # Empty = unrestricted
+        children=[],
+    )
+
+    # Create child nodes for other agents with default restrictions
+    for agent in agents[1:]:
+        child_contract = DelegationContract(
+            principal=root_agent,
+            actor=agent,
+            contract=IntentContract(
+                name=f"{agent}_delegated",
+                deny=deny_paths + ["/etc", "/root"],  # More restrictive
+                deny_commands=deny_cmds + ["sudo"],   # Add sudo restriction
+            ),
+            action_scope=["Read", "Write", "Bash", "Grep", "Glob"],  # Default tool allowlist
+            children=[],
+        )
+        root_contract.children.append(child_contract)
+
+    chain = DelegationChain(root=root_contract)
+
+    # Validate tree structure
+    valid, violations = chain.validate_tree()
+    if not valid:
+        print(f"  Warning: Delegation chain validation failed: {violations}")
+        return {}
+
+    return chain.to_dict()
+
+
 def _cmd_setup(skip_prompt: bool = False) -> None:
     """
     Interactive .ystar_session.json generation.
@@ -82,6 +148,12 @@ def _cmd_setup(skip_prompt: bool = False) -> None:
             "obligation_timing":  obligation_timing,
         }
     }
+
+    # ── NEW v0.48: Generate delegation_chain if multiple agents detected ──
+    delegation_chain = _generate_delegation_chain_if_needed(project, deny_paths, deny_cmds)
+    if delegation_chain:
+        session_config["delegation_chain"] = delegation_chain
+        print(f"  Generated delegation chain for multi-agent setup")
 
     out_path = pathlib.Path(".ystar_session.json")
     out_path.write_text(json.dumps(session_config, ensure_ascii=False, indent=2))

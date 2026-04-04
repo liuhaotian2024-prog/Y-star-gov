@@ -167,7 +167,7 @@ Role: Chief Executive Officer
 Role: Chief Technology Officer
 """)
 
-        with patch('builtins.input', side_effect=['ceo', '', '', '', '']):
+        with patch('builtins.input', side_effect=['ceo', '', '', '', '', 'n']):
             _cmd_setup()
 
         # 验证setup成功
@@ -177,7 +177,7 @@ Role: Chief Technology Officer
         """测试setup后CIEU数据库可以正常初始化"""
         monkeypatch.chdir(tmp_path)
 
-        with patch('builtins.input', side_effect=['test', '', '', '', '']):
+        with patch('builtins.input', side_effect=['test', '', '', '', '', 'n']):
             _cmd_setup()
 
         # 尝试初始化CIEU（不会报错）
@@ -195,7 +195,7 @@ Role: Chief Technology Officer
         """测试设置obligation timing"""
         monkeypatch.chdir(tmp_path)
 
-        inputs = ['myproject', '', '', '', '600']
+        inputs = ['myproject', '', '', '', '600', 'n']
         with patch('builtins.input', side_effect=inputs):
             _cmd_setup()
 

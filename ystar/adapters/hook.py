@@ -171,6 +171,168 @@ def _result_to_response(result: PolicyResult) -> Dict[str, Any]:
     }
 
 
+def _compute_effective_contract(delegation_chain_dict: dict, agent_id: str) -> dict:
+    """
+    Compute effective contract for specified agent (intersection of all contracts in path).
+
+    Logic:
+    1. Find agent's authorization path from delegation chain
+    2. Compute intersection of all contracts in path (strictest constraints)
+    3. Return merged contract dict
+
+    Args:
+        delegation_chain_dict: delegation_chain field from session.json
+        agent_id: current agent executing tool call
+
+    Returns:
+        Effective contract dict representation
+    """
+    from ystar.kernel.dimensions import DelegationChain, IntentContract
+
+    # Deserialize DelegationChain
+    try:
+        chain = DelegationChain.from_dict(delegation_chain_dict)
+    except Exception as e:
+        _log.warning(f"Failed to parse delegation chain: {e}")
+        return {}
+
+    # Find authorization path
+    path = chain.find_path(agent_id)
+
+    if not path:
+        _log.warning(f"Agent {agent_id} not found in delegation chain")
+        return {}
+
+    # Merge all contracts in path (take intersection)
+    effective = None
+
+    for delegation_contract in path:
+        contract = delegation_contract.contract
+
+        if effective is None:
+            effective = contract
+        else:
+            # Take intersection: stricter constraints
+            effective = _merge_contracts_strict(effective, contract)
+
+    return effective.to_dict() if effective else {}
+
+
+def _merge_contracts_strict(c1: "IntentContract", c2: "IntentContract") -> "IntentContract":
+    """
+    Merge two contracts, taking strictest constraints (intersection).
+
+    Rules:
+    - deny: union (deny if either denies)
+    - only_paths: intersection (allow only if both allow)
+    - deny_commands: union
+    - only_domains: intersection
+    - invariant: union (all conditions must be satisfied)
+    - value_range: intersection (narrower range)
+
+    Note: This is monotonic shrinking operation - result is never looser than either input.
+    """
+    from ystar.kernel.dimensions import IntentContract
+
+    # deny: union
+    merged_deny = list(set(c1.deny) | set(c2.deny))
+
+    # only_paths: intersection (allow only if both allow)
+    if c1.only_paths and c2.only_paths:
+        # Both have restrictions, take intersection (path prefix matching)
+        merged_only_paths = _intersect_path_prefixes(c1.only_paths, c2.only_paths)
+    elif c1.only_paths:
+        merged_only_paths = c1.only_paths
+    elif c2.only_paths:
+        merged_only_paths = c2.only_paths
+    else:
+        merged_only_paths = []
+
+    # deny_commands: union
+    merged_deny_commands = list(set(c1.deny_commands) | set(c2.deny_commands))
+
+    # only_domains: intersection
+    if c1.only_domains and c2.only_domains:
+        merged_only_domains = list(set(c1.only_domains) & set(c2.only_domains))
+    elif c1.only_domains:
+        merged_only_domains = c1.only_domains
+    elif c2.only_domains:
+        merged_only_domains = c2.only_domains
+    else:
+        merged_only_domains = []
+
+    # invariant: union (all conditions must be satisfied)
+    merged_invariant = list(set(c1.invariant) | set(c2.invariant))
+
+    # value_range: take intersection (narrower range)
+    merged_value_range = _merge_value_ranges(c1.value_range, c2.value_range)
+
+    return IntentContract(
+        name=f"merged({c1.name},{c2.name})",
+        deny=merged_deny,
+        only_paths=merged_only_paths,
+        deny_commands=merged_deny_commands,
+        only_domains=merged_only_domains,
+        invariant=merged_invariant,
+        value_range=merged_value_range,
+    )
+
+
+def _intersect_path_prefixes(paths1: list, paths2: list) -> list:
+    """
+    Path prefix intersection.
+    Keep only paths allowed by both sides.
+    """
+    result = []
+    for p1 in paths1:
+        for p2 in paths2:
+            # If p1 is prefix of p2, or p2 is prefix of p1, keep the longer one
+            if p1.startswith(p2):
+                result.append(p1)
+            elif p2.startswith(p1):
+                result.append(p2)
+    return list(set(result))
+
+
+def _merge_value_ranges(vr1: dict, vr2: dict) -> dict:
+    """
+    value_range intersection (narrower range).
+
+    Example:
+    vr1 = {"file_size": {"max": 1000}}
+    vr2 = {"file_size": {"max": 500}}
+    result = {"file_size": {"max": 500}}  # take stricter one
+    """
+    merged = {}
+
+    all_keys = set(vr1.keys()) | set(vr2.keys())
+
+    for key in all_keys:
+        range1 = vr1.get(key, {})
+        range2 = vr2.get(key, {})
+
+        merged_range = {}
+
+        # min: take larger (stricter)
+        if "min" in range1 or "min" in range2:
+            mins = [range1.get("min"), range2.get("min")]
+            mins = [m for m in mins if m is not None]
+            if mins:
+                merged_range["min"] = max(mins)
+
+        # max: take smaller (stricter)
+        if "max" in range1 or "max" in range2:
+            maxs = [range1.get("max"), range2.get("max")]
+            maxs = [m for m in maxs if m is not None]
+            if maxs:
+                merged_range["max"] = min(maxs)
+
+        if merged_range:
+            merged[key] = merged_range
+
+    return merged
+
+
 def check_hook(
     hook_payload: Dict[str, Any],
     policy: Optional[Policy] = None,
@@ -428,9 +590,25 @@ def _check_hook_full(
         chain_data = session_cfg.get("delegation_chain") if session_cfg else None
         if chain_data:
             delegation_chain = _DC.from_dict(chain_data)
-            _log.info("Delegation chain loaded: %d links", len(delegation_chain.links))
+            if delegation_chain.root is not None:
+                _log.info("Delegation chain loaded: tree mode with root=%s", delegation_chain.root.actor)
+            else:
+                _log.info("Delegation chain loaded: %d links", len(delegation_chain.links))
     except Exception as exc:
         _log.warning("Failed to load delegation chain from session: %s", exc)
+
+    # ── NEW: Compute effective contract from delegation chain path ──
+    # If delegation chain exists (tree mode), compute path-based effective contract
+    if delegation_chain and delegation_chain.root is not None:
+        chain_dict = session_cfg.get("delegation_chain")
+        if chain_dict:
+            effective_contract_dict = _compute_effective_contract(chain_dict, who)
+            if effective_contract_dict:
+                from ystar.kernel.dimensions import IntentContract
+                effective_contract = IntentContract.from_dict(effective_contract_dict, name=f"{who}_effective")
+                # Replace agent's contract with effective (merged) contract
+                agent_contracts[who] = effective_contract
+                _log.info("Using effective contract for %s (merged from delegation chain path)", who)
 
     state = SessionState(
         session_id      = session_id,
