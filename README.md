@@ -447,6 +447,12 @@ ystar trend
     Show 7-day CIEU event trend with daily breakdown.
     Displays total events, deny count, deny rate, and trend indicators (↑↓→).
 
+ystar governance-coverage
+    Show governance coverage report comparing declared agents vs active agents.
+    Displays agent coverage rate, identifies blind spots (agents without governance
+    records), and provides recommendations for improving coverage.
+    Requires .ystar_coverage.json baseline.
+
 ystar archive-cieu [--experiment <name>] [--output-dir <path>] [--db-path <path>]
     Archive CIEU database to JSONL format for permanent preservation.
     
