@@ -53,14 +53,14 @@ Mode C has the same governance as Mode B (contract enforcement, CIEU records, vi
 
 ### Summary Table
 
-| Scenario | Tasks | A tokens | B tokens | C tokens | C vs A | C vs B |
-|----------|:---:|:---:|:---:|:---:|:---:|:---:|
-| New Feature Development | 10 | 3,135 | 5,215 | 2,935 | **-6.4%** | -43.7% |
-| Bug Fix | 10 | 3,663 | 5,810 | 3,463 | **-5.5%** | -40.4% |
-| Codebase Understanding | 12 | 4,930 | 7,418 | 4,690 | **-4.9%** | -36.8% |
-| Dependency Upgrade | 10 | 3,242 | 5,364 | 3,042 | **-6.2%** | -43.3% |
-| Release Preparation | 10 | 3,507 | 5,578 | 3,307 | **-5.7%** | -40.7% |
-| **TOTAL** | **52** | **18,477** | **29,385** | **17,437** | **-5.6%** | **-40.7%** |
+| Scenario | Tasks | A tokens | B tokens | C tokens | C vs A | A time | B time | C time |
+|----------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| New Feature | 10 | 3,135 | 5,215 | 2,935 | **-6.4%** | 9.5s | 18.5s | 9.5s |
+| Bug Fix | 10 | 3,663 | 5,810 | 3,463 | **-5.5%** | 9.8s | 18.8s | 9.8s |
+| Architecture | 12 | 4,930 | 7,418 | 4,690 | **-4.9%** | 16.8s | 27.6s | 16.8s |
+| Dep Upgrade | 10 | 3,242 | 5,364 | 3,042 | **-6.2%** | 17.6s | 26.6s | 17.6s |
+| Release Prep | 10 | 3,507 | 5,578 | 3,307 | **-5.7%** | 15.1s | 24.1s | 15.1s |
+| **TOTAL** | **52** | **18,477** | **29,385** | **17,437** | **-5.6%** | **68.8s** | **115.6s** | **68.8s** |
 
 ### Tool Calls
 
@@ -217,6 +217,58 @@ Tasks: version info (2), commit history (3), changelog (1), changes (2), tests (
 | C | 3,307 | 10 |
 
 ---
+
+## Timing Analysis
+
+### Wall Time Breakdown
+
+| Component | Mode A | Mode B | Mode C |
+|-----------|:---:|:---:|:---:|
+| Command execution (real) | 22.0s | 22.0s | 22.0s |
+| LLM round-trips | 52 × 900ms = 46.8s | 104 × 900ms = 93.6s | 52 × 900ms = 46.8s |
+| Router/check overhead | — | — | 2.4ms |
+| **Total wall time** | **68.8s** | **115.6s** | **68.8s** |
+
+### Hypothesis: Is Mode C faster than Mode A?
+
+**Result: Mode C ≈ Mode A.** The router overhead (0.046ms per command) is 19,500× smaller than one LLM round-trip (900ms). Mode C's timing is indistinguishable from Mode A.
+
+```
+LLM round-trip:    900.000 ms
+Router classify:     0.046 ms  (19,500× smaller)
+Y*gov check():       0.050 ms  (18,000× smaller)
+```
+
+**The real time saving is Mode C vs Mode B:**
+
+```
+Mode B:  115.6s  (52 extra LLM round-trips for governance checks)
+Mode C:   68.8s  (governance checks merged into execution)
+Saved:    46.8s  (40.5% faster)
+```
+
+Mode B doubles the wall time because every task needs a separate LLM round-trip just to hear "ALLOW." Mode C eliminates this by returning the execution result inside the governance check.
+
+### Average wait per tool call
+
+| Mode | Total calls | Wall time | Avg wait/call |
+|------|:---:|:---:|:---:|
+| A | 52 | 68.8s | 1,323ms |
+| B | 104 | 115.6s | 1,112ms |
+| C | 52 | 68.8s | 1,323ms |
+
+Mode B's lower per-call average is misleading — half its calls are near-instant check() results that the agent still needs an LLM round-trip to process.
+
+### Auto-routing latency (router decision time)
+
+| Metric | Value |
+|--------|:---:|
+| Mean router classify time | 0.046ms |
+| Max router classify time | 0.08ms |
+| Y\*gov check() time | 0.050ms |
+| Total governance overhead per command | <0.1ms |
+
+The entire governance + routing pipeline adds **less than 0.1ms** per command. For comparison, a single network request to the Anthropic API takes ~200ms minimum.
 
 ## Conclusion
 
