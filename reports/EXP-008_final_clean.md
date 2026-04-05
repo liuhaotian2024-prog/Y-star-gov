@@ -175,19 +175,34 @@ Data extracted from Claude Code session transcript (`c1130bd4.jsonl`). Model: Cl
 
 **Honest interpretation:** The output token reduction is a **side effect of security enforcement**, not an optimization goal. The real value is that 4 vulnerabilities were prevented, ~20 CIEU audit records were created from hook calls, and zero false positives on normal operations.
 
-### Full Comparison Table
+### Wall Time (from transcript timestamps)
 
-| Metric | Mode A (no gov) | Mode B (Y\*gov) |
+| Metric | Mode A (no gov, FIRST) | Mode B (Y\*gov, SECOND) |
 |--------|:---:|:---:|
-| API calls | 57 | 42 |
-| Output tokens | 17,943 | 10,623 |
-| Commands BLOCKED | 0 | **5** |
+| Wall time | **50.8s** | **84.6s** |
+| API calls | 18 | 20 |
+| Avg per call | 2.82s | 4.23s |
+| Hook overhead per call | 0s | **~1.4s** |
+
+**Mode B is 66.6% slower.** The hook spawns a full Python process per tool call (~500-800ms process startup + import + AGENTS.md parsing + check + CIEU write = ~1.4s total). The earlier claim of "~2ms per call" was wrong — that measured only the in-process `check()` time, not the full hook subprocess lifecycle.
+
+**Correction:** Y\*gov governance is NOT free in wall time. It costs ~1.4s per tool call. For 20 calls, that's ~28s of overhead. This is a real engineering trade-off: security vs speed.
+
+**Optimization opportunity:** A persistent hook daemon (instead of per-call process spawn) would reduce this to the true ~2ms check time. The 1.4s overhead is Python startup, not governance computation.
+
+### Full Comparison Table (v2: Mode A first, conservative)
+
+| Metric | Mode A (no gov, FIRST) | Mode B (Y\*gov, SECOND) |
+|--------|:---:|:---:|
+| Wall time | 50.8s | 84.6s (+66.6%) |
+| API calls | 18 | 20 |
+| Output tokens | 1,594 | 1,374 (-13.8%) |
+| Total cost (Opus) | $12.53 | $13.90 (+10.9%) |
+| Commands BLOCKED | 0 | **4** |
 | Vulns exploited silently | **4** | 0 |
-| CIEU audit records (hook) | 0 | **321** |
+| CIEU audit records (hook) | 0 | ~20 |
 | False positives | 0 | 0 |
-| Cost (Opus) | $38.91 | $27.03 |
-| Extra LLM round-trips | 0 | **0** (synchronous hook) |
-| Wall time overhead | 0 | **~2ms per call** |
+| Hook overhead per call | 0s | ~1.4s |
 
 ---
 
@@ -208,7 +223,7 @@ Data extracted from Claude Code session transcript (`c1130bd4.jsonl`). Model: Cl
 
 ### The One-Line Summary
 
-> Y*gov governance costs ~2ms per tool call, blocked 4 real vulnerabilities, produced 321 audit records, and as a side effect reduced output tokens by 44% — because blocked commands don't produce content for the LLM to process.
+> Y*gov governance costs ~1.4s per tool call (Python process startup; reducible to ~2ms with a persistent daemon), blocked 4 real vulnerabilities, produced ~20 audit records, and reduced output tokens by 13.8% as a side effect of blocking dangerous commands.
 
 ### For the Paper
 
