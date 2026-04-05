@@ -40,6 +40,9 @@ allowed_prefixes:
   - "which "
   - "python --version"
   - "python3 --version"
+  - "python3.11 -m pytest"
+  - "python3.11 -m pip"
+  - "python3.11 -c "
   - "ystar "
 
 # Commands matching any pattern here are ALWAYS denied, regardless of whitelist.

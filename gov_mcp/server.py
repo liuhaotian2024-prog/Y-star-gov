@@ -111,6 +111,81 @@ def _violations_to_list(violations: list) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Auto-routing logic
+# ---------------------------------------------------------------------------
+
+def _is_deterministic(command: str, whitelist: Dict[str, Any]) -> bool:
+    """Return True if command matches exec whitelist and is not always-denied."""
+    cmd = command.strip()
+    for pattern in whitelist.get("always_deny", []):
+        if pattern in cmd:
+            return False
+    return any(cmd.startswith(p) for p in whitelist.get("allowed_prefixes", []))
+
+
+def _try_auto_route(
+    command: str,
+    agent_id: str,
+    state: "_State",
+    t0: float,
+) -> Optional[str]:
+    """If command is deterministic and whitelisted, execute and return result.
+
+    Returns JSON string on auto-route, or None to fall through to normal check.
+    """
+    if not _is_deterministic(command, state.exec_whitelist):
+        return None
+
+    # Y*gov contract enforcement (even auto-routed commands must pass)
+    contract_result: CheckResult = check(
+        params={"command": command, "tool_name": "Bash"},
+        result={},
+        contract=state.active_contract,
+    )
+    if not contract_result.passed:
+        latency_ms = (time.perf_counter() - t0) * 1000
+        return json.dumps({
+            "decision": "DENY",
+            "violations": _violations_to_list(contract_result.violations),
+            "agent_id": agent_id,
+            "tool_name": "Bash",
+            "auto_routed": True,
+            "latency_ms": round(latency_ms, 4),
+        })
+
+    # Execute the command
+    try:
+        proc = subprocess.run(
+            command, shell=True, capture_output=True, text=True, timeout=30,
+        )
+        latency_ms = (time.perf_counter() - t0) * 1000
+        return json.dumps({
+            "decision": "ALLOW",
+            "auto_routed": True,
+            "agent_id": agent_id,
+            "tool_name": "Bash",
+            "command": command,
+            "returncode": proc.returncode,
+            "stdout": proc.stdout[:4096],
+            "stderr": proc.stderr[:2048],
+            "latency_ms": round(latency_ms, 4),
+        })
+    except subprocess.TimeoutExpired:
+        latency_ms = (time.perf_counter() - t0) * 1000
+        return json.dumps({
+            "decision": "ALLOW",
+            "auto_routed": True,
+            "agent_id": agent_id,
+            "tool_name": "Bash",
+            "command": command,
+            "returncode": -1,
+            "stdout": "",
+            "stderr": "Command timed out after 30s",
+            "latency_ms": round(latency_ms, 4),
+        })
+
+
+# ---------------------------------------------------------------------------
 # Server factory
 # ---------------------------------------------------------------------------
 
@@ -139,9 +214,24 @@ def create_server(
     def gov_check(agent_id: str, tool_name: str, params: dict) -> str:
         """Check a proposed agent action against the active governance contract.
 
-        Returns ALLOW or DENY with violations list.
+        If the action is a deterministic Bash command that matches the exec
+        whitelist, it is **auto-routed**: executed immediately and the result
+        is returned inline. The agent does not need to call gov_exec separately.
+        Auto-routed results include ``auto_routed: true``.
+
+        Non-deterministic or non-whitelisted actions receive the normal
+        ALLOW / DENY governance decision.
         """
         t0 = time.perf_counter()
+        command = params.get("command", "")
+
+        # ── Auto-routing: deterministic Bash commands ───────────────
+        if tool_name == "Bash" and command:
+            routed = _try_auto_route(command, agent_id, state, t0)
+            if routed is not None:
+                return routed
+
+        # ── Normal governance check ─────────────────────────────────
         result: CheckResult = check(
             params={"tool_name": tool_name, **params},
             result={},
@@ -154,6 +244,7 @@ def create_server(
             "violations": _violations_to_list(result.violations),
             "agent_id": agent_id,
             "tool_name": tool_name,
+            "auto_routed": False,
             "latency_ms": round(latency_ms, 4),
         })
 
