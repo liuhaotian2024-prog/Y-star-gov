@@ -417,7 +417,7 @@ def _extract_constraints_from_text(text: str, external_ctx=None) -> Dict[str, An
             if ll.startswith(marker):
                 rest = line[len(marker):].strip()
                 for token in re.split(r"[\s,]+", rest):
-                    token = token.strip("\"'`.,;:!?")  # Strip punctuation
+                    token = token.strip("\"'`,;:!?")  # Strip punctuation (no "." — preserves dotfiles like .env)
                     if len(token) > 2 and ("/" in token or token.startswith(".")):
                         result["deny"].append(token)
                         _note("deny", token, "Source1_explicit(marker={}, line={})".format(marker, line[:60]))
