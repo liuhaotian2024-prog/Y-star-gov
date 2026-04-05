@@ -379,6 +379,34 @@ def _extract_constraints_from_text(text: str, external_ctx=None) -> Dict[str, An
         if not ll:
             continue
 
+        # ── Part A0: structured "Prohibited:" / "Permitted:" header lines ────────
+        # Handles AGENTS.md format: "## Prohibited: rm -rf, sudo, /etc access, .env files"
+        # Classifies tokens into deny (paths/files) vs deny_commands (commands)
+        _PROHIBITED_RE = re.match(
+            r"^(?:##?\s*)?(?:prohibited|禁止)\s*[:：]\s*(.+)$", ll)
+        if _PROHIBITED_RE:
+            items_str = _PROHIBITED_RE.group(1)
+            for item in re.split(r"\s*,\s*", items_str):
+                item = item.strip().strip("\"'`")
+                if not item:
+                    continue
+                # Known dangerous commands → deny_commands
+                if item in ("rm -rf", "sudo", "git push --force", "git push -f"):
+                    result["deny_commands"].append(item)
+                    _note("deny_commands", item, f"Source0_prohibited_header(line='{line[:60]}')")
+                # Path-like or dotfile patterns → deny
+                elif "/" in item or item.startswith("."):
+                    # Strip trailing noise words: "/etc access" → "/etc"
+                    path_token = item.split()[0] if " " in item else item
+                    result["deny"].append(path_token)
+                    _note("deny", path_token, f"Source0_prohibited_header(line='{line[:60]}')")
+                # Multi-word items containing "access" with a path-like first word
+                elif " access" in item or " files" in item:
+                    token = item.split()[0]
+                    if "/" in token or token.startswith("."):
+                        result["deny"].append(token)
+                        _note("deny", token, f"Source0_prohibited_header(line='{line[:60]}')")
+
         # ── Part A: explicit imperative patterns (high certainty; original logic retained) ─────
         # The intent of these sentences is unambiguous; write directly into IntentContract
 
