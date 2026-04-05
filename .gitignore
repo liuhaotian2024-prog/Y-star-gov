@@ -38,3 +38,7 @@ desktop.ini
 
 # Logs
 *.log
+*.db-shm
+*.db-wal
+*.db
+__pycache__/

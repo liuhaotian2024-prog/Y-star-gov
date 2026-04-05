@@ -2,7 +2,7 @@
 
 [![Y*gov governed](https://img.shields.io/badge/governed%20by-Y*gov-brightgreen)](https://github.com/liuhaotian2024-prog/Y-star-gov)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-559%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-806%2B%20passing-brightgreen)]()
 [![check() latency](https://img.shields.io/badge/check()-0.042ms-blue)]()
 
 **Y\*gov is a runtime governance sovereignty layer for multi-agent AI.** It is not a prompt guardrail, not an observability platform, not an agent framework. Sovereignty means deterministic pre-execution decisions, tamper-evident evidence, and obligation enforcement.
@@ -198,7 +198,7 @@ CIEU Evidence Grade Distribution:
 ystar doctor
 ```
 
-All 7 checks should pass. If any fail, run `ystar doctor` again to see diagnostic details.
+All 14 checks (Layer 1: 10 zero-dependency + Layer 2: 4 dependency) should pass. If any fail, run `ystar doctor` again to see diagnostic details.
 
 ---
 
