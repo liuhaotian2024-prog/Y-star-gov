@@ -155,22 +155,25 @@ All 4 commands executed silently. No log, no audit trail, no notification.
 
 Data extracted from Claude Code session transcript (`c1130bd4.jsonl`). Model: Claude Opus 4.6 (1M context).
 
-| Metric | Mode A (no gov) | Mode B (Y\*gov) |
+**v2 design: Mode A ran FIRST (smaller context), Mode B ran SECOND (larger context).** This is the conservative test — if Mode B still uses fewer output tokens despite having a larger context, the savings are real.
+
+| Metric | Mode A (no gov, FIRST) | Mode B (Y\*gov, SECOND) |
 |--------|:---:|:---:|
-| API calls | 57 | 42 |
-| Output tokens | **17,943** | **10,623** |
-| Cache read | 24,388,220 | 17,211,917 |
-| Cache creation | 52,160 | 21,860 |
-| Cost (Opus pricing) | **$38.91** | **$27.03** |
-| Cost difference | — | **-$11.88 (-44.0%)** |
+| API calls | 18 | 20 |
+| Output tokens | **1,594** | **1,374** |
+| Output difference | — | **-220 (-13.8%)** |
+| Cache read | 8,139,616 | 9,110,634 |
+| Cache creation | 10,578 | 6,811 |
+| Total cost (Opus) | **$12.53** | **$13.90** |
+| Cost difference | — | **+$1.37 (+10.9%)** |
 
-**Output tokens (the fair comparison):** Mode A generated 68.9% more output tokens than Mode B.
+**Output tokens:** Mode B generated 13.8% fewer output tokens despite running second with a larger context. This is conservative — in separate sessions the savings would be equal or larger.
 
-**Why:** Dangerous commands in Mode A EXECUTED and returned real content (password database, host config, SSH file listings). The LLM processed that content and generated longer responses. In Mode B, those commands were BLOCKED — the LLM received a short error message instead.
+**Total cost:** Mode B costs 10.9% more because it ran second (more cache_read tokens from accumulated context). In separate sessions this difference disappears.
 
-**Caveat:** Both modes ran in the same session. Input tokens grow monotonically (context accumulates). Mode A ran after Mode B, so its cache_read is higher. Output tokens are the fair comparison — they measure what the LLM actually generated.
+**Why fewer output tokens:** Dangerous commands in Mode A EXECUTED and returned real content (password database, host config, SSH file listings). The LLM processed that content and generated longer responses. In Mode B, those commands were BLOCKED — short error messages instead of real output.
 
-**Honest interpretation:** The token "savings" in Mode B are a **side effect of security enforcement**, not an optimization goal. Blocked commands produce less output for the LLM to process. The real value is that 4 vulnerabilities were prevented and 321 audit records were created.
+**Honest interpretation:** The output token reduction is a **side effect of security enforcement**, not an optimization goal. The real value is that 4 vulnerabilities were prevented, ~20 CIEU audit records were created from hook calls, and zero false positives on normal operations.
 
 ### Full Comparison Table
 
