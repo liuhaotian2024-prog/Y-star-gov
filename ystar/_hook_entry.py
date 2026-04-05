@@ -1,10 +1,8 @@
-"""Y*gov PreToolUse hook entry point — called by Claude Code on every tool use.
+"""Y*gov PreToolUse hook entry point — ecosystem-neutral.
 
-Claude Code hook protocol:
-  Exit 0 + JSON with hookSpecificOutput.permissionDecision = "deny" → BLOCK
-  Exit 0 + JSON with hookSpecificOutput.permissionDecision = "allow" → ALLOW
-  Exit 2 + stderr message → BLOCK (simple mode)
-  Exit 0 + empty/no output → ALLOW
+Detects the host framework automatically and returns the response
+in the format the host expects. No host-specific format is hardcoded
+here — all formatting is delegated to hook_response.py.
 """
 import io
 import json
@@ -13,8 +11,6 @@ import sys
 import contextlib
 import traceback
 from pathlib import Path
-
-from ystar.adapters.hook import check_hook
 
 
 def _read_agent_id() -> str:
@@ -25,34 +21,6 @@ def _read_agent_id() -> str:
     if marker.exists():
         return marker.read_text().strip()
     return ""
-
-
-def _to_claude_code_response(ygov_result: dict) -> dict:
-    """Convert Y*gov hook result to Claude Code's expected format.
-
-    Y*gov returns:  {} (allow) or {"action": "block", "message": "..."}
-    Claude Code expects:
-      {
-        "hookSpecificOutput": {
-          "hookEventName": "PreToolUse",
-          "permissionDecision": "allow" | "deny",
-          "permissionDecisionReason": "..."
-        }
-      }
-    """
-    if not ygov_result or ygov_result == {}:
-        # ALLOW
-        return {}
-
-    # DENY — extract reason from Y*gov format
-    reason = ygov_result.get("message", "Blocked by Y*gov")
-    return {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": reason,
-        }
-    }
 
 
 def main():
@@ -68,6 +36,12 @@ def main():
 
         with debug_log.open("a") as f:
             f.write(json.dumps(payload, default=str)[:500] + "\n")
+
+        from ystar.adapters.hook import check_hook
+        from ystar.adapters.hook_response import detect_host, convert_ygov_result
+
+        # Detect host framework from payload
+        host = detect_host(payload)
 
         # Build policy non-interactively, suppress ALL stdout
         policy = None
@@ -87,7 +61,7 @@ def main():
         # Run Y*gov check (produces CIEU record)
         ygov_result = check_hook(payload, policy, agent_id=agent_id or None)
 
-        # Pre-check: Bash command content scan (defense-in-depth)
+        # Defense-in-depth: Bash command content scan
         cmd = payload.get("tool_input", {}).get("command", "")
         if payload.get("tool_name") == "Bash" and cmd and policy and ygov_result == {}:
             contract = policy._rules.get(agent_id) or policy._rules.get("agent")
@@ -98,18 +72,17 @@ def main():
                     msg = cr.violations[0].message if cr.violations else "deny"
                     ygov_result = {"action": "block", "message": f"[Y*] {msg}"}
 
-        # Convert to Claude Code format
-        cc_response = _to_claude_code_response(ygov_result)
+        # Convert to host-specific format (ecosystem-neutral)
+        response = convert_ygov_result(ygov_result, host)
 
         with debug_log.open("a") as f:
-            f.write(f"  YGOV={json.dumps(ygov_result)[:120]} CC={json.dumps(cc_response)[:120]}\n")
+            f.write(f"  HOST={host} YGOV={json.dumps(ygov_result)[:80]} OUT={json.dumps(response)[:80]}\n")
 
-        print(json.dumps(cc_response))
+        print(json.dumps(response))
 
     except Exception as e:
         with debug_log.open("a") as f:
             f.write(f"  ERROR: {e}\n{traceback.format_exc()[:300]}\n")
-        # On error, print empty (ALLOW) — fail-open
         print("{}")
 
 
