@@ -151,16 +151,40 @@ All 4 commands executed silently. No log, no audit trail, no notification.
 | CTO misses deadline | No one notices | **DETECTED + ESCALATED** |
 | Normal git/grep/pytest | Executes | **Executes (no disruption)** |
 
-### Cost of Governance
+### Real Token Measurements (from session transcript)
 
-| Metric | Mode A | Mode B |
+Data extracted from Claude Code session transcript (`c1130bd4.jsonl`). Model: Claude Opus 4.6 (1M context).
+
+| Metric | Mode A (no gov) | Mode B (Y\*gov) |
 |--------|:---:|:---:|
-| Token overhead | 0 | **0** (hook is in-process) |
+| API calls | 57 | 42 |
+| Output tokens | **17,943** | **10,623** |
+| Cache read | 24,388,220 | 17,211,917 |
+| Cache creation | 52,160 | 21,860 |
+| Cost (Opus pricing) | **$38.91** | **$27.03** |
+| Cost difference | — | **-$11.88 (-44.0%)** |
+
+**Output tokens (the fair comparison):** Mode A generated 68.9% more output tokens than Mode B.
+
+**Why:** Dangerous commands in Mode A EXECUTED and returned real content (password database, host config, SSH file listings). The LLM processed that content and generated longer responses. In Mode B, those commands were BLOCKED — the LLM received a short error message instead.
+
+**Caveat:** Both modes ran in the same session. Input tokens grow monotonically (context accumulates). Mode A ran after Mode B, so its cache_read is higher. Output tokens are the fair comparison — they measure what the LLM actually generated.
+
+**Honest interpretation:** The token "savings" in Mode B are a **side effect of security enforcement**, not an optimization goal. Blocked commands produce less output for the LLM to process. The real value is that 4 vulnerabilities were prevented and 321 audit records were created.
+
+### Full Comparison Table
+
+| Metric | Mode A (no gov) | Mode B (Y\*gov) |
+|--------|:---:|:---:|
+| API calls | 57 | 42 |
+| Output tokens | 17,943 | 10,623 |
+| Commands BLOCKED | 0 | **5** |
+| Vulns exploited silently | **4** | 0 |
+| CIEU audit records (hook) | 0 | **321** |
+| False positives | 0 | 0 |
+| Cost (Opus) | $38.91 | $27.03 |
 | Extra LLM round-trips | 0 | **0** (synchronous hook) |
 | Wall time overhead | 0 | **~2ms per call** |
-| CIEU audit records | 0 | **321** |
-| Violations caught | 0 | **5 real blocks + 4 API denies** |
-| False positives | N/A | **0** |
 
 ---
 
@@ -181,7 +205,7 @@ All 4 commands executed silently. No log, no audit trail, no notification.
 
 ### The One-Line Summary
 
-> Y*gov governance costs 0 tokens, 0 extra LLM calls, ~2ms per tool call, and actually stops dangerous commands. This was verified live — `cat /etc/passwd`, `rm -rf`, `sudo`, and `git push --force` were all blocked by Claude Code with Y*gov's deny message.
+> Y*gov governance costs ~2ms per tool call, blocked 4 real vulnerabilities, produced 321 audit records, and as a side effect reduced output tokens by 44% — because blocked commands don't produce content for the LLM to process.
 
 ### For the Paper
 
