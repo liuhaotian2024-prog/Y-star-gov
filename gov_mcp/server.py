@@ -627,4 +627,24 @@ def create_server(
             "checks": checks,
         })
 
+    # ===================================================================
+    # BENCHMARK
+    # ===================================================================
+
+    @mcp.tool()
+    def gov_benchmark(tasks: list[str] | None = None) -> str:
+        """Run A/B token savings benchmark: traditional tool calls vs gov_exec.
+
+        Executes a set of deterministic commands and compares token cost
+        between Mode A (one LLM round-trip per command) and Mode B (single
+        gov_exec batch). Returns token savings, timing, and recommendation.
+
+        Args:
+            tasks: List of commands to benchmark. Defaults to 5 typical tasks.
+        """
+        from gov_mcp.benchmark import run_benchmark
+
+        result = run_benchmark(tasks=tasks)
+        return json.dumps(result)
+
     return mcp
