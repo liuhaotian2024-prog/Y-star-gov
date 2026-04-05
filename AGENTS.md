@@ -35,6 +35,18 @@ Violation of this principle = P0-level violation. Stop all work and fix immediat
 
 ---
 
+## GOV MCP Usage Rule (Internal — Y* Bridge Labs)
+
+GOV MCP server runs at 192.168.1.228:7922 (Mac mini, SSE transport).
+
+When executing deterministic commands (git, grep, pytest, ls, wc, find, head, tail, etc.), agents MUST use the gov_check MCP tool. If the response contains auto_routed: true, the command has already been executed — do NOT call Bash separately.
+
+For non-deterministic commands or commands requiring interactive input, use Bash directly. The PreToolUse hook daemon provides the safety net.
+
+This is MUST (internal team policy), not SHOULD. The GOV MCP server is always available.
+
+---
+
 ## ystar-cto
 
 - Never access /etc or /proc or /sys
