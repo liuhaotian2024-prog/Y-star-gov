@@ -1,13 +1,23 @@
-"""Y*gov PreToolUse hook entry point — called by Claude Code on every tool use."""
+"""Y*gov PreToolUse hook entry point — called by Claude Code on every tool use.
+
+Claude Code hook protocol:
+  Exit 0 + JSON with hookSpecificOutput.permissionDecision = "deny" → BLOCK
+  Exit 0 + JSON with hookSpecificOutput.permissionDecision = "allow" → ALLOW
+  Exit 2 + stderr message → BLOCK (simple mode)
+  Exit 0 + empty/no output → ALLOW
+"""
+import io
 import json
 import os
 import sys
+import contextlib
 import traceback
 from pathlib import Path
 
+from ystar.adapters.hook import check_hook
+
 
 def _read_agent_id() -> str:
-    """Read agent identity from env or marker file."""
     aid = os.environ.get("YSTAR_AGENT_ID", "")
     if aid:
         return aid
@@ -15,6 +25,34 @@ def _read_agent_id() -> str:
     if marker.exists():
         return marker.read_text().strip()
     return ""
+
+
+def _to_claude_code_response(ygov_result: dict) -> dict:
+    """Convert Y*gov hook result to Claude Code's expected format.
+
+    Y*gov returns:  {} (allow) or {"action": "block", "message": "..."}
+    Claude Code expects:
+      {
+        "hookSpecificOutput": {
+          "hookEventName": "PreToolUse",
+          "permissionDecision": "allow" | "deny",
+          "permissionDecisionReason": "..."
+        }
+      }
+    """
+    if not ygov_result or ygov_result == {}:
+        # ALLOW
+        return {}
+
+    # DENY — extract reason from Y*gov format
+    reason = ygov_result.get("message", "Blocked by Y*gov")
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }
 
 
 def main():
@@ -31,13 +69,10 @@ def main():
         with debug_log.open("a") as f:
             f.write(json.dumps(payload, default=str)[:500] + "\n")
 
-        from ystar.adapters.hook import check_hook
-
-        # Build policy non-interactively, suppress ALL stdout from policy loading
+        # Build policy non-interactively, suppress ALL stdout
         policy = None
         agents_md = Path("AGENTS.md")
         if agents_md.exists():
-            import io, contextlib
             from ystar import Policy
             with contextlib.redirect_stdout(io.StringIO()), \
                  contextlib.redirect_stderr(io.StringIO()):
@@ -49,37 +84,32 @@ def main():
             if "agent" in policy._rules:
                 policy._rules[agent_id] = policy._rules["agent"]
 
-        # Before check_hook, run our own P0-1.6 check to verify it works
+        # Run Y*gov check (produces CIEU record)
+        ygov_result = check_hook(payload, policy, agent_id=agent_id or None)
+
+        # Pre-check: Bash command content scan (defense-in-depth)
         cmd = payload.get("tool_input", {}).get("command", "")
-        pre_check_deny = None
-        if payload.get("tool_name") == "Bash" and cmd and policy:
+        if payload.get("tool_name") == "Bash" and cmd and policy and ygov_result == {}:
             contract = policy._rules.get(agent_id) or policy._rules.get("agent")
             if contract:
                 from ystar import check as _chk
                 cr = _chk(params={"command": cmd, "tool_name": "Bash"}, result={}, contract=contract)
                 if not cr.passed:
-                    pre_check_deny = cr.violations[0].message if cr.violations else "deny"
+                    msg = cr.violations[0].message if cr.violations else "deny"
+                    ygov_result = {"action": "block", "message": f"[Y*] {msg}"}
 
-        result = check_hook(payload, policy, agent_id=agent_id or None)
-
-        # If pre_check found a deny but check_hook returned ALLOW, override
-        if pre_check_deny and result == {}:
-            result = {
-                "action": "block",
-                "message": f"[Y*] {pre_check_deny}",
-            }
+        # Convert to Claude Code format
+        cc_response = _to_claude_code_response(ygov_result)
 
         with debug_log.open("a") as f:
-            f.write(f"  AGENT={agent_id} PRE_DENY={pre_check_deny} RESULT: {json.dumps(result)[:200]}\n")
+            f.write(f"  YGOV={json.dumps(ygov_result)[:120]} CC={json.dumps(cc_response)[:120]}\n")
 
-        print(json.dumps(result))
+        print(json.dumps(cc_response))
 
     except Exception as e:
-        # Log the error — this is the key: if check_hook crashes, we log WHY
         with debug_log.open("a") as f:
-            f.write(f"  ERROR: {e}\n")
-            f.write(f"  TRACEBACK: {traceback.format_exc()[:500]}\n")
-        # On error, print empty dict (ALLOW) — fail-open
+            f.write(f"  ERROR: {e}\n{traceback.format_exc()[:300]}\n")
+        # On error, print empty (ALLOW) — fail-open
         print("{}")
 
 
