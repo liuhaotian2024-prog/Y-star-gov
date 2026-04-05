@@ -33,6 +33,7 @@ P1-5 拆分完成（1208行→4文件）：
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -474,6 +475,61 @@ def check_hook(
                                 contract.hash if contract else "", cieu_db)
                     _log.warning("DENY Bash command (write boundary): %s → %s", who, path)
                     return _result_to_response(boundary_result)
+
+    # ── P0-1.6: Bash command content deny scan ─────────────────────────
+    # Scans the entire command string against the contract's deny list
+    # and deny_commands. Catches: cat /etc/passwd, curl http://evil.com,
+    # python -c "os.system(...)", sudo, eval, exec, etc.
+    # This closes the gap where the full governance path (OpenClaw enforce)
+    # only checks structured fields (file_path, url) but not raw command text.
+    if tool_name == "Bash":
+        command = params_early.get("command", "")
+        if command:
+            contract = policy._rules.get(who)
+            if contract is not None:
+                from ystar import check as _check_fn
+                cmd_result = _check_fn(
+                    params={"command": command, "tool_name": "Bash"},
+                    result={},
+                    contract=contract,
+                )
+                if not cmd_result.passed:
+                    violation_msg = cmd_result.violations[0].message if cmd_result.violations else "deny"
+                    # Write CIEU record directly (cmd_result is CheckResult, not PolicyResult)
+                    cieu_db = ".ystar_cieu.db"
+                    session_cfg_cmd = _load_session_config_cached()
+                    if session_cfg_cmd:
+                        cieu_db = session_cfg_cmd.get("cieu_db", cieu_db)
+                    try:
+                        from ystar.governance.cieu_store import CIEUStore as _CS
+                        _cs = _CS(cieu_db)
+                        _cs.write_dict({
+                            "session_id": session_id_payload or "unknown",
+                            "agent_id": who,
+                            "event_type": tool_name,
+                            "decision": "deny",
+                            "passed": False,
+                            "command": command[:500],
+                            "contract_hash": contract.hash if contract else "",
+                            "violations": json.dumps([
+                                {"dimension": v.dimension, "message": v.message}
+                                for v in cmd_result.violations
+                            ]),
+                        })
+                    except Exception:
+                        pass
+                    _log.warning(
+                        "DENY Bash command content: %s → %s (%s)",
+                        who, command[:80], violation_msg,
+                    )
+                    return {
+                        "action": "block",
+                        "message": f"[Y*] {violation_msg}",
+                        "violations": [
+                            {"dimension": v.dimension, "message": v.message}
+                            for v in cmd_result.violations
+                        ],
+                    }
 
     # ── I1: 外部CLAUDE.md读取检测 ──────────────────────────────────
     if tool_name == "Read":
