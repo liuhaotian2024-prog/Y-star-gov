@@ -110,6 +110,27 @@ def _dict_to_contract(d: Dict[str, Any]) -> IntentContract:
     )
 
 
+def _get_contract_for_agent(agent_id: str, state: "_State") -> IntentContract:
+    """Resolve the effective contract for an agent.
+
+    If the agent has a registered delegation (linear or tree mode),
+    use its delegated contract. Otherwise fall back to the global
+    active contract.
+    """
+    # Tree mode: lookup in all_contracts index
+    chain = state.delegation_chain
+    if chain.root is not None and agent_id in chain.all_contracts:
+        return chain.all_contracts[agent_id].contract
+
+    # Linear mode: find last link where actor == agent_id
+    for link in reversed(chain.links):
+        if link.actor == agent_id:
+            return link.contract
+
+    # No delegation found — use global contract
+    return state.active_contract
+
+
 def _violations_to_list(violations: list) -> List[Dict[str, Any]]:
     """Serialize Violation dataclass instances to plain dicts."""
     return [
@@ -166,10 +187,11 @@ def _try_auto_route(
         return None
 
     # Y*gov contract enforcement (even auto-routed commands must pass)
+    effective_contract = _get_contract_for_agent(agent_id, state)
     contract_result: CheckResult = check(
         params={"command": command, "tool_name": "Bash"},
         result={},
-        contract=state.active_contract,
+        contract=effective_contract,
     )
     if not contract_result.passed:
         latency_ms = (time.perf_counter() - t0) * 1000
@@ -262,10 +284,12 @@ def create_server(
                 return routed
 
         # ── Normal governance check ─────────────────────────────────
+        effective_contract = _get_contract_for_agent(agent_id, state)
+        is_delegated = effective_contract is not state.active_contract
         result: CheckResult = check(
             params={"tool_name": tool_name, **params},
             result={},
-            contract=state.active_contract,
+            contract=effective_contract,
         )
         latency_ms = (time.perf_counter() - t0) * 1000
 
@@ -275,6 +299,7 @@ def create_server(
             "agent_id": agent_id,
             "tool_name": tool_name,
             "auto_routed": False,
+            "delegated_contract": is_delegated,
             "latency_ms": round(latency_ms, 4),
         })
 
@@ -287,10 +312,11 @@ def create_server(
         t0 = time.perf_counter()
 
         # 1. Run enforce (check + mode handling)
+        effective_contract = _get_contract_for_agent(agent_id, state)
         result = enforce(
             params={"tool_name": tool_name, **params},
             result={},
-            contract=state.active_contract,
+            contract=effective_contract,
         )
 
         # 2. Obligation scan
@@ -372,6 +398,218 @@ def create_server(
             "chain_depth": state.delegation_chain.depth,
             "is_valid": len(issues) == 0,
             "issues": issues,
+        })
+
+    @mcp.tool()
+    def gov_escalate(
+        agent_id: str,
+        requested_paths: list[str] | None = None,
+        requested_commands: list[str] | None = None,
+        requested_domains: list[str] | None = None,
+        reason: str = "",
+    ) -> str:
+        """Request permission escalation from the delegating principal.
+
+        When an agent hits a DENY on an action it legitimately needs,
+        it calls gov_escalate to request expanded permissions.
+
+        The escalation is checked against the principal's own contract
+        to ensure the requested expansion is within their authority.
+        If approved, a new delegation is issued automatically.
+
+        All escalation requests (approved or denied) are recorded as
+        CIEU audit events.
+
+        Args:
+            agent_id: The agent requesting escalation.
+            requested_paths: Additional paths to allow (e.g. ["./src/utils/"]).
+            requested_commands: Additional commands to allow.
+            requested_domains: Additional domains to allow.
+            reason: Why the escalation is needed.
+        """
+        t0 = time.perf_counter()
+        chain = state.delegation_chain
+
+        # Find the agent's current delegation
+        current_delegation: Optional[DelegationContract] = None
+        principal_id: Optional[str] = None
+        principal_contract: Optional[IntentContract] = None
+
+        # Tree mode
+        if chain.root is not None and agent_id in chain.all_contracts:
+            current_delegation = chain.all_contracts[agent_id]
+            principal_id = current_delegation.principal
+            if principal_id in chain.all_contracts:
+                principal_contract = chain.all_contracts[principal_id].contract
+            elif principal_id == chain.root.actor:
+                principal_contract = chain.root.contract
+            else:
+                principal_contract = state.active_contract
+
+        # Linear mode
+        if current_delegation is None:
+            for link in reversed(chain.links):
+                if link.actor == agent_id:
+                    current_delegation = link
+                    principal_id = link.principal
+                    break
+
+        if current_delegation is None:
+            return json.dumps({
+                "status": "DENIED",
+                "reason": f"No delegation found for agent '{agent_id}'. "
+                          "Only delegated agents can request escalation.",
+                "agent_id": agent_id,
+            })
+
+        # Find principal's contract (linear mode)
+        if principal_contract is None:
+            for link in reversed(chain.links):
+                if link.actor == principal_id:
+                    principal_contract = link.contract
+                    break
+            if principal_contract is None:
+                principal_contract = state.active_contract
+
+        # Check if requested expansion is within principal's authority
+        violations: List[str] = []
+
+        for path in (requested_paths or []):
+            # Principal must have this path in their allowed scope
+            if principal_contract.only_paths:
+                if not any(path.startswith(ap) for ap in principal_contract.only_paths):
+                    violations.append(
+                        f"Path '{path}' exceeds principal '{principal_id}' authority "
+                        f"(allowed: {principal_contract.only_paths})"
+                    )
+            # Path must not be in principal's deny list
+            if any(d in path for d in principal_contract.deny):
+                violations.append(
+                    f"Path '{path}' is denied in principal '{principal_id}' contract"
+                )
+
+        for cmd in (requested_commands or []):
+            if cmd in principal_contract.deny_commands:
+                violations.append(
+                    f"Command '{cmd}' is denied in principal '{principal_id}' contract"
+                )
+
+        for domain in (requested_domains or []):
+            if principal_contract.only_domains:
+                if domain not in principal_contract.only_domains:
+                    violations.append(
+                        f"Domain '{domain}' not in principal '{principal_id}' allowed domains"
+                    )
+
+        latency_ms = (time.perf_counter() - t0) * 1000
+
+        # Build CIEU audit event
+        cieu_event = {
+            "event_type": "escalation_request",
+            "agent_id": agent_id,
+            "principal_id": principal_id,
+            "requested_paths": requested_paths or [],
+            "requested_commands": requested_commands or [],
+            "requested_domains": requested_domains or [],
+            "reason": reason,
+            "timestamp": time.time(),
+        }
+
+        if violations:
+            # DENIED — principal lacks authority
+            cieu_event["decision"] = "DENIED"
+            cieu_event["violations"] = violations
+
+            # Write to CIEU if available
+            if state._cieu_store is not None:
+                try:
+                    state._cieu_store.write_dict(cieu_event)
+                except Exception:
+                    pass
+
+            return json.dumps({
+                "status": "DENIED",
+                "reason": "Requested permissions exceed principal's authority",
+                "violations": violations,
+                "agent_id": agent_id,
+                "principal_id": principal_id,
+                "escalate_to": principal_id,
+                "latency_ms": round(latency_ms, 4),
+            })
+
+        # APPROVED — re-delegate with expanded permissions
+        old_contract = current_delegation.contract
+        new_deny = list(old_contract.deny)
+        new_only_paths = list(old_contract.only_paths)
+        new_deny_commands = list(old_contract.deny_commands)
+        new_only_domains = list(old_contract.only_domains)
+
+        # Expand only_paths
+        for path in (requested_paths or []):
+            if path not in new_only_paths:
+                new_only_paths.append(path)
+
+        # Expand only_domains
+        for domain in (requested_domains or []):
+            if domain not in new_only_domains:
+                new_only_domains.append(domain)
+
+        # Build new delegation
+        new_contract = IntentContract(
+            deny=new_deny,
+            only_paths=new_only_paths,
+            deny_commands=new_deny_commands,
+            only_domains=new_only_domains,
+            invariant=list(old_contract.invariant),
+            optional_invariant=list(old_contract.optional_invariant),
+            postcondition=list(old_contract.postcondition),
+            field_deny=dict(old_contract.field_deny),
+            value_range=dict(old_contract.value_range),
+            obligation_timing=dict(old_contract.obligation_timing),
+        )
+
+        new_link = DelegationContract(
+            principal=principal_id,
+            actor=agent_id,
+            contract=new_contract,
+            action_scope=list(current_delegation.action_scope),
+            allow_redelegate=current_delegation.allow_redelegate,
+            delegation_depth=current_delegation.delegation_depth,
+        )
+
+        # Replace in chain
+        chain.links = [
+            link for link in chain.links if link.actor != agent_id
+        ]
+        chain.links.append(new_link)
+
+        # Update tree index if in tree mode
+        if chain.root is not None:
+            chain.all_contracts[agent_id] = new_link
+
+        latency_ms = (time.perf_counter() - t0) * 1000
+
+        cieu_event["decision"] = "APPROVED"
+        cieu_event["new_grant_id"] = new_link.grant_id
+        cieu_event["new_contract_hash"] = new_link.hash
+
+        if state._cieu_store is not None:
+            try:
+                state._cieu_store.write_dict(cieu_event)
+            except Exception:
+                pass
+
+        return json.dumps({
+            "status": "APPROVED",
+            "agent_id": agent_id,
+            "principal_id": principal_id,
+            "new_grant_id": new_link.grant_id,
+            "new_contract_hash": new_link.hash,
+            "expanded_paths": requested_paths or [],
+            "expanded_commands": requested_commands or [],
+            "expanded_domains": requested_domains or [],
+            "reason": reason,
+            "latency_ms": round(latency_ms, 4),
         })
 
     # ===================================================================
