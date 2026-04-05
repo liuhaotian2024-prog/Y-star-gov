@@ -185,3 +185,30 @@ Auto-route rate:   82.1%  (23/28 tasks)
 
 *EXP-006 conducted on Mac mini M2, Python 3.11.14, ystar v0.48.0, commit 258c33b.*
 *5 scenarios, 28 unique tasks, 56+33=89 total tool calls measured.*
+
+---
+
+## Addendum: Expanded Whitelist Results
+
+After expanding exec_whitelist to include `grep`, `head`, `tail`, `find`, `sort`, `awk`, `sed`, `cut`, and platform-specific commands:
+
+| Scenario | A calls | B calls | A tokens | B tokens | Saved | Auto % |
+|----------|:---:|:---:|:---:|:---:|:---:|:---:|
+| CI/CD | 12 | 6 | 3,001 | 1,649 | **45.1%** | 100% |
+| Code Review | 12 | 6 | 3,197 | 1,825 | **42.9%** | 100% |
+| Documentation | 10 | 5 | 2,383 | 1,275 | **46.5%** | 100% |
+| Debug | 12 | 6 | 3,151 | 1,769 | **43.9%** | 100% |
+| Data Query | 10 | 5 | 2,580 | 1,333 | **48.3%** | 100% |
+| **TOTAL** | **56** | **28** | **14,312** | **7,851** | **45.1%** | **100%** |
+
+**Key changes:**
+- Code Review: 21.4% → **42.9%** (+21.5 pp) — `grep` and `head` now auto-routed
+- Debug: 29.1% → **43.9%** (+14.8 pp) — `grep -n` now auto-routed
+- Overall: 37.1% → **45.1%** (+8.0 pp)
+- Auto-route: 82.1% → **100%**
+- Tool calls: 56 → 28 (**50% reduction**, up from 41%)
+
+**Platform whitelists added:**
+- `whitelist_unix.yaml` — 91 allowed prefixes (macOS/Linux)
+- `whitelist_windows.yaml` — 72 allowed prefixes (Windows + Git Bash compat)
+- Auto-detection via `sys.platform` at server startup

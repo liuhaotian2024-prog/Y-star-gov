@@ -64,10 +64,25 @@ class _State:
 
 
 def _load_exec_whitelist(path: Optional[Path]) -> Dict[str, List[str]]:
-    """Load exec whitelist YAML. Returns dict with allowed_prefixes and always_deny."""
+    """Load exec whitelist YAML with platform auto-detection.
+
+    Resolution order:
+      1. Explicit path (--exec-whitelist)
+      2. Platform-specific: whitelist_unix.yaml or whitelist_windows.yaml
+      3. Fallback: exec_whitelist.yaml
+    """
+    pkg_dir = Path(__file__).parent
+
     if path is None:
-        # Default: adjacent to this file
-        path = Path(__file__).parent / "exec_whitelist.yaml"
+        import sys
+        if sys.platform == "win32":
+            path = pkg_dir / "whitelist_windows.yaml"
+        else:
+            path = pkg_dir / "whitelist_unix.yaml"
+        # Fallback to generic if platform-specific doesn't exist
+        if not path.is_file():
+            path = pkg_dir / "exec_whitelist.yaml"
+
     if not path.is_file():
         return {"allowed_prefixes": [], "always_deny": []}
     with path.open(encoding="utf-8") as f:

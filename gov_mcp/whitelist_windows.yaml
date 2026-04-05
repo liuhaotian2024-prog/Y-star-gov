@@ -1,0 +1,111 @@
+# GOV MCP exec whitelist — Windows
+# Auto-loaded when platform is win32.
+
+allowed_prefixes:
+  # ── Git ──
+  - "git status"
+  - "git log"
+  - "git diff"
+  - "git add"
+  - "git commit"
+  - "git push"
+  - "git pull"
+  - "git fetch"
+  - "git branch"
+  - "git checkout"
+  - "git merge"
+  - "git rebase"
+  - "git stash"
+  - "git clone"
+  - "git tag"
+  - "git remote"
+  - "git show"
+  - "git rev-parse"
+  - "git describe"
+
+  # ── Testing ──
+  - "pytest"
+  - "python -m pytest"
+  - "python3 -m pytest"
+
+  # ── Package management ──
+  - "pip install"
+  - "pip3 install"
+  - "pip list"
+  - "pip3 list"
+  - "pip show"
+  - "pip3 show"
+  - "python -m pip"
+  - "python3 -m pip"
+
+  # ── Python execution ──
+  - "python -c "
+  - "python3 -c "
+  - "python --version"
+  - "python3 --version"
+
+  # ── Text processing (Windows) ──
+  - "findstr "
+  - "findstr /"
+  - "type "
+  - "more "
+  - "sort "
+  - "fc "
+
+  # ── File operations (Windows) ──
+  - "dir"
+  - "dir "
+  - "dir /"
+  - "copy "
+  - "move "
+  - "mkdir"
+  - "md "
+  - "where "
+  - "tree"
+
+  # ── System info (Windows) ──
+  - "cd"
+  - "echo "
+  - "set "
+  - "date /t"
+  - "time /t"
+  - "hostname"
+  - "whoami"
+  - "systeminfo"
+  - "ver"
+
+  # ── Unix compat (Git Bash / WSL) ──
+  - "grep "
+  - "head "
+  - "tail "
+  - "cat "
+  - "wc "
+  - "ls"
+  - "find "
+  - "pwd"
+  - "which "
+  - "awk "
+  - "sed "
+
+  # ── Build ──
+  - "make"
+  - "npm "
+  - "node "
+
+  # ── Y*gov ──
+  - "ystar "
+
+always_deny:
+  - "del /f /s /q C:\\"
+  - "rd /s /q C:\\"
+  - "format "
+  - "git push --force"
+  - "git push -f"
+  - "shutdown"
+  - ":(){ :|:& };:"
+  - "rm -rf /"
+  - "rm -rf /*"
+  - "curl | sh"
+  - "curl | bash"
+  - "powershell -enc"
+  - "Invoke-Expression"
