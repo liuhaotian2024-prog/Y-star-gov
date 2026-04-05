@@ -612,6 +612,76 @@ def create_server(
             "latency_ms": round(latency_ms, 4),
         })
 
+    @mcp.tool()
+    def gov_chain_reset(
+        agent_id: str = "",
+        confirm: bool = False,
+    ) -> str:
+        """Reset the delegation chain, clearing stale or experimental links.
+
+        Args:
+            agent_id: If provided, remove only links involving this agent
+                      (as principal or actor). If empty, clear entire chain.
+            confirm: Safety flag — must be True to execute. Prevents accidental resets.
+        """
+        if not confirm:
+            chain = state.delegation_chain
+            count = chain.depth
+            agents = set()
+            for link in chain.links:
+                agents.add(link.principal)
+                agents.add(link.actor)
+            return json.dumps({
+                "status": "DRY_RUN",
+                "message": "Set confirm=true to execute reset",
+                "current_depth": count,
+                "agents_in_chain": sorted(agents),
+                "would_remove": count if not agent_id else
+                    sum(1 for l in chain.links
+                        if l.actor == agent_id or l.principal == agent_id),
+            })
+
+        chain = state.delegation_chain
+        removed = 0
+
+        if agent_id:
+            # Selective removal
+            before = len(chain.links)
+            chain.links = [
+                link for link in chain.links
+                if link.actor != agent_id and link.principal != agent_id
+            ]
+            removed = before - len(chain.links)
+            # Also clean tree index
+            if chain.root is not None and agent_id in chain.all_contracts:
+                del chain.all_contracts[agent_id]
+        else:
+            # Full reset
+            removed = len(chain.links)
+            chain.links.clear()
+            chain.all_contracts.clear()
+            chain.root = None
+
+        # CIEU audit
+        cieu_event = {
+            "event_type": "chain_reset",
+            "agent_id": agent_id or "(all)",
+            "links_removed": removed,
+            "timestamp": time.time(),
+        }
+        if state._cieu_store is not None:
+            try:
+                state._cieu_store.write_dict(cieu_event)
+            except Exception:
+                pass
+
+        return json.dumps({
+            "status": "RESET",
+            "links_removed": removed,
+            "remaining_depth": chain.depth,
+            "agent_filter": agent_id or "(all)",
+        })
+
     # ===================================================================
     # CONTRACT MANAGEMENT LAYER (Step 1 stubs with basic impl)
     # ===================================================================
