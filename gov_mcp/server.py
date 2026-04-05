@@ -10,7 +10,7 @@ import json
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -129,13 +129,26 @@ def _violations_to_list(violations: list) -> List[Dict[str, Any]]:
 # Auto-routing logic
 # ---------------------------------------------------------------------------
 
-def _is_deterministic(command: str, whitelist: Dict[str, Any]) -> bool:
-    """Return True if command matches exec whitelist and is not always-denied."""
+def _is_deterministic(command: str, whitelist: Dict[str, Any]) -> Tuple[bool, str]:
+    """Classify command using rule engine first, whitelist as fallback.
+
+    Returns (is_deterministic, reason).
+    """
+    from gov_mcp.router import is_deterministic as _router_classify
+
+    deny_list = whitelist.get("always_deny", [])
+
+    # Phase 1: Rule engine (structural analysis)
+    ok, reason = _router_classify(command, always_deny=deny_list)
+    if ok:
+        return True, reason
+
+    # Phase 2: Whitelist fallback (catches commands the router marks unknown)
     cmd = command.strip()
-    for pattern in whitelist.get("always_deny", []):
-        if pattern in cmd:
-            return False
-    return any(cmd.startswith(p) for p in whitelist.get("allowed_prefixes", []))
+    if any(cmd.startswith(p) for p in whitelist.get("allowed_prefixes", [])):
+        return True, f"whitelist fallback: prefix match"
+
+    return False, reason
 
 
 def _try_auto_route(
@@ -144,11 +157,12 @@ def _try_auto_route(
     state: "_State",
     t0: float,
 ) -> Optional[str]:
-    """If command is deterministic and whitelisted, execute and return result.
+    """If command is deterministic, execute and return result.
 
     Returns JSON string on auto-route, or None to fall through to normal check.
     """
-    if not _is_deterministic(command, state.exec_whitelist):
+    ok, route_reason = _is_deterministic(command, state.exec_whitelist)
+    if not ok:
         return None
 
     # Y*gov contract enforcement (even auto-routed commands must pass)
@@ -177,6 +191,7 @@ def _try_auto_route(
         return json.dumps({
             "decision": "ALLOW",
             "auto_routed": True,
+            "route_reason": route_reason,
             "agent_id": agent_id,
             "tool_name": "Bash",
             "command": command,
