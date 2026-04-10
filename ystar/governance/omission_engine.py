@@ -100,13 +100,18 @@ class OmissionEngine:
 
     def __init__(
         self,
-        store: AnyStore,
+        store: AnyStore = None,
         registry: Optional[RuleRegistry] = None,
         cieu_store: Any = None,          # CIEUStore | NullCIEUStore | None
         now_fn: Optional[Any] = None,    # Callable[[], float]
         causal_notify_fn: Optional[Any] = None,  # GAP 5: Callable[[dict], None]
         trigger_registry: Any = None,    # TriggerRegistry | None
     ) -> None:
+        # GOV-010 Phase 1: default to persistent SQLite store instead of
+        # requiring callers to pass InMemoryOmissionStore explicitly.
+        # Obligations now survive process exit.
+        if store is None:
+            store = OmissionStore(db_path=".ystar_omission.db")
         self.store    = store
         self.registry = registry or get_registry()
         # [FIX-2] 用 NullCIEUStore 替代 None 作为默认值。
