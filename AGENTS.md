@@ -1,4 +1,4 @@
-# Y*gov Governance Contract
+﻿# Y*gov Governance Contract
 
 ## Constitutional Principles (immutable, never violate)
 
