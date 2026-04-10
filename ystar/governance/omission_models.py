@@ -475,3 +475,11 @@ class GEventType:
 
     # v0.43: Restoration events
     OBLIGATION_RESTORED     = "obligation_restored"
+
+    # GOV-010 Phase 3: AutonomyEngine events (desire-driven layer)
+    INTENT_DECLARED    = "intent_declared"
+    PROGRESS_UPDATED   = "progress_updated"
+    INTENT_COMPLETED   = "intent_completed"
+    INTENT_STALLED     = "intent_stalled"
+    GAP_IDENTIFIED     = "gap_identified"
+    GAP_FILLED         = "gap_filled"
