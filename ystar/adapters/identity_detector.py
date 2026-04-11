@@ -38,12 +38,53 @@ if not _log.handlers:
 _SESSION_CONFIG_CACHE: Optional[Dict[str, Any]] = None
 
 
+# ── Agent Type → Governance ID Mapping ──────────────────────────────────
+# Agent type → governance ID mapping
+# Claude Code agents use "Name-Role" format, governance uses short IDs
+_AGENT_TYPE_MAP = {
+    "Aiden-CEO": "ceo",
+    "Ethan-CTO": "cto",
+    "Sofia-CMO": "cmo",
+    "Marco-CFO": "cfo",
+    "Zara-CSO": "cso",
+    "Samantha-Secretary": "secretary",
+    "Leo-Kernel": "eng-kernel",
+    "Ryan-Platform": "eng-platform",
+    "Maya-Governance": "eng-governance",
+    "Jordan-Domains": "eng-domains",
+    "Jinjin-Research": "jinjin",
+    # Legacy format support
+    "ystar-ceo": "ceo",
+    "ystar-cto": "cto",
+    "ystar-cmo": "cmo",
+    "ystar-cfo": "cfo",
+    "ystar-cso": "cso",
+    "eng-kernel": "eng-kernel",
+    "eng-platform": "eng-platform",
+    "eng-governance": "eng-governance",
+    "eng-domains": "eng-domains",
+}
+
+
+def _map_agent_type(agent_type: str) -> str:
+    """Map Claude Code agent_type to Y*gov governance ID."""
+    if agent_type in _AGENT_TYPE_MAP:
+        return _AGENT_TYPE_MAP[agent_type]
+    # Fallback: try lowercase, strip common prefixes
+    lower = agent_type.lower().replace("ystar-", "")
+    for key, val in _AGENT_TYPE_MAP.items():
+        if key.lower() == lower:
+            return val
+    return agent_type  # Return as-is if no mapping found
+
+
 def _detect_agent_id(hook_payload: Dict[str, Any]) -> str:
     """
     从多个来源检测当前操作的 agent 身份。
 
     优先级：
     1. hook_payload 里的 agent_id 字段
+    1.5. hook_payload 里的 agent_type 字段 (Claude Code subagents)
     2. 环境变量 YSTAR_AGENT_ID
     3. 环境变量 CLAUDE_AGENT_NAME（Claude Code 可能设置）
     4. session_id 提取（格式 "agentName_sessionId"）
@@ -56,6 +97,13 @@ def _detect_agent_id(hook_payload: Dict[str, Any]) -> str:
     if aid and aid != "agent":
         _log.debug("Agent ID from payload.agent_id: %s", aid)
         return aid
+
+    # 1.5 payload: agent_type (Claude Code injects this for subagents)
+    agent_type = hook_payload.get("agent_type", "")
+    if agent_type:
+        mapped = _map_agent_type(agent_type)
+        _log.debug("Agent ID from payload.agent_type: %s (mapped from %s)", mapped, agent_type)
+        return mapped
 
     # 2. env: YSTAR_AGENT_ID
     aid = os.environ.get("YSTAR_AGENT_ID", "")
@@ -142,4 +190,6 @@ def _load_session_config(search_dirs: Optional[list] = None) -> Optional[Dict[st
 __all__ = [
     "_detect_agent_id",
     "_load_session_config",
+    "_map_agent_type",
+    "_AGENT_TYPE_MAP",
 ]
