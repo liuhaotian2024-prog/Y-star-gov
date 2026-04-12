@@ -1,0 +1,52 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "title": "Y*gov Cognitive Profiles Configuration",
+  "description": "Per-role cognitive preferences for gov_precheck validation. Each agent must analyze decisions from their primary dimension first.",
+  "patternProperties": {
+    "^[a-z][a-z0-9_-]*$": {
+      "type": "object",
+      "required": ["primary_dimensions", "primary_risks", "success_metrics"],
+      "properties": {
+        "primary_dimensions": {
+          "type": "array",
+          "description": "The dimensions this role must analyze first when evaluating any decision or task. Examples: '技术可行性', 'system stability', 'narrative clarity'",
+          "items": {"type": "string"},
+          "minItems": 1
+        },
+        "primary_risks": {
+          "type": "array",
+          "description": "The risk categories this role must assess first. Examples: '技术故障', 'performance degradation', '叙事失败', 'customer churn'",
+          "items": {"type": "string"},
+          "minItems": 1
+        },
+        "success_metrics": {
+          "type": "array",
+          "description": "How this role measures success. Examples: 'test pass rate', 'installation success rate', 'click-through rate', 'conversion rate'",
+          "items": {"type": "string"},
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "examples": [
+    {
+      "cto": {
+        "primary_dimensions": ["技术可行性", "系统稳定性", "架构合理性"],
+        "primary_risks": ["技术故障", "性能退化", "依赖冲突", "测试不足"],
+        "success_metrics": ["测试通过率", "安装成功率", "性能基线"]
+      },
+      "cmo": {
+        "primary_dimensions": ["叙事清晰度", "受众匹配", "平台适配"],
+        "primary_risks": ["叙事失败", "内容过长", "时机不对", "受众错位"],
+        "success_metrics": ["点击率", "评论质量", "传播深度"]
+      },
+      "ceo": {
+        "primary_dimensions": ["战略一致性", "跨部门协调", "执行节奏"],
+        "primary_risks": ["方向偏移", "团队过载", "Board信任损耗"],
+        "success_metrics": ["指令完成率", "CIEU健康分", "义务清零率"]
+      }
+    }
+  ]
+}

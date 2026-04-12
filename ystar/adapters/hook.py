@@ -50,8 +50,11 @@ from ystar.adapters.identity_detector import (
 )
 from ystar.adapters.boundary_enforcer import (
     _check_immutable_paths,
+    _check_restricted_write_paths,
     _check_write_boundary,
     _check_tool_restriction,
+    _check_behavior_rules,
+    _check_task_type_symbols,
     _extract_write_paths_from_bash,
     # Re-export for backward compatibility (tests import from hook.py)
     _load_write_paths_from_agents_md,
@@ -393,7 +396,7 @@ def check_hook(
 
     # ── P0-0: 不可变路径检查（AGENTS.md / .claude/agents/*.md）──────
     params_early = _extract_params(tool_name, tool_input)
-    immutable_deny = _check_immutable_paths(tool_name, params_early)
+    immutable_deny = _check_immutable_paths(tool_name, params_early, who)
     if immutable_deny is not None:
         cieu_db = ".ystar_cieu.db"
         session_cfg_imm = _load_session_config_cached()
@@ -405,6 +408,20 @@ def check_hook(
                     contract.hash if contract else "", cieu_db)
         _log.warning("DENY immutable path: %s → %s", who, params_early.get("file_path", "?"))
         return _result_to_response(immutable_deny)
+
+    # ── P0-0.25: 受限写路径检查（restricted_write_paths）──────────────
+    restricted_deny = _check_restricted_write_paths(tool_name, params_early, who)
+    if restricted_deny is not None:
+        cieu_db = ".ystar_cieu.db"
+        session_cfg_rst = _load_session_config_cached()
+        if session_cfg_rst:
+            cieu_db = session_cfg_rst.get("cieu_db", cieu_db)
+        contract = policy._rules.get(who)
+        _write_cieu(who, tool_name, params_early, restricted_deny,
+                    session_id_payload or "unknown",
+                    contract.hash if contract else "", cieu_db)
+        _log.warning("DENY restricted write path: %s → %s", who, params_early.get("file_path", "?"))
+        return _result_to_response(restricted_deny)
 
     # ── P0-0.5: 工具限制检查（allowed/disallowed tools）──────────────
     tool_deny = _check_tool_restriction(who, tool_name)
@@ -419,6 +436,34 @@ def check_hook(
                     contract.hash if contract else "", cieu_db)
         _log.warning("DENY tool restriction: %s → %s", who, tool_name)
         return _result_to_response(tool_deny)
+
+    # ── P0-0.6: Agent behavior rules check ──────────────────────────────
+    # Load session config once and pass to behavior rules check
+    session_cfg_early = _load_session_config_cached()
+    behavior_deny = _check_behavior_rules(who, tool_name, params_early, session_cfg=session_cfg_early)
+    if behavior_deny is not None:
+        cieu_db = ".ystar_cieu.db"
+        if session_cfg_early:
+            cieu_db = session_cfg_early.get("cieu_db", cieu_db)
+        contract = policy._rules.get(who)
+        _write_cieu(who, tool_name, params_early, behavior_deny,
+                    session_id_payload or "unknown",
+                    contract.hash if contract else "", cieu_db)
+        _log.warning("DENY behavior rule: %s → %s (%s)", who, tool_name, behavior_deny.reason)
+        return _result_to_response(behavior_deny)
+
+    # ── P0-0.7: Symbol sync system (task type checkpoint) ──────────────
+    symbol_deny = _check_task_type_symbols(who, tool_name, params_early)
+    if symbol_deny is not None:
+        cieu_db = ".ystar_cieu.db"
+        if session_cfg_early:
+            cieu_db = session_cfg_early.get("cieu_db", cieu_db)
+        contract = policy._rules.get(who)
+        _write_cieu(who, tool_name, params_early, symbol_deny,
+                    session_id_payload or "unknown",
+                    contract.hash if contract else "", cieu_db)
+        _log.warning("DENY symbol checkpoint: %s → %s (%s)", who, tool_name, symbol_deny.reason)
+        return _result_to_response(symbol_deny)
 
     # ── P0-1: 写路径边界检查（仅 Write/Edit/MultiEdit）──────────────
     write_deny = _check_write_boundary(who, tool_name, params_early)
@@ -458,6 +503,24 @@ def check_hook(
                                 contract.hash if contract else "", cieu_db)
                     _log.warning("DENY Bash command (immutable path): %s → %s", who, path)
                     return _result_to_response(immutable_result)
+
+                # 检查受限写路径
+                restricted_result = _check_restricted_write_paths(
+                    "Write",  # 视为写操作
+                    {"file_path": path},
+                    who
+                )
+                if restricted_result is not None:
+                    cieu_db = ".ystar_cieu.db"
+                    session_cfg_bash_r = _load_session_config_cached()
+                    if session_cfg_bash_r:
+                        cieu_db = session_cfg_bash_r.get("cieu_db", cieu_db)
+                    contract = policy._rules.get(who)
+                    _write_cieu(who, tool_name, params_early, restricted_result,
+                                session_id_payload or "unknown",
+                                contract.hash if contract else "", cieu_db)
+                    _log.warning("DENY Bash command (restricted path): %s → %s", who, path)
+                    return _result_to_response(restricted_result)
 
                 # 检查写边界
                 boundary_result = _check_write_boundary(
@@ -696,6 +759,7 @@ def _check_hook_full(
         "WebSearch": EventType.WEB_FETCH, "Task": EventType.CMD_EXEC,
         "Glob": EventType.FILE_READ,      "Grep": EventType.FILE_READ,
         "LS":   EventType.FILE_READ,
+        "ToolSearch": EventType.FILE_READ,  # Schema lookup, not a write
         # 委托类事件：触发 enforce() 里的单调性验证
         "subagent_spawn": EventType.SUBAGENT_SPAWN,
         "handoff":        EventType.HANDOFF,

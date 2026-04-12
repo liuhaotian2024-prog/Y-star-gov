@@ -442,29 +442,6 @@ def _check_tool_restriction(
     return None
 
 
-
-# FIX-3: path-like filter — reject tokens that clearly aren't filesystem paths.
-# Root cause: the cp/mv/tee regexes are greedy and can capture SQL fragments
-# like "strftime(" from `sqlite3 db "... strftime('%s','now') ..."` invocations.
-# A token is treated as a path only if it:
-#   - contains no shell metacharacters (parens, %, quotes, $, backticks)
-#   - either contains / or . or - or _, or is a bareword starting with a letter
-_FIX3_FORBIDDEN_CHARS = set("()%`$\"'\n\t")
-
-def _looks_like_path(token: str) -> bool:
-    if not token:
-        return False
-    if any(c in _FIX3_FORBIDDEN_CHARS for c in token):
-        return False
-    # Reject things that look like SQL function calls or inline code fragments.
-    if token.endswith("("):
-        return False
-    # Accept if clearly path-shaped.
-    if "/" in token or "\\" in token or "." in token or "-" in token or "_" in token:
-        return True
-    # Bare identifiers: only accept if reasonable file-name length.
-    return token.isidentifier() and 1 <= len(token) <= 64
-
 # ── Bash 命令写路径提取 ───────────────────────────────────────────────────
 def _extract_write_paths_from_bash(command: str) -> list:
     """
@@ -563,8 +540,8 @@ def _extract_write_paths_from_bash(command: str) -> list:
         p = os.path.normpath(p)
         normalized.append(p)
 
-    # 去重并返回 (FIX-3: drop tokens that don't look like filesystem paths)
-    return list({p for p in normalized if _looks_like_path(p)})
+    # 去重并返回
+    return list(set(normalized))
 
 
 # ── Agent Behavior Rules ─────────────────────────────────────────────────

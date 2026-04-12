@@ -483,3 +483,10 @@ class GEventType:
     INTENT_STALLED     = "intent_stalled"
     GAP_IDENTIFIED     = "gap_identified"
     GAP_FILLED         = "gap_filled"
+
+    # v0.50: gov_dispatch layer (task delegation governance)
+    TASK_DISPATCHED    = "task_dispatched"      # dispatcher sends task to target_agent
+    TASK_ACKNOWLEDGED  = "task_acknowledged"    # target_agent acknowledges receipt
+    TASK_REJECTED      = "task_rejected"        # target_agent rejects (with reason)
+    TASK_COMPLETED     = "task_completed"       # target_agent completes and reports
+    DISPATCH_EXPIRED   = "dispatch_expired"     # acknowledgement timeout

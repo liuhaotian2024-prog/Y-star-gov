@@ -1,129 +1,132 @@
 ---
 name: ystar-govern
 description: >
-  Y*gov multi-agent governance. Use automatically when: spawning a subagent,
-  handing off a task between agents, delegating work to a specialist agent,
-  or when any agent is about to access paths/commands that may violate policy.
-  Triggers include: subagent spawn, handoff, delegation, agent teams,
-  Task tool invocation, permission boundary check, compliance validation.
-  Also use when user mentions: governance, compliance, audit, policy check,
-  access control, delegation chain, CIEU, ystar.
+  Y*gov governance runtime boot and enforcement. Use automatically on session start
+  to restore governance runtime (daemon, identity, hook chain, hard constraints).
+  Also triggers on: subagent spawn, handoff, delegation, agent teams,
+  Task tool invocation, permission boundary check, compliance validation,
+  governance, compliance, audit, policy check, access control, delegation chain,
+  CIEU, ystar.
 allowed-tools: Bash, Read
 ---
 
-# Y*gov Governance Check
+# Y*gov Governance Boot & Enforcement
 
-You are enforcing Y*gov runtime governance. Your job is to validate compliance **before** any delegation or high-risk action executes.
+You are restoring and enforcing Y*gov runtime governance. On session start, you MUST boot the full governance runtime. On subsequent activations, you validate compliance before any delegation or high-risk action.
 
-## When this skill activates
+## SESSION BOOT MODE (first activation per session)
 
-This skill runs automatically when Claude Code is about to:
-- Spawn a subagent (Task tool, Agent Teams)
-- Hand off a task to another agent
-- Execute a high-risk operation (file write, bash command, web fetch)
-- Delegate work across an agent boundary
+### Step 1: Run governance_boot.sh
 
-## Step 1: Check if Y*gov is installed
+Run the atomic governance recovery script. Replace `AGENT_ID` with the current agent's role (ceo, cto, cmo, cso, cfo, secretary, eng-kernel, eng-governance, eng-platform, eng-domains):
 
 ```bash
-python3 -c "import ystar; print('Y*gov', ystar.__version__)" 2>/dev/null || echo "NOT_INSTALLED"
+bash /Users/haotianliu/.openclaw/workspace/ystar-company/scripts/governance_boot.sh AGENT_ID
 ```
 
-**If NOT_INSTALLED:** Inform the user Y*gov is not installed and skip to Step 4.
+This script atomically restores:
+- Agent identity (.ystar_active_agent)
+- Hook daemon (_hook_daemon.py on /tmp/ystar_hook.sock)
+- Cross-session memory (session_boot_yml.py)
+- Session markers (.session_booted, .session_call_count)
+- Session config validation (.ystar_session.json — 193 constraint items across 11 categories)
+- CIEU database connectivity
+- E2E hard constraint verification (5 tests)
 
-## Step 2: Load the governance contract
+### Step 2: Check output
+
+If the output ends with `ALL SYSTEMS GO` — governance is fully operational. Proceed to Step 4.
+
+If the output shows `N FAILURES` — proceed to Step 3.
+
+### Step 3: Auto-remediate failures
+
+For each failure type, apply the appropriate fix:
+
+**Hook daemon FAILED:**
+```bash
+pkill -f "_hook_daemon.py" 2>/dev/null
+rm -f /tmp/ystar_hook.sock
+sleep 1
+cd /Users/haotianliu/.openclaw/workspace/ystar-company
+PYTHONPATH="/Users/haotianliu/.openclaw/workspace/Y-star-gov:$PYTHONPATH" python3.11 /Users/haotianliu/.openclaw/workspace/Y-star-gov/ystar/_hook_daemon.py &
+sleep 3
+ls -la /tmp/ystar_hook.sock
+```
+
+**Session config MISSING:** File .ystar_session.json must exist in ystar-company root. If missing, this is a P0 — report to Board immediately.
+
+**CIEU database MISSING:** File .ystar_cieu.db must exist. If missing, report to Board immediately.
+
+**Hard constraint NOT ENFORCING:** Re-run the specific test via hook_client_labs.sh. If daemon is up but constraint fails, check boundary_enforcer.py configuration. Note: `must_dispatch_via_cto` and `ceo_code_block` only apply when active agent is CEO — they will show NOT ENFORCING for other agents, which is expected.
+
+**normal_operations BLOCKED:** Daemon may have crashed. Restart daemon and re-test.
+
+**Circuit breaker ARMED:** Too many violations accumulated. Use `mcp__gov-mcp__gov_reset_breaker` to reset after confirming the violations are understood.
+
+After fixing, re-run governance_boot.sh to confirm ALL SYSTEMS GO.
+
+### Step 4: Confirm gov-mcp tools available
+
+The gov-mcp MCP server provides 49 governance tools with prefix `mcp__gov-mcp__gov_*`. Verify availability by checking that tools like `mcp__gov-mcp__gov_doctor`, `mcp__gov-mcp__gov_verify`, `mcp__gov-mcp__gov_check` are listed in available tools.
+
+If gov-mcp tools are not available, the MCP server may need to be started separately — report to Board.
+
+### Step 5: Report governance status
+
+Output the governance status report:
+
+```
+[Y*gov] Governance Runtime Status
+====================================
+Boot Result  : ALL SYSTEMS GO / N FAILURES
+Daemon       : RUNNING (socket /tmp/ystar_hook.sock)
+Agent        : {agent_id}
+Constraints  : 193 items (11 categories)
+CIEU Events  : {count}
+Gov-MCP      : {tool_count} tools available
+Hard Tests   : {pass_count}/5 passing
+====================================
+```
+
+## ENFORCEMENT MODE (subsequent activations)
+
+When this skill activates for a specific action (not session boot):
+
+### Step 1: Identify the action
+
+Determine:
+- `ACTION_TYPE`: subagent_spawn / handoff / file_write / bash_exec
+- `PRINCIPAL_AGENT`: the delegating agent
+- `ACTOR_AGENT`: the agent receiving the task
+
+### Step 2: Run the governance check
 
 ```bash
-# Check for AGENTS.md (governance rules)
-if [ -f "AGENTS.md" ]; then
-  echo "CONTRACT_FOUND"
-  head -80 AGENTS.md
-else
-  echo "NO_CONTRACT — governance check skipped (no AGENTS.md)"
-fi
+echo '{"tool_name":"ACTION_TYPE","tool_input":PARAMS_JSON}' | bash /Users/haotianliu/.openclaw/workspace/ystar-company/scripts/hook_client_labs.sh
 ```
 
-**If NO_CONTRACT:** Warn the user that no governance contract exists. Suggest running `/ystar-governance:ystar-setup` to create one. Proceed without blocking.
-
-## Step 3: Run the governance check
-
-Run the check script:
-
-```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/skills/ystar-govern/check.py" \
-  --action "$ACTION_TYPE" \
-  --principal "$PRINCIPAL_AGENT" \
-  --actor "$ACTOR_AGENT" \
-  --params "$ACTION_PARAMS"
-```
-
-Where:
-- `ACTION_TYPE`: what is happening (subagent_spawn / handoff / file_write / bash_exec)
-- `PRINCIPAL_AGENT`: the delegating agent (usually "orchestrator" or "main")
-- `ACTOR_AGENT`: the agent receiving the task (subagent name or "self")
-- `ACTION_PARAMS`: JSON string of relevant parameters (path, command, etc.)
-
-If the script is unavailable, run the inline check:
-
-```bash
-python3 -c "
-import json, sys, os
-
-action = os.environ.get('YSTAR_ACTION', 'unknown')
-principal = os.environ.get('YSTAR_PRINCIPAL', 'main')
-actor = os.environ.get('YSTAR_ACTOR', 'subagent')
-
-try:
-    from ystar.kernel.dimensions import IntentContract
-    from ystar.session import Policy
-    from ystar.adapters.hook import check_hook
-
-    if not os.path.exists('AGENTS.md'):
-        print(json.dumps({'decision': 'ALLOW', 'reason': 'no AGENTS.md'}))
-        sys.exit(0)
-
-    policy = Policy.from_agents_md('AGENTS.md')
-    payload = {
-        'tool_name': action,
-        'tool_input': json.loads(os.environ.get('YSTAR_PARAMS', '{}')),
-        'agent_id': principal,
-        'session_id': os.environ.get('YSTAR_SESSION_ID', 'default'),
-    }
-    result = check_hook(payload, policy, agent_id=principal)
-    if result.get('action') == 'block':
-        print(json.dumps({'decision': 'DENY', 'reason': result.get('message', '')}))
-    else:
-        print(json.dumps({'decision': 'ALLOW'}))
-except Exception as e:
-    print(json.dumps({'decision': 'ALLOW', 'warning': str(e)}))
-"
-```
-
-## Step 4: Report the result
-
-Always output a governance report in this format:
+### Step 3: Report the result
 
 ```
 [Y*gov] Governance Check
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+=================================
 Action    : <action_type>
 Principal : <principal_agent>
 Actor     : <actor_agent>
-Decision  : ✅ ALLOW  /  ❌ DENY  /  ⚠️ SKIPPED
+Decision  : ALLOW / DENY / SKIPPED
 Reason    : <reason if DENY or SKIPPED>
-CIEU      : <record ID if written>
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+=================================
 ```
 
 ## Decision rules
 
 - **ALLOW**: Proceed with the delegation or action.
-- **DENY**: Do NOT execute the blocked action. Explain the violation clearly. Suggest what the actor should do instead (e.g., "use a path within `./workspace/` instead of `/etc/`").
-- **SKIPPED**: Y*gov not installed or no contract — warn user, proceed.
+- **DENY**: Do NOT execute the blocked action. Explain the violation clearly. Suggest a concrete fix.
+- **SKIPPED**: Daemon not running — warn user, proceed with caution.
 
 ## Important constraints
 
 - You only validate. You do not execute the delegated task.
-- You do not modify code, files, or configuration.
 - A DENY must always include a concrete fix suggestion.
-- All decisions are written to `.ystar_cieu.db` automatically by Y*gov.
+- All decisions are written to .ystar_cieu.db automatically by Y*gov.

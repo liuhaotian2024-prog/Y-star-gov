@@ -897,48 +897,86 @@ def enforce(
     if _gate is not None:
         from ystar.governance.intervention_models import GateDecision
         if _gate.decision == GateDecision.DENY:
-            _gate_detail = (
-                f"intervention_gate: actor '{event.agent_id}' has hard_overdue "
-                f"obligation '{_gate.blocking_omission_type}' "
-                f"(+{_gate.overdue_secs:.0f}s). "
-                f"Suggested: {_gate.suggested_action}"
-            )
-            rec = OpenClawCIEU(
-                call_record = CallRecord(
-                    seq=seq, func_name=event.event_type.value,
-                    params=extract_params(event), result={},
-                    violations=[], intent_contract=IntentContract(name="intervention_gate"),
-                ),
-                event         = event,
-                decision      = EnforceDecision.DENY,
-                drift_detected= True,
-                drift_details = _gate_detail,
-            )
-            _cieu_log.append(rec)
-            _auto_write_cieu(rec)
-            # C2: also write to omission CIEU if available (unified audit trail)
-            if _omission_adapter is not None:
+
+            # ── v0.50 DEADLOCK FIX: Exempt actions that fulfill obligations ──
+            # When obligation is overdue, blocking ALL tool calls creates a
+            # deadlock: the agent cannot write the report that would fulfill
+            # the obligation. Exempt actions that plausibly serve fulfillment:
+            #   - file_read: reading info is never harmful, always needed
+            #   - file_write to reports/: writing progress report = fulfilling
+            #   - mcp_tool_call: gov MCP tools (query/fulfill obligations)
+            #   - ToolSearch-mapped calls: schema lookup, not a real write
+            _exempt = False
+            _etype = event.event_type.value if hasattr(event.event_type, "value") else str(event.event_type)
+            _fpath = (event.file_path or "").replace("\\", "/")
+
+            if _etype == "file_read":
+                _exempt = True  # Read never harmful
+            elif _etype == "file_write" and _fpath:
+                # Allow writes to reports/ (= obligation fulfillment)
+                import os as _os
                 try:
-                    import time as _t, uuid as _u
-                    from ystar.governance.omission_models import GovernanceEvent as _GE, GEventType as _GET
-                    _ge = _GE(
-                        event_type  = _GET.OBLIGATION_GATE_DENY,
-                        entity_id   = event.session_id or event.agent_id,
-                        actor_id    = event.agent_id,
-                        ts          = _t.time(),
-                        payload     = {
-                            "blocked_action":       event.event_type.value,
-                            "blocking_omission":    _gate.blocking_omission_type,
-                            "overdue_secs":         _gate.overdue_secs,
-                            "pulse_id":             _gate.pulse_id,
-                        },
-                        source      = "intervention_gate",
-                    )
-                    _omission_adapter.engine.store.add_event(_ge)
-                except Exception:
-                    pass
-            cieu_records.append(rec)
-            return EnforceDecision.DENY, cieu_records
+                    _repo = _os.environ.get("YSTAR_COMPANY_ROOT", "")
+                    if _repo:
+                        _rel = _os.path.relpath(_fpath, _repo).replace("\\", "/")
+                    else:
+                        _rel = _fpath
+                except ValueError:
+                    _rel = _fpath
+                if _rel.startswith("reports/") or "/reports/" in _fpath:
+                    _exempt = True
+            elif _etype == "mcp_tool_call":
+                _exempt = True  # Gov MCP tools needed to query/fulfill obligations
+
+            if _exempt:
+                _log.info(
+                    "Obligation gate EXEMPT: %s %s (overdue obligation: %s +%.0fs)",
+                    _etype, _fpath or "", _gate.blocking_omission_type, _gate.overdue_secs,
+                )
+            else:
+                # ── Original DENY path ──
+                _gate_detail = (
+                    f"intervention_gate: actor '{event.agent_id}' has hard_overdue "
+                    f"obligation '{_gate.blocking_omission_type}' "
+                    f"(+{_gate.overdue_secs:.0f}s). "
+                    f"Suggested: {_gate.suggested_action}"
+                )
+                rec = OpenClawCIEU(
+                    call_record = CallRecord(
+                        seq=seq, func_name=event.event_type.value,
+                        params=extract_params(event), result={},
+                        violations=[], intent_contract=IntentContract(name="intervention_gate"),
+                    ),
+                    event         = event,
+                    decision      = EnforceDecision.DENY,
+                    drift_detected= True,
+                    drift_details = _gate_detail,
+                )
+                _cieu_log.append(rec)
+                _auto_write_cieu(rec)
+                # C2: also write to omission CIEU if available (unified audit trail)
+                if _omission_adapter is not None:
+                    try:
+                        import time as _t, uuid as _u
+                        from ystar.governance.omission_models import GovernanceEvent as _GE, GEventType as _GET
+                        _ge = _GE(
+                            event_type  = _GET.OBLIGATION_GATE_DENY,
+                            entity_id   = event.session_id or event.agent_id,
+                            actor_id    = event.agent_id,
+                            ts          = _t.time(),
+                            payload     = {
+                                "blocked_action":       event.event_type.value,
+                                "blocking_omission":    _gate.blocking_omission_type,
+                                "overdue_secs":         _gate.overdue_secs,
+                                "pulse_id":             _gate.pulse_id,
+                            },
+                            source      = "intervention_gate",
+                        )
+                        _omission_adapter.engine.store.add_event(_ge)
+                    except Exception:
+                        pass
+                cieu_records.append(rec)
+                return EnforceDecision.DENY, cieu_records
 
     # ── 特殊路径：HANDOFF 触发委托链单调性验证 ──────────────────────
     if event.event_type == EventType.HANDOFF:

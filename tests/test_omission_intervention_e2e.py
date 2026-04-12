@@ -118,7 +118,7 @@ def test_scan_soft_overdue_produces_soft_pulse(omission_intervention_system):
     # Step 4: InterventionEngine.process_violations() 产生 soft pulse
     int_result = intervention_engine.process_violations(result.violations)
 
-    assert int_result.pulses_created >= 1, "应该产生至少1个 intervention pulse"
+    assert len(int_result.pulses_fired) >= 1, "应该产生至少1个 intervention pulse"
     pulses = intervention_engine.pulse_store.active_pulses_for_entity("task_001")
     assert len(pulses) >= 1, "entity 应该有至少1个 active pulse"
 
@@ -222,20 +222,23 @@ def test_gate_check_blocks_high_risk_action_on_hard_overdue(omission_interventio
         detected_at=fake_time[0],
         actor_id="agent_c",
         severity=Severity.CRITICAL,
+        details={"stage": "hard_overdue"},
     )
 
     int_result = intervention_engine.process_violations([violation])
-    assert int_result.pulses_created >= 1
+    assert len(int_result.pulses_fired) >= 1
 
     # Step 3: gate_check() 高风险动作（ENTITY_CREATED）
     gate_result = intervention_engine.gate_check(
         actor_id="agent_c",
         action_type=GEventType.ENTITY_CREATED,  # 高风险动作
-        now=fake_time[0],
     )
 
     assert gate_result.decision == GateDecision.DENY, "应该 DENY 高风险动作"
-    assert "overdue" in gate_result.reason.lower() or "obligation" in gate_result.reason.lower()
+    # reason may be the omission_type string (e.g. "acknowledgement") or contain "overdue"/"obligation"
+    reason_lower = gate_result.reason.lower()
+    assert any(kw in reason_lower for kw in ("overdue", "obligation", "acknowledgement")), \
+        f"reason should indicate blocking cause, got: {gate_result.reason}"
 
 
 # ── Test 4: gate_check() 允许 hard_overdue actor 履行义务 ───────────────────
@@ -279,6 +282,7 @@ def test_gate_check_allows_fulfillment_action_on_hard_overdue(omission_intervent
         detected_at=fake_time[0],
         actor_id="agent_d",
         severity=Severity.CRITICAL,
+        details={"stage": "hard_overdue"},
     )
 
     intervention_engine.process_violations([violation])
@@ -287,7 +291,6 @@ def test_gate_check_allows_fulfillment_action_on_hard_overdue(omission_intervent
     gate_result = intervention_engine.gate_check(
         actor_id="agent_d",
         action_type=GEventType.ACKNOWLEDGEMENT_EVENT,  # 履行义务动作
-        now=fake_time[0],
     )
 
     assert gate_result.decision == GateDecision.ALLOW, "应该 ALLOW 履行义务的动作"
@@ -322,6 +325,7 @@ def test_resolve_for_actor_restores_capabilities(omission_intervention_system):
         due_at=fake_time[0] - 200.0,
         hard_violation_at=fake_time[0] - 50.0,
         severity=Severity.CRITICAL,
+        required_event_types=[GEventType.ACKNOWLEDGEMENT_EVENT],
     )
     store.add_obligation(obligation)
 
@@ -334,6 +338,7 @@ def test_resolve_for_actor_restores_capabilities(omission_intervention_system):
         detected_at=fake_time[0],
         actor_id="agent_e",
         severity=Severity.CRITICAL,
+        details={"stage": "hard_overdue"},
     )
 
     intervention_engine.process_violations([violation])
@@ -348,18 +353,18 @@ def test_resolve_for_actor_restores_capabilities(omission_intervention_system):
         event_type=GEventType.ACKNOWLEDGEMENT_EVENT,
         entity_id="task_005",
         actor_id="agent_e",
-        timestamp=fake_time[0],
+        ts=fake_time[0],
     )
     fulfill_result = omission_engine.ingest_event(ack_event)
     assert len(fulfill_result.fulfilled) >= 1, "义务应该被履行"
 
     # Step 3: resolve_for_actor() 解除干预
-    resolve_result = intervention_engine.resolve_for_actor(
+    resolved_pulses = intervention_engine.resolve_for_actor(
         actor_id="agent_e",
-        now=fake_time[0],
+        fulfilled_obligation_id=obligation.obligation_id,
     )
 
-    assert resolve_result.resolved_count >= 1, "应该解除至少1个 pulse"
+    assert len(resolved_pulses) >= 1, "应该解除至少1个 pulse"
 
     # Step 4: 验证 restriction 已解除
     restriction_after = intervention_engine.pulse_store.get_restriction("agent_e")
@@ -369,7 +374,6 @@ def test_resolve_for_actor_restores_capabilities(omission_intervention_system):
     gate_result = intervention_engine.gate_check(
         actor_id="agent_e",
         action_type=GEventType.ENTITY_CREATED,
-        now=fake_time[0],
     )
 
     assert gate_result.decision == GateDecision.ALLOW, "权限恢复后应该 ALLOW"
@@ -385,9 +389,9 @@ def test_chaos_concurrent_violations(omission_intervention_system):
     """
     omission_engine, intervention_engine, store, fake_time = omission_intervention_system
 
-    # 创建100个 entities 和 obligations
+    # 创建20个 entities 和 obligations (below circuit breaker threshold of 50)
     violations = []
-    for i in range(100):
+    for i in range(20):
         entity = TrackedEntity(
             entity_id=f"task_{i:03d}",
             entity_type="task",
@@ -414,17 +418,18 @@ def test_chaos_concurrent_violations(omission_intervention_system):
             violation_id=f"v_{i:03d}",
             entity_id=f"task_{i:03d}",
             obligation_id=f"ob_{i:03d}",
-            omission_type=OmissionType.HARD_OVERDUE,
+            omission_type=OmissionType.REQUIRED_ACKNOWLEDGEMENT,
             detected_at=fake_time[0],
             actor_id=f"agent_{i % 10}",
             severity=obligation.severity,
+            details={"stage": "hard_overdue"},
         )
         violations.append(violation)
 
     # 批量处理所有 violations
-    int_result = intervention_engine.process_violations(violations, now=fake_time[0])
+    int_result = intervention_engine.process_violations(violations)
 
-    assert int_result.pulses_created >= 10, "应该产生大量 pulses（至少每个 agent 1个）"
+    assert len(int_result.pulses_fired) >= 10, "应该产生大量 pulses（至少每个 agent 1个）"
 
     # 验证每个 agent 都有 restriction
     for i in range(10):
