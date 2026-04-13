@@ -293,7 +293,7 @@ class TestModeExpiry:
             "trigger": "T1"
         }))
 
-        mode = _get_current_mode()
+        mode = _get_current_mode(agent_id="ceo")
 
         assert mode["mode"] == "standard"  # auto-revoked
 

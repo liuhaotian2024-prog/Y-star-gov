@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Unit tests for CEO Mode Manager
+Unit tests for Agent Mode Manager (generic mode management for any agent)
 
 Tests:
 - Autonomous trigger by Board silence (≥15min)
@@ -25,22 +25,20 @@ from unittest.mock import patch, MagicMock
 WORKSPACE_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(WORKSPACE_ROOT / "scripts"))
 
-from ceo_mode_manager import CEOModeManager, BOARD_SILENCE_THRESHOLD, BREAK_GLASS_IDLE_TIMEOUT, BREAK_GLASS_HARD_CAP
+from agent_mode_manager import AgentModeManager, BOARD_SILENCE_THRESHOLD, BREAK_GLASS_IDLE_TIMEOUT, BREAK_GLASS_HARD_CAP
 
 
 @pytest.fixture
 def temp_workspace(tmp_path):
     """Create temporary workspace for testing"""
-    mode_file = tmp_path / ".ystar_ceo_mode.json"
     last_board_msg = tmp_path / "scripts" / ".ystar_last_board_msg"
     last_board_msg.parent.mkdir(parents=True, exist_ok=True)
 
-    with patch("ceo_mode_manager.MODE_FILE", mode_file):
-        with patch("ceo_mode_manager.LAST_BOARD_MSG", last_board_msg):
-            manager = CEOModeManager()
-            manager.mode_file = mode_file
-            manager.last_board_msg_file = last_board_msg
-            yield manager, mode_file, last_board_msg
+    # Create manager with ceo agent_id for backward compat
+    manager = AgentModeManager(agent_id="ceo", workspace_root=tmp_path)
+    mode_file = manager.mode_file  # will be .ystar_ceo_mode.json
+
+    yield manager, mode_file, last_board_msg
 
 
 class TestAutonomousMode:
@@ -56,7 +54,7 @@ class TestAutonomousMode:
 
         # Tick should trigger autonomous (mock trigger checks to prevent break_glass)
         with patch.object(manager, "evaluate_triggers", return_value=(None, {})):
-            with patch("ceo_mode_manager.emit_cieu"):
+            with patch("agent_mode_manager.emit_cieu"):
                 state = manager.tick()
 
         assert state["mode"] == "autonomous"
@@ -68,7 +66,7 @@ class TestAutonomousMode:
         manager, mode_file, last_board_msg = temp_workspace
 
         # Force into autonomous
-        with patch("ceo_mode_manager.emit_cieu"):
+        with patch("agent_mode_manager.emit_cieu"):
             manager.enter_autonomous()
 
         state = manager._read_mode()
@@ -81,7 +79,7 @@ class TestAutonomousMode:
         last_board_msg.write_text(str(now))
 
         # Tick should revoke
-        with patch("ceo_mode_manager.emit_cieu"):
+        with patch("agent_mode_manager.emit_cieu"):
             state = manager.tick()
 
         assert state["mode"] == "standard"
@@ -91,13 +89,13 @@ class TestAutonomousMode:
         manager, mode_file, last_board_msg = temp_workspace
 
         # Enter autonomous
-        with patch("ceo_mode_manager.emit_cieu"):
+        with patch("agent_mode_manager.emit_cieu"):
             manager.enter_autonomous()
 
         # Multiple ticks without Board message (mock all trigger checks to prevent break_glass)
         for _ in range(5):
             with patch.object(manager, "evaluate_triggers", return_value=(None, {})):
-                with patch("ceo_mode_manager.emit_cieu"):
+                with patch("agent_mode_manager.emit_cieu"):
                     state = manager.tick()
             time.sleep(0.01)
 
@@ -114,7 +112,7 @@ class TestBreakGlassMode:
 
         # Mock T3 trigger (must_dispatch denials)
         with patch.object(manager, "_check_must_dispatch_denials", return_value=3):
-            with patch("ceo_mode_manager.emit_cieu"):
+            with patch("agent_mode_manager.emit_cieu"):
                 state = manager.tick()
 
         assert state["mode"] == "break_glass"
@@ -126,7 +124,7 @@ class TestBreakGlassMode:
         manager, mode_file, last_board_msg = temp_workspace
 
         # Enter break-glass
-        with patch("ceo_mode_manager.emit_cieu"):
+        with patch("agent_mode_manager.emit_cieu"):
             manager.enter_break_glass("T1", {"reason": "test"})
 
         state = manager._read_mode()
@@ -138,7 +136,7 @@ class TestBreakGlassMode:
 
         # Tick should revoke (mock triggers cleared so it doesn't re-enter)
         with patch.object(manager, "evaluate_triggers", return_value=(None, {})):
-            with patch("ceo_mode_manager.emit_cieu"):
+            with patch("agent_mode_manager.emit_cieu"):
                 new_state = manager.tick()
 
         assert new_state["mode"] == "standard"
@@ -151,7 +149,7 @@ class TestBreakGlassMode:
         now = time.time()
         old_entered = now - (BREAK_GLASS_HARD_CAP + 10)
 
-        with patch("ceo_mode_manager.emit_cieu"):
+        with patch("agent_mode_manager.emit_cieu"):
             manager.enter_break_glass("T1", {"reason": "test"})
 
         state = manager._read_mode()
@@ -159,7 +157,7 @@ class TestBreakGlassMode:
         manager._atomic_write(state)
 
         # Tick should revoke due to hard cap
-        with patch("ceo_mode_manager.emit_cieu"):
+        with patch("agent_mode_manager.emit_cieu"):
             new_state = manager.tick()
 
         assert new_state["mode"] == "standard"
@@ -169,12 +167,12 @@ class TestBreakGlassMode:
         manager, mode_file, last_board_msg = temp_workspace
 
         # Enter break-glass
-        with patch("ceo_mode_manager.emit_cieu"):
+        with patch("agent_mode_manager.emit_cieu"):
             manager.enter_break_glass("T1", {"reason": "test"})
 
         # Mock all triggers cleared
         with patch.object(manager, "evaluate_triggers", return_value=(None, {})):
-            with patch("ceo_mode_manager.emit_cieu"):
+            with patch("agent_mode_manager.emit_cieu"):
                 state = manager.tick()
 
         assert state["mode"] == "standard"
@@ -184,7 +182,7 @@ class TestBreakGlassMode:
         manager, mode_file, last_board_msg = temp_workspace
 
         # Enter break-glass
-        with patch("ceo_mode_manager.emit_cieu"):
+        with patch("agent_mode_manager.emit_cieu"):
             manager.enter_break_glass("T1", {"reason": "test"})
 
         initial_state = manager._read_mode()
@@ -193,7 +191,7 @@ class TestBreakGlassMode:
         # Wait and tick (simulates activity)
         time.sleep(0.1)
         with patch.object(manager, "evaluate_triggers", return_value=("T1", {"reason": "test"})):
-            with patch("ceo_mode_manager.emit_cieu"):
+            with patch("agent_mode_manager.emit_cieu"):
                 manager.tick()
 
         new_state = manager._read_mode()
@@ -213,7 +211,7 @@ class TestModeTransitions:
             ("break_glass", lambda: manager.enter_break_glass("T1", {"test": True}))
         ]:
             # Enter mode
-            with patch("ceo_mode_manager.emit_cieu"):
+            with patch("agent_mode_manager.emit_cieu"):
                 enter_fn()
 
             state = manager._read_mode()
@@ -224,7 +222,7 @@ class TestModeTransitions:
             last_board_msg.write_text(str(time.time()))
 
             # Tick should revoke
-            with patch("ceo_mode_manager.emit_cieu"):
+            with patch("agent_mode_manager.emit_cieu"):
                 new_state = manager.tick()
 
             assert new_state["mode"] == "standard"
@@ -237,10 +235,10 @@ class TestModeTransitions:
             ("autonomous", lambda: manager.enter_autonomous()),
             ("break_glass", lambda: manager.enter_break_glass("T2", {"test": True}))
         ]:
-            with patch("ceo_mode_manager.emit_cieu"):
+            with patch("agent_mode_manager.emit_cieu"):
                 enter_fn()
 
-            with patch("ceo_mode_manager.emit_cieu"):
+            with patch("agent_mode_manager.emit_cieu"):
                 manager.revoke("manual_test")
 
             state = manager._read_mode()
@@ -251,7 +249,7 @@ class TestModeTransitions:
         manager, mode_file, last_board_msg = temp_workspace
 
         # Enter autonomous
-        with patch("ceo_mode_manager.emit_cieu"):
+        with patch("agent_mode_manager.emit_cieu"):
             manager.enter_autonomous()
 
         time.sleep(0.2)
@@ -340,33 +338,36 @@ class TestCIEURecording:
         """Autonomous mode entry emits CIEU transition event"""
         manager, mode_file, last_board_msg = temp_workspace
 
-        with patch("ceo_mode_manager.emit_cieu") as mock_emit:
+        with patch("agent_mode_manager.emit_cieu") as mock_emit:
             manager.enter_autonomous()
 
         mock_emit.assert_called_once()
         call_args = mock_emit.call_args[1]
         assert call_args["to_mode"] == "autonomous"
         assert call_args["from_mode"] == "standard"
+        assert call_args["agent_id"] == "ceo"
 
     def test_break_glass_enter_emits_claim(self, temp_workspace):
         """Break-glass entry emits BREAK_GLASS_CLAIM"""
         manager, mode_file, last_board_msg = temp_workspace
 
-        with patch("ceo_mode_manager.emit_cieu") as mock_emit:
+        with patch("agent_mode_manager.emit_cieu") as mock_emit:
             manager.enter_break_glass("T1", {"reason": "test"})
 
         mock_emit.assert_called_once()
+        call_args = mock_emit.call_args[1]
         assert mock_emit.call_args[0][0] == "BREAK_GLASS_CLAIM"
+        assert call_args["agent_id"] == "ceo"
 
     def test_break_glass_revoke_emits_release(self, temp_workspace):
         """Break-glass revoke emits BREAK_GLASS_RELEASE"""
         manager, mode_file, last_board_msg = temp_workspace
 
         # Enter and revoke
-        with patch("ceo_mode_manager.emit_cieu"):
+        with patch("agent_mode_manager.emit_cieu"):
             manager.enter_break_glass("T1", {"reason": "test"})
 
-        with patch("ceo_mode_manager.emit_cieu") as mock_emit:
+        with patch("agent_mode_manager.emit_cieu") as mock_emit:
             manager.revoke("test_reason")
 
         # Should emit BREAK_GLASS_RELEASE and transition

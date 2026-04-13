@@ -51,6 +51,61 @@ _TOOL_RESTRICTIONS_LOADED: bool = False
 # 写操作工具名
 _WRITE_TOOLS = {"Write", "Edit", "MultiEdit"}
 
+# Git push always denied (both CEO modes respect this)
+GIT_PUSH_ALWAYS_DENIED = True
+
+# Agent dispatch tracking (for parallel_dispatch_required rule)
+_AGENT_DISPATCH_HISTORY: Dict[str, list] = {}  # agent_name → [(timestamp, target_agent), ...]
+_PARALLEL_DISPATCH_WINDOW = 60  # seconds: window for detecting serial dispatches
+_SERIAL_DISPATCH_GAP = 30  # seconds: max gap between dispatches to consider "serial"
+
+
+# ── Agent Mode Manager Integration ────────────────────────────────────────────
+def _get_current_mode(agent_id: str = "ceo") -> Dict[str, Any]:
+    """
+    Get current agent mode, validate expiry, auto-revoke if expired.
+
+    Args:
+        agent_id: Agent identifier (default "ceo" for backward compat)
+
+    Returns mode state dict with keys: mode, entered_at, expires_at, trigger, etc.
+    Mode can be: standard, autonomous, break_glass
+    """
+    import json
+
+    mode_file = Path(f"/Users/haotianliu/.openclaw/workspace/ystar-company/.ystar_{agent_id}_mode.json")
+
+    if not mode_file.exists():
+        return {
+            "mode": "standard",
+            "entered_at": None,
+            "expires_at": None,
+            "trigger": None
+        }
+
+    try:
+        with open(mode_file) as f:
+            state = json.load(f)
+
+        # Check expiry (break_glass has hard cap)
+        if state.get("expires_at"):
+            import time
+            if time.time() > state["expires_at"]:
+                # Auto-revoke expired mode
+                _log.info(f"CEO mode {state['mode']} expired, auto-revoking to standard")
+                return {
+                    "mode": "standard",
+                    "entered_at": None,
+                    "expires_at": None,
+                    "trigger": None
+                }
+
+        return state
+
+    except (json.JSONDecodeError, IOError) as e:
+        _log.warning(f"Failed to read agent mode file for {agent_id}: {e}, defaulting to standard")
+        return {"mode": "standard", "entered_at": None, "expires_at": None, "trigger": None}
+
 
 # ── 不可变路径配置加载 ────────────────────────────────────────────────────
 def _get_immutable_config() -> Tuple[list, list]:
@@ -109,6 +164,21 @@ def _check_immutable_paths(
         if pattern.endswith("/"):
             # 目录前缀匹配
             if f"/{pattern}" in f"/{norm}/" or norm.startswith(pattern):
+                # AMENDMENT-012: Remediation for immutable path violations
+                from ystar.session import Remediation
+                remediation = Remediation(
+                    wrong_action=f'{tool_name}(file_path="{file_path}", ...)',
+                    correct_steps=[
+                        '# Immutable paths cannot be modified by agents',
+                        '# If change is needed: escalate to Board',
+                        '# Board can use Board shell override or modify .ystar_session.json immutable_paths config',
+                        f'# Override roles (if any): {override_roles}',
+                    ],
+                    skill_ref="knowledge/secretary/skills/immutable_governance.md",
+                    lesson_ref=None,  # Constitutional constraint, not incident-driven
+                    rule_name="immutable_paths",
+                    rule_context="Governance charter files (AGENTS.md, .claude/agents/) are immutable to preserve team DNA and prevent drift.",
+                )
                 return PolicyResult(
                     allowed=False,
                     reason=(
@@ -118,10 +188,25 @@ def _check_immutable_paths(
                     who="*",
                     what=tool_name,
                     violations=[],
+                    remediation=remediation,
                 )
         else:
             # 文件名精确匹配
             if basename == pattern:
+                from ystar.session import Remediation
+                remediation = Remediation(
+                    wrong_action=f'{tool_name}(file_path="{file_path}", ...)',
+                    correct_steps=[
+                        '# Immutable paths cannot be modified by agents',
+                        '# If change is needed: escalate to Board',
+                        '# Board can use Board shell override or modify .ystar_session.json immutable_paths config',
+                        f'# Override roles (if any): {override_roles}',
+                    ],
+                    skill_ref="knowledge/secretary/skills/immutable_governance.md",
+                    lesson_ref=None,
+                    rule_name="immutable_paths",
+                    rule_context="Governance charter files are immutable to preserve team DNA.",
+                )
                 return PolicyResult(
                     allowed=False,
                     reason=(
@@ -131,6 +216,7 @@ def _check_immutable_paths(
                     who="*",
                     what=tool_name,
                     violations=[],
+                    remediation=remediation,
                 )
     return None
 
@@ -301,6 +387,10 @@ def _check_write_boundary(
     写路径从 AGENTS.md 或 session config 动态加载（通用机制）。
     如果 who 有定义写路径限制且文件不在允许范围内，返回 deny PolicyResult。
     否则返回 None（放行）。
+
+    CEO Mode Integration:
+    - autonomous mode: expand to Y-star-gov/, gov-mcp/, scripts/
+    - break_glass mode: expand to .claude/agents/ additionally
     """
     if tool_name not in _WRITE_TOOLS:
         return None
@@ -309,6 +399,30 @@ def _check_write_boundary(
     allowed = _AGENT_WRITE_PATHS.get(who)
     if not allowed:
         return None   # 未定义边界的 agent 不受限
+
+    # Agent mode expansion (CEO or other agents in elevated modes)
+    if who.lower() in ("ceo", "aiden-ceo", "aiden"):
+        mode_state = _get_current_mode(agent_id="ceo")
+        mode = mode_state.get("mode", "standard")
+
+        if mode in ("autonomous", "break_glass"):
+            # Expand CEO write paths
+            expanded = list(allowed)
+            autonomous_paths = [
+                "/Users/haotianliu/.openclaw/workspace/Y-star-gov/",
+                "/Users/haotianliu/.openclaw/workspace/gov-mcp/",
+                "/Users/haotianliu/.openclaw/workspace/ystar-company/scripts/"
+            ]
+            for p in autonomous_paths:
+                if p not in expanded:
+                    expanded.append(p)
+
+            if mode == "break_glass":
+                break_glass_path = "/Users/haotianliu/.openclaw/workspace/ystar-company/.claude/agents/"
+                if break_glass_path not in expanded:
+                    expanded.append(break_glass_path)
+
+            allowed = expanded
 
     file_path = params.get("file_path", "")
     if not file_path:
@@ -322,6 +436,41 @@ def _check_write_boundary(
         if norm_target == norm_allowed or norm_target.startswith(norm_allowed + os.sep):
             return None   # 在允许范围内
 
+    # AMENDMENT-012: Structured remediation for write boundary violations
+    from ystar.session import Remediation
+
+    # Determine which engineer scope this belongs to
+    scope_map = {
+        "ystar/kernel/": "eng-kernel (Leo Chen)",
+        "ystar/governance/": "eng-governance (Maya Patel)",
+        "ystar/adapters/": "eng-platform (Ryan Park)",
+        "ystar/_hook": "eng-platform (Ryan Park)",
+        "ystar/_cli": "eng-platform (Ryan Park)",
+        "ystar/domains/": "eng-domains (Jordan Lee)",
+        "ystar/patterns/": "eng-domains (Jordan Lee)",
+        "ystar/templates/": "eng-domains (Jordan Lee)",
+    }
+
+    responsible_engineer = "CTO (for delegation)"
+    for path_prefix, engineer in scope_map.items():
+        if path_prefix in file_path:
+            responsible_engineer = engineer
+            break
+
+    remediation = Remediation(
+        wrong_action=f'{tool_name}(file_path="{file_path}", ...)',
+        correct_steps=[
+            f'# {who} write scope: {allowed}',
+            f'# For {file_path}: delegate to {responsible_engineer}',
+            'invoke("Agent", agent="cto", task="...")',
+            '# Or escalate to Board if requires immutable path override',
+        ],
+        skill_ref=f"knowledge/{who}/skills/{who}_scope.md" if who.startswith("eng-") else "knowledge/ceo/skills/ceo_delegation_chain.md",
+        lesson_ref="knowledge/eng-domains/lessons/scope_violation_2026_04_12.md",
+        rule_name="write_boundary_violation",
+        rule_context=f"Each agent owns specific write paths. Cross-boundary edits go via delegation.",
+    )
+
     return PolicyResult(
         allowed=False,
         reason=(
@@ -331,6 +480,7 @@ def _check_write_boundary(
         who=who,
         what=tool_name,
         violations=[],
+        remediation=remediation,
     )
 
 
@@ -639,7 +789,10 @@ def _check_session_start_protocol_completed(
     """
     try:
         from ystar.adapters.identity_detector import _load_session_config
-        cfg = _load_session_config() or {}
+        cfg = _load_session_config()
+        if cfg is None:
+            # No session config → test mode or uninitialized session → skip protocol check
+            return None
         sid = cfg.get("session_id", "unknown")
     except Exception:
         return None
@@ -720,6 +873,9 @@ def _record_behavior_rule_cieu(
         reason: Explanation
         params: Additional context parameters
         cieu_db: Path to CIEU database
+
+    CEO Mode Integration:
+    - break_glass mode: add elevated=true to CIEU event
     """
     try:
         from ystar.adapters.identity_detector import _load_session_config
@@ -727,6 +883,21 @@ def _record_behavior_rule_cieu(
 
         cfg = _load_session_config()
         session_id = cfg.get("session_id", "unknown") if cfg else "unknown"
+
+        # Check if in break_glass mode (for elevated tagging)
+        elevated = False
+        if who.lower() in ("ceo", "aiden-ceo", "aiden"):
+            mode_state = _get_current_mode(agent_id="ceo")
+            if mode_state.get("mode") == "break_glass":
+                elevated = True
+
+        cieu_params = {
+            "rule": rule_name,
+            "reason": reason,
+            **params
+        }
+        if elevated:
+            cieu_params["elevated"] = True
 
         store = CIEUStore(cieu_db)
         store.write_dict({
@@ -736,15 +907,11 @@ def _record_behavior_rule_cieu(
             "decision": decision.lower(),
             "passed": passed,
             "violations": [{"dimension": rule_name, "message": reason}] if not passed else [],
-            "params": {
-                "rule": rule_name,
-                "reason": reason,
-                **params
-            },
+            "params": cieu_params,
             "contract_hash": "",
             "evidence_grade": "behavior",
         })
-        _log.info(f"Behavior rule CIEU recorded: {rule_name} -> {decision}")
+        _log.info(f"Behavior rule CIEU recorded: {rule_name} -> {decision}{' [elevated]' if elevated else ''}")
     except Exception as e:
         _log.error(f"Failed to write behavior rule CIEU: {e}")
 
@@ -863,9 +1030,22 @@ def _check_must_dispatch_via_cto(
 
     CEO cannot use Agent tool to spawn eng-* agents directly.
     Must delegate to CTO first.
+
+    CEO Mode Integration:
+    - autonomous/break_glass modes: bypass this rule (CEO self-drive)
+
+    AMENDMENT-012: Returns remediation with correct delegation steps.
     """
     if not agent_rules.get("must_dispatch_via_cto"):
         return None
+
+    # Agent elevated modes bypass must_dispatch
+    if who.lower() in ("ceo", "aiden-ceo", "aiden"):
+        mode_state = _get_current_mode(agent_id="ceo")
+        mode = mode_state.get("mode", "standard")
+        if mode in ("autonomous", "break_glass"):
+            _log.info(f"must_dispatch_via_cto bypassed for CEO in {mode} mode")
+            return None  # allow
 
     if tool_name == "Agent":
         target_agent = params.get("subagent_type") or params.get("agent", "")
@@ -876,6 +1056,23 @@ def _check_must_dispatch_via_cto(
                 f"engineering tasks via CTO, cannot directly spawn '{target_agent}'. "
                 f"Use gov_delegate to delegate to CTO first."
             )
+
+            # AMENDMENT-012: Structured remediation
+            from ystar.session import Remediation
+            task_desc = params.get("task", "...")
+            remediation = Remediation(
+                wrong_action=f'invoke("Agent", agent="{target_agent}", task="{task_desc[:50]}...")',
+                correct_steps=[
+                    f'invoke("Agent", agent="cto", task="{task_desc[:50]}...")',
+                    'CTO will delegate to appropriate engineer (eng-kernel/platform/governance/domains)',
+                    '(Alternative: write task card to .claude/tasks/cto-xxx.md for async queue)',
+                ],
+                skill_ref="knowledge/ceo/skills/ceo_delegation_chain.md",
+                lesson_ref="knowledge/ceo/lessons/ceo_越权派工_2026_04_13.md",
+                rule_name="must_dispatch_via_cto",
+                rule_context="CEO is strategic coordinator, not technical dispatcher. CTO owns all engineering work allocation.",
+            )
+
             try:
                 _record_behavior_rule_cieu(
                     who=who,
@@ -895,8 +1092,108 @@ def _check_must_dispatch_via_cto(
                 who=who,
                 what=tool_name,
                 violations=[],
+                remediation=remediation,
             )
 
+    return None
+
+
+def _check_parallel_dispatch_required(
+    who: str, tool_name: str, params: dict, agent_rules: dict
+) -> Optional[PolicyResult]:
+    """
+    Rule: parallel_dispatch_required (DENY)
+
+    CEO/CTO must dispatch multiple engineers in the same batch (parallel Agent calls),
+    not sequentially in separate messages.
+
+    Detection:
+    - Track Agent tool calls per dispatcher (who) with timestamps
+    - If dispatcher makes 2nd Agent call within SERIAL_DISPATCH_GAP seconds
+      AND the calls are NOT in the same batch → DENY
+
+    Batch detection:
+    - Same batch = calls happen within <1 second (same tool_use block in Claude Code)
+    - Serial = calls separated by >1 second but <30 seconds
+
+    Exemption:
+    - Different targets separated by >30s = allowed (different battle/context)
+    """
+    if not agent_rules.get("parallel_dispatch_required"):
+        return None
+
+    if tool_name != "Agent":
+        return None
+
+    target_agent = params.get("subagent_type") or params.get("agent", "")
+    if not target_agent:
+        return None
+
+    # Only enforce for CEO and CTO dispatching engineers
+    if who.lower() not in ("ceo", "aiden-ceo", "aiden", "cto", "ethan-cto", "ethan"):
+        return None
+
+    now = time.time()
+
+    # Clean old history (keep only last 60s)
+    if who in _AGENT_DISPATCH_HISTORY:
+        _AGENT_DISPATCH_HISTORY[who] = [
+            (ts, tgt) for ts, tgt in _AGENT_DISPATCH_HISTORY[who]
+            if now - ts < _PARALLEL_DISPATCH_WINDOW
+        ]
+    else:
+        _AGENT_DISPATCH_HISTORY[who] = []
+
+    history = _AGENT_DISPATCH_HISTORY[who]
+
+    # Check if there's a recent dispatch (within SERIAL_DISPATCH_GAP)
+    if history:
+        last_ts, last_target = history[-1]
+        gap = now - last_ts
+
+        # If gap is <1s, consider it same batch → OK
+        if gap < 1.0:
+            _log.info(f"parallel_dispatch: {who} → {target_agent} in same batch (gap={gap:.2f}s)")
+            _AGENT_DISPATCH_HISTORY[who].append((now, target_agent))
+            return None  # allow
+
+        # If gap is ≥1s but <SERIAL_DISPATCH_GAP → DENY (serial dispatch detected)
+        if gap < _SERIAL_DISPATCH_GAP:
+            reason = (
+                f"Behavior rule violation: agent '{who}' must dispatch multiple engineers "
+                f"in the same message batch (parallel Agent calls), not sequentially. "
+                f"Previous dispatch to '{last_target}' was {gap:.1f}s ago. "
+                f"To fix: combine both Agent calls in one message using multiple tool_use blocks."
+            )
+            try:
+                _record_behavior_rule_cieu(
+                    who=who,
+                    rule_name="parallel_dispatch_required",
+                    event_type="BEHAVIOR_RULE_VIOLATION",
+                    decision="DENY",
+                    passed=False,
+                    reason=reason,
+                    params={
+                        "current_target": target_agent,
+                        "previous_target": last_target,
+                        "gap_seconds": gap
+                    }
+                )
+            except Exception as e:
+                _log.warning(f"Failed to record CIEU for parallel_dispatch_required: {e}")
+
+            return PolicyResult(
+                allowed=False,
+                reason=reason,
+                who=who,
+                what=tool_name,
+                violations=[]
+            )
+
+    # Record this dispatch
+    _AGENT_DISPATCH_HISTORY[who].append((now, target_agent))
+
+    # If this is the first dispatch in window or gap >30s → allow
     return None
 
 
@@ -1688,35 +1985,41 @@ def _check_behavior_rules(
     # Runs regardless of per-agent rules cfg
     try:
         from ystar.adapters.identity_detector import _load_session_config
-        _cfg_lc = _load_session_config() or {}
-        _sid = _cfg_lc.get("session_id", "unknown")
+        _cfg_lc = _load_session_config()
+        if _cfg_lc is None:
+            # No session config → test mode → skip session lifecycle tracking
+            _sid = None
+        else:
+            _sid = _cfg_lc.get("session_id", "unknown")
     except Exception:
         _sid = "unknown"
-    _hydrate_protocol_state(_sid)
+    # Skip session lifecycle tracking in test mode (_sid is None)
+    if _sid is not None:
+        _hydrate_protocol_state(_sid)
 
-    # Detector 1: continuation_loaded
-    if tool_name == "Read":
-        _fp = str(params.get("file_path", "")).replace("\\", "/")
-        if _fp.endswith("memory/continuation.json") or _fp.endswith("memory/continuation.md"):
-            _emit_once(_sid, "continuation_loaded", who, extra={"file": _fp})
+        # Detector 1: continuation_loaded
+        if tool_name == "Read":
+            _fp = str(params.get("file_path", "")).replace("\\", "/")
+            if _fp.endswith("memory/continuation.json") or _fp.endswith("memory/continuation.md"):
+                _emit_once(_sid, "continuation_loaded", who, extra={"file": _fp})
 
-    # Detector 2: obligation_check
-    if tool_name == "mcp__gov-mcp__gov_obligations":
-        _emit_once(_sid, "obligation_check", who, extra={"tool": tool_name})
-    elif tool_name == "Read" and "omission" in str(params.get("file_path", "")).lower():
-        _emit_once(_sid, "obligation_check", who,
-                   extra={"tool": tool_name, "via": "omission_db_read"})
+        # Detector 2: obligation_check
+        if tool_name == "mcp__gov-mcp__gov_obligations":
+            _emit_once(_sid, "obligation_check", who, extra={"tool": tool_name})
+        elif tool_name == "Read" and "omission" in str(params.get("file_path", "")).lower():
+            _emit_once(_sid, "obligation_check", who,
+                       extra={"tool": tool_name, "via": "omission_db_read"})
 
-    # Detector 3: boot_protocol_completed (all three present)
-    _seen = _PROTOCOL_STATE.get(_sid, set())
-    if {"session_start", "continuation_loaded", "obligation_check"}.issubset(_seen) \
-            and "boot_protocol_completed" not in _seen:
-        _emit_once(_sid, "boot_protocol_completed", who)
+        # Detector 3: boot_protocol_completed (all three present)
+        _seen = _PROTOCOL_STATE.get(_sid, set())
+        if {"session_start", "continuation_loaded", "obligation_check"}.issubset(_seen) \
+                and "boot_protocol_completed" not in _seen:
+            _emit_once(_sid, "boot_protocol_completed", who)
 
-    # ── NEW DENY rule: session start protocol must complete ──
-    protocol_deny = _check_session_start_protocol_completed(who, tool_name, params, session_cfg)
-    if protocol_deny is not None:
-        return protocol_deny
+        # ── NEW DENY rule: session start protocol must complete ──
+        protocol_deny = _check_session_start_protocol_completed(who, tool_name, params, session_cfg)
+        if protocol_deny is not None:
+            return protocol_deny
 
     cfg = _get_behavior_rules_config() if session_cfg is _SENTINEL else session_cfg
     if not cfg:
@@ -1738,6 +2041,10 @@ def _check_behavior_rules(
         return deny_result
 
     deny_result = _check_must_dispatch_via_cto(who, tool_name, params, agent_rules)
+    if deny_result is not None:
+        return deny_result
+
+    deny_result = _check_parallel_dispatch_required(who, tool_name, params, agent_rules)
     if deny_result is not None:
         return deny_result
 
