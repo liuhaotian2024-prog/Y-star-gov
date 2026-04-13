@@ -113,6 +113,7 @@ class OmissionType(str, Enum):
 
 
 class Severity(str, Enum):
+    SOFT     = "soft"
     LOW      = "low"
     MEDIUM   = "medium"
     HIGH     = "high"

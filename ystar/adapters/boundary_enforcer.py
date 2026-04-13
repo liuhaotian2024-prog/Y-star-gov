@@ -1374,15 +1374,15 @@ def _check_verification_before_assertion(
             who=who,
             rule_name="verification_before_assertion",
             event_type="BEHAVIOR_RULE_VIOLATION",
-            decision="DENY",
+            decision="WARNING",
             passed=False,
             reason=reason,
             params={"content_snippet": content[:200]}
         )
         _log.warning(reason)
 
-    from ystar.session import PolicyResult
-    return PolicyResult(allowed=False, reason=reason, who=who, what=tool_name, violations=[])  # Don't block, just warn
+    # Return None to allow (don't block, just warn via CIEU)
+    return None
 
 
 def _check_root_cause_fix_required(
@@ -1431,7 +1431,7 @@ def _check_root_cause_fix_required(
             who=who,
             rule_name="root_cause_fix_required",
             event_type="BEHAVIOR_RULE_WARNING",
-            decision="WARN",
+            decision="WARNING",
             passed=False,
             reason=reason,
             params={"file_path": file_path}
