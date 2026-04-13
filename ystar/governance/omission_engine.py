@@ -202,12 +202,14 @@ class OmissionEngine:
                     ob.severity = Severity.HIGH
                 self.store.update_obligation(ob)
                 # 创建 soft violation（幂等）
+                # Gate: only fire if entity is active (fix for timer-fired violation noise)
                 if not self.store.violation_exists_for_obligation(ob.obligation_id):
-                    overdue_secs = now - (ob.effective_due_at or now)
-                    v = self._create_violation(ob, now, overdue_secs)
-                    self.store.add_violation(v)
-                    self._write_to_cieu(ob, v)
-                    result.violations.append(v)
+                    if self._is_entity_active(ob.entity_id, now):
+                        overdue_secs = now - (ob.effective_due_at or now)
+                        v = self._create_violation(ob, now, overdue_secs)
+                        self.store.add_violation(v)
+                        self._write_to_cieu(ob, v)
+                        result.violations.append(v)
                 result.expired.append(ob)  # 兼容性：expired 列表仍包含 soft overdue
                 self._update_entity_on_violation(ob)
 
@@ -224,13 +226,15 @@ class OmissionEngine:
                         ob.severity = Severity.HIGH
                     self.store.update_obligation(ob)
                     # hard violation（独立幂等 key = obligation_id + "_hard"）
+                    # Gate: only fire if entity is active
                     if not self._hard_violation_exists(ob.obligation_id):
-                        overdue_secs = now - (ob.effective_due_at or now)
-                        v = self._create_violation(ob, now, overdue_secs)
-                        v.details["stage"] = "hard_overdue"
-                        self.store.add_violation(v)
-                        self._write_to_cieu(ob, v)
-                        result.violations.append(v)
+                        if self._is_entity_active(ob.entity_id, now):
+                            overdue_secs = now - (ob.effective_due_at or now)
+                            v = self._create_violation(ob, now, overdue_secs)
+                            v.details["stage"] = "hard_overdue"
+                            self.store.add_violation(v)
+                            self._write_to_cieu(ob, v)
+                            result.violations.append(v)
                     # 升级处理
                     if self._should_escalate(ob, now):
                         viols = self.store.list_violations(entity_id=ob.entity_id)
@@ -243,15 +247,17 @@ class OmissionEngine:
 
             elif ob.status == ObligationStatus.PENDING:
                 # Legacy path（soft/hard 之前的老 obligation）
+                # Gate: only fire if entity is active
                 if not self.store.violation_exists_for_obligation(ob.obligation_id):
-                    ob.status = ObligationStatus.EXPIRED
-                    self.store.update_obligation(ob)
-                    overdue_secs = now - (ob.effective_due_at or now)
-                    v = self._create_violation(ob, now, overdue_secs)
-                    self.store.add_violation(v)
-                    self._write_to_cieu(ob, v)
-                    result.violations.append(v)
-                    result.expired.append(ob)
+                    if self._is_entity_active(ob.entity_id, now):
+                        ob.status = ObligationStatus.EXPIRED
+                        self.store.update_obligation(ob)
+                        overdue_secs = now - (ob.effective_due_at or now)
+                        v = self._create_violation(ob, now, overdue_secs)
+                        self.store.add_violation(v)
+                        self._write_to_cieu(ob, v)
+                        result.violations.append(v)
+                        result.expired.append(ob)
 
         # 二次扫描 A: SOFT_OVERDUE → HARD_OVERDUE promotion
         for ob in self.store.list_obligations(status=ObligationStatus.SOFT_OVERDUE):
@@ -269,13 +275,15 @@ class OmissionEngine:
             elif ob.severity == Severity.MEDIUM:
                 ob.severity = Severity.HIGH
             self.store.update_obligation(ob)
+            # Gate: only fire if entity is active
             if not self._hard_violation_exists(ob.obligation_id):
-                overdue_secs = now - (ob.effective_due_at or now)
-                v = self._create_violation(ob, now, overdue_secs)
-                v.details["stage"] = "hard_overdue"
-                self.store.add_violation(v)
-                self._write_to_cieu(ob, v)
-                result.violations.append(v)
+                if self._is_entity_active(ob.entity_id, now):
+                    overdue_secs = now - (ob.effective_due_at or now)
+                    v = self._create_violation(ob, now, overdue_secs)
+                    v.details["stage"] = "hard_overdue"
+                    self.store.add_violation(v)
+                    self._write_to_cieu(ob, v)
+                    result.violations.append(v)
             if self._should_escalate(ob, now):
                 violations_for_ob = self.store.list_violations(entity_id=ob.entity_id)
                 v_ob = next((x for x in violations_for_ob
@@ -816,6 +824,34 @@ class OmissionEngine:
                 "trigger_event_id":    ob.trigger_event_id,
             },
         )
+
+    # ── 私有：activity gating ─────────────────────────────────────────────────
+
+    def _is_entity_active(self, entity_id: str, now: float, window_secs: float = 600) -> bool:
+        """
+        Check if entity had recent activity (event within window_secs).
+        Used to gate omission violations — don't fire violations for dormant entities.
+
+        Fix for Circuit Breaker noise root cause (480/480/480/480 timer-fired violations).
+        Violations should only fire when agent is active but failed to produce expected artifact.
+
+        Args:
+            entity_id: Entity to check
+            now: Current timestamp
+            window_secs: Activity window (default 10 min)
+
+        Returns:
+            True if entity had events in last window_secs, False otherwise
+        """
+        entity = self.store.get_entity(entity_id)
+        if entity is None:
+            return False
+
+        # Check last_event_at timestamp
+        if entity.last_event_at is None:
+            return False
+
+        return (now - entity.last_event_at) <= window_secs
 
     # ── 私有：reminder ─────────────────────────────────────────────────────────
     # N8 CONFIRMED: All escalation/reminder timing comes from EscalationPolicy
