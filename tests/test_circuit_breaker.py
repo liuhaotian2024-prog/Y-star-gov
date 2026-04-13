@@ -370,3 +370,60 @@ class TestCircuitBreakerBoard20:
 
         assert len(result.pulses_fired) == 0
         assert engine._circuit_breaker_violation_count == 21
+
+
+class TestCircuitBreakerSlidingWindow:
+    """B1 fix 2026-04-12: violation count uses sliding window, not cumulative."""
+
+    def test_old_violations_decay_out_of_window(self):
+        """Violations older than window_secs should not count toward threshold."""
+        engine, store = _build_engine(threshold=20)
+        engine._circuit_breaker_window_secs = 60  # 1 min window for test
+
+        t0 = 1_000_000.0
+        # Inject 15 violations at t0 (below threshold)
+        for i in range(15):
+            engine._circuit_breaker_window.append((t0, 1))
+        engine._circuit_breaker_violation_count = 15
+
+        # Fast-forward 2 min; add 10 more violations — old 15 should drop out
+        engine._now = lambda: t0 + 120
+        ob = _make_obligation()
+        store.add_obligation(ob)
+        for _ in range(10):
+            v = _make_violation(ob.obligation_id)
+            engine.process_violations([v])
+
+        # Only the 10 new violations are within window
+        assert engine._circuit_breaker_violation_count == 10
+        assert not engine._circuit_breaker_armed
+
+    def test_sustained_rate_still_arms(self):
+        """Sustained high violation rate within window still arms breaker."""
+        engine, store = _build_engine(threshold=20)
+        engine._circuit_breaker_window_secs = 600  # 10 min
+
+        t = [1_000_000.0]
+        engine._now = lambda: t[0]
+        ob = _make_obligation()
+        store.add_obligation(ob)
+
+        # 20 violations within 5 min (inside 10-min window)
+        for _ in range(20):
+            v = _make_violation(ob.obligation_id)
+            engine.process_violations([v])
+            t[0] += 15  # 15 sec apart = 5 min total
+
+        assert engine._circuit_breaker_armed
+        assert engine._circuit_breaker_violation_count >= 20
+
+    def test_reset_clears_window(self):
+        """reset_circuit_breaker clears the sliding window too."""
+        engine, store = _build_engine(threshold=20)
+        engine._circuit_breaker_window.append((time.time(), 5))
+        engine._circuit_breaker_violation_count = 5
+
+        engine.reset_circuit_breaker()
+
+        assert engine._circuit_breaker_window == []
+        assert engine._circuit_breaker_violation_count == 0

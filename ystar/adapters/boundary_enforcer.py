@@ -999,8 +999,8 @@ def _check_root_cause_fix_required(
         _record_behavior_rule_cieu(
             who=who,
             rule_name="root_cause_fix_required",
-            event_type="BEHAVIOR_RULE_VIOLATION",
-            decision="DENY",
+            event_type="BEHAVIOR_RULE_WARNING",
+            decision="WARN",
             passed=False,
             reason=reason,
             params={"file_path": file_path}
@@ -1032,6 +1032,11 @@ def _check_document_requires_execution_plan(
     if not file_path.endswith(".md"):
         return None
 
+    # B2 fix 2026-04-12: exclude Claude Code auto-memory paths —
+    # these are agent self-memory, not policy documents.
+    if "/memory/" in file_path or file_path.endswith("/MEMORY.md"):
+        return None
+
     content = params.get("content", "") + params.get("new_string", "")
     policy_keywords = [
         "协议", "protocol", "mechanism", "规则", "rule",
@@ -1061,8 +1066,8 @@ def _check_document_requires_execution_plan(
         _record_behavior_rule_cieu(
             who=who,
             rule_name="document_requires_execution_plan",
-            event_type="BEHAVIOR_RULE_VIOLATION",
-            decision="DENY",
+            event_type="BEHAVIOR_RULE_WARNING",
+            decision="WARN",
             passed=False,
             reason=reason,
             params={"file_path": file_path}

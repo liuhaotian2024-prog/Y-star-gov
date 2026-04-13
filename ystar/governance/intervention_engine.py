@@ -305,11 +305,16 @@ class InterventionEngine:
 
         # ── Circuit breaker state ──────────────────────────────────────
         # P0: 防止 violation 雪球效应。
-        # 当累计 violation 数达到 threshold 时，自动停止产生新 pulse。
-        # Board 要求 threshold=20。
+        # B1 fix 2026-04-12: 从"累积永不衰减"改为"滑动窗口"——
+        # 只有在 window_secs 内累计 >= threshold 次违规才 ARM，
+        # 响应"持续高违规率"而非"历史总量"。
         self._circuit_breaker_armed = False
+        self._circuit_breaker_threshold = 50
+        self._circuit_breaker_window_secs = 600  # 10 min 滑动窗口
+        # List of (timestamp, violation_count) tuples inside window
+        self._circuit_breaker_window: list = []
+        # Total within window — derived, kept for CIEU log compatibility
         self._circuit_breaker_violation_count = 0
-        self._circuit_breaker_threshold = 50  # Board 要求 (raised from 20 to avoid false triggers)
 
     # ── 主入口 1：处理 omission violations → 产生干预脉冲 ────────────────────
 
@@ -324,8 +329,19 @@ class InterventionEngine:
         result = InterventionResult()
         now = self._now()
 
-        # ── Circuit breaker: 计数并检查 ────────────────────────────────
-        self._circuit_breaker_violation_count += len(violations)
+        # ── Circuit breaker: 滑动窗口计数 ────────────────────────────
+        # B1 fix: 旧逻辑 `count += len(violations)` 永不衰减，
+        # 累积到 threshold 后 ARM 且无法自恢复。改用滑动窗口：
+        # 超出 window_secs 的历史违规自动淘汰。
+        cutoff = now - self._circuit_breaker_window_secs
+        self._circuit_breaker_window = [
+            (ts, c) for ts, c in self._circuit_breaker_window if ts > cutoff
+        ]
+        if violations:
+            self._circuit_breaker_window.append((now, len(violations)))
+        self._circuit_breaker_violation_count = sum(
+            c for _, c in self._circuit_breaker_window
+        )
 
         if (self._circuit_breaker_violation_count >= self._circuit_breaker_threshold
                 and not self._circuit_breaker_armed):
@@ -598,6 +614,7 @@ class InterventionEngine:
         old_count = self._circuit_breaker_violation_count
         self._circuit_breaker_armed = False
         self._circuit_breaker_violation_count = 0
+        self._circuit_breaker_window = []
 
         if self.cieu_store:
             try:
