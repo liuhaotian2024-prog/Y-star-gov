@@ -1315,3 +1315,100 @@ class TestDirectiveDecomposeTimeout:
                 assert result is None  # Don't block (WARNING only)
                 mock_cieu.assert_called_once()
                 assert "directive_decompose_timeout" in str(mock_cieu.call_args)
+
+
+class TestParallelDispatchRequired:
+    """Test parallel_dispatch_required rule (CEO/CTO must dispatch engineers in parallel)."""
+
+    def test_serial_dispatch_denied(self):
+        """CEO dispatching 2 engineers serially (5s gap) → DENY"""
+        config = {
+            "agent_behavior_rules": {
+                "ceo": {"parallel_dispatch_required": True}
+            }
+        }
+
+        # Mock session start protocol to bypass boot check
+        with patch("ystar.adapters.identity_detector._load_session_config", return_value=config):
+            with patch("ystar.adapters.boundary_enforcer._record_behavior_rule_cieu"):
+                with patch("ystar.adapters.boundary_enforcer._check_session_start_protocol_completed", return_value=None):
+                    # First dispatch → allowed
+                    result1 = _check_behavior_rules(
+                        who="ceo",
+                        tool_name="Agent",
+                        params={"subagent_type": "eng-kernel"}
+                    )
+                    assert result1 is None  # Allow
+
+                    # Wait 5 seconds (simulates serial dispatch)
+                    time.sleep(5.1)
+
+                    # Second dispatch → DENY (serial violation)
+                    result2 = _check_behavior_rules(
+                        who="ceo",
+                        tool_name="Agent",
+                        params={"subagent_type": "eng-platform"}
+                    )
+                    assert result2 is not None
+                    assert result2.allowed is False
+                    assert "parallel" in result2.reason.lower()
+                    assert "same message batch" in result2.reason
+
+    def test_parallel_dispatch_allowed(self):
+        """CEO dispatching 2 engineers in same batch (<1s gap) → ALLOW"""
+        config = {
+            "agent_behavior_rules": {
+                "ceo": {"parallel_dispatch_required": True}
+            }
+        }
+
+        with patch("ystar.adapters.identity_detector._load_session_config", return_value=config):
+            with patch("ystar.adapters.boundary_enforcer._record_behavior_rule_cieu"):
+                with patch("ystar.adapters.boundary_enforcer._check_session_start_protocol_completed", return_value=None):
+                    # First dispatch
+                    result1 = _check_behavior_rules(
+                        who="ceo",
+                        tool_name="Agent",
+                        params={"subagent_type": "eng-kernel"}
+                    )
+                    assert result1 is None  # Allow
+
+                    # Immediate second dispatch (<1s = same batch)
+                    time.sleep(0.2)
+                    result2 = _check_behavior_rules(
+                        who="ceo",
+                        tool_name="Agent",
+                        params={"subagent_type": "eng-platform"}
+                    )
+                    assert result2 is None  # Allow (same batch)
+
+    def test_large_gap_allowed(self):
+        """CEO dispatching with >30s gap → ALLOW (different context)"""
+        config = {
+            "agent_behavior_rules": {
+                "ceo": {"parallel_dispatch_required": True}
+            }
+        }
+
+        # Note: This test would take 30s to run, so we mock the timing check instead
+        with patch("ystar.adapters.identity_detector._load_session_config", return_value=config):
+            with patch("ystar.adapters.boundary_enforcer._record_behavior_rule_cieu"):
+                with patch("ystar.adapters.boundary_enforcer._check_session_start_protocol_completed", return_value=None):
+                    with patch("time.time") as mock_time:
+                        # First dispatch at t=0
+                        mock_time.return_value = 1000.0
+                        result1 = _check_behavior_rules(
+                            who="ceo",
+                            tool_name="Agent",
+                            params={"subagent_type": "eng-kernel"}
+                        )
+                        assert result1 is None
+
+                        # Second dispatch at t=35s (>30s gap)
+                        mock_time.return_value = 1035.0
+                        result2 = _check_behavior_rules(
+                            who="ceo",
+                            tool_name="Agent",
+                            params={"subagent_type": "eng-platform"}
+                        )
+                        assert result2 is None  # Allow (different battle)

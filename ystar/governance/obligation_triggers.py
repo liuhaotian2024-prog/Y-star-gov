@@ -191,9 +191,20 @@ class TriggerRegistry:
     def __init__(self) -> None:
         self._triggers: Dict[str, ObligationTrigger] = {}
 
-    def register(self, trigger: ObligationTrigger) -> None:
-        """Register a new trigger."""
+    def register(self, trigger: ObligationTrigger, engine: Any = None) -> None:
+        """
+        Register a new trigger.
+
+        Args:
+            trigger: ObligationTrigger to register
+            engine:  Optional OmissionEngine instance for live-reload
+                     If provided, triggers immediate scan for this trigger type
+        """
         self._triggers[trigger.trigger_id] = trigger
+
+        # Live-reload: if engine provided, trigger immediate scan for this obligation type
+        if engine is not None and hasattr(engine, '_scan_obligation_type'):
+            engine._scan_obligation_type(trigger.obligation_type)
 
     def get(self, trigger_id: str) -> Optional[ObligationTrigger]:
         """Get trigger by ID."""

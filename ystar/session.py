@@ -32,6 +32,9 @@ from pathlib import Path as _Path
 from .kernel.dimensions import IntentContract
 from .kernel.engine import check as _check
 
+# Re-export Remediation + SkillActivation for convenience (AMENDMENT-012, 013)
+__all__ = ["Policy", "PolicyResult", "Remediation", "SkillActivation", "IntentContract"]
+
 # Static policy cache (keyed by AGENTS.md content hash)
 _STATIC_POLICY_CACHE: Dict[str, Dict[str, Any]] = {}
 
@@ -70,6 +73,37 @@ _KWARG_ALIASES: Dict[str, str] = {
 
 
 @dataclass
+class Remediation:
+    """
+    Structured remediation payload for DENY responses (AMENDMENT-012).
+
+    Transform governance from "you can't" to "here's how you should".
+    Every denial becomes a teaching moment with executable guidance.
+    """
+    wrong_action: str           # Agent 刚才做了什么（code/command 原样）
+    correct_steps: list[str]    # 正确步骤序列（可执行代码/MCP 调用）
+    skill_ref: str | None       # knowledge/{role}/skills/*.md 路径（完整参考）
+    lesson_ref: str | None      # knowledge/{role}/lessons/*.md 或 CIEU incident_id
+    rule_name: str              # Behavior rule 名称（可查 .ystar_session.json）
+    rule_context: str | None = None  # 为什么有这条规则（1 句话背景）
+
+
+@dataclass
+class SkillActivation:
+    """
+    Proactive skill injection payload for ALLOW responses (AMENDMENT-013).
+
+    Instead of waiting for violations, prime agent with relevant skills/templates
+    before they execute actions. Every predictable pattern becomes a teaching moment.
+    """
+    skill_id: str               # e.g., "knowledge/ceo/skills/article_11_seven_layers.md"
+    skill_content: str          # parsed markdown payload (not just path)
+    trigger_rule: str           # which rule triggered this activation
+    priority: int = 1           # when multiple skills activate, order matters (1=highest)
+    role_filter: List[str] = field(default_factory=list)  # only activate for these roles (empty = all)
+
+
+@dataclass
 class PolicyResult:
     """Result of a Policy.check() call."""
     allowed:    bool
@@ -77,13 +111,20 @@ class PolicyResult:
     who:        str
     what:       str
     violations: List[Any] = field(default_factory=list)
+    remediation: Optional[Remediation] = None      # AMENDMENT-012: structured teaching on DENY
+    activation: Optional[SkillActivation] = None   # AMENDMENT-013: proactive skill injection on ALLOW
 
     def __bool__(self) -> bool:
         return self.allowed
 
     def __repr__(self) -> str:
         status = "allow" if self.allowed else f"deny({self.reason})"
-        return f"PolicyResult({self.who}.{self.what} → {status})"
+        parts = [f"PolicyResult({self.who}.{self.what} → {status})"]
+        if self.remediation:
+            parts.append(f"[remediation: {self.remediation.rule_name}]")
+        if self.activation:
+            parts.append(f"[activation: {self.activation.skill_id}]")
+        return " ".join(parts)
 
 
 class Policy:

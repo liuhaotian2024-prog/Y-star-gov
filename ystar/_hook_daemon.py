@@ -30,6 +30,7 @@ SOCK_PATH = Path(os.environ.get("YSTAR_HOOK_SOCK", "/tmp/ystar_hook.sock"))
 PID_FILE = Path("/tmp/ystar_hook_daemon.pid")
 LOG_FILE = Path("/tmp/ystar_hook_daemon.log")
 BUFFER_SIZE = 65536
+SESSION_JSON_PATH = Path(".ystar_session.json")
 
 
 def _log(msg: str) -> None:
@@ -43,6 +44,8 @@ class HookDaemon:
     def __init__(self) -> None:
         self.policy = None
         self.agent_id = ""
+        self._session_config_cache = None
+        self._session_config_mtime = 0.0
         self._load_policy()
 
     def _load_policy(self) -> None:
@@ -67,6 +70,21 @@ class HookDaemon:
         except Exception as e:
             _log(f"Policy load error: {e}")
 
+    def _get_session_config(self) -> dict:
+        """Load session.json with mtime-based caching. Reload on file change."""
+        try:
+            if SESSION_JSON_PATH.exists():
+                current_mtime = SESSION_JSON_PATH.stat().st_mtime
+                if current_mtime > self._session_config_mtime:
+                    with SESSION_JSON_PATH.open() as f:
+                        self._session_config_cache = json.load(f)
+                    self._session_config_mtime = current_mtime
+                    _log(f"Session config reloaded (mtime={current_mtime:.0f})")
+                return self._session_config_cache or {}
+        except Exception as e:
+            _log(f"Session config load error: {e}")
+        return {}
+
     def handle(self, payload_json: str) -> str:
         """Process a hook payload, return JSON response."""
         t0 = time.perf_counter()
@@ -77,6 +95,9 @@ class HookDaemon:
             from ystar.adapters.hook_response import detect_host, convert_ygov_result
 
             host = detect_host(payload)
+
+            # Reload session config if changed (zero perf cost if unchanged)
+            _ = self._get_session_config()
 
             # Run Y*gov check
             ygov_result = check_hook(payload, self.policy, agent_id=self.agent_id or None)
