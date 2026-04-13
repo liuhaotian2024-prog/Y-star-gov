@@ -1057,6 +1057,68 @@ def create_server(
         })
 
     # ===================================================================
+    # TECH RADAR — Autonomous tech scouting
+    # ===================================================================
+
+    @mcp.tool()
+    def gov_radar(gap_description: str, top_k: int = 3) -> str:
+        """Query Tech Radar Engine for technology recommendations.
+
+        Searches external tech catalog (multi-agent frameworks, RAG, reasoning,
+        memory systems, etc.) and returns integration recommendations.
+
+        Args:
+            gap_description: Description of the capability gap or need
+            top_k: Number of recommendations to return (default 3)
+
+        Returns:
+            JSON with matched technologies, maturity scores, integration complexity
+        """
+        # Lazy import to avoid dependency if script doesn't exist
+        import sys
+        from pathlib import Path
+
+        # Find ystar-company workspace (sibling to Y-star-gov)
+        ystar_gov = Path(__file__).parent.parent
+        ystar_company = ystar_gov.parent / "ystar-company"
+
+        if not ystar_company.exists():
+            return json.dumps({"error": "ystar-company workspace not found", "path": str(ystar_company)})
+
+        scripts_path = ystar_company / "scripts"
+        if str(scripts_path) not in sys.path:
+            sys.path.insert(0, str(scripts_path))
+
+        try:
+            from tech_radar import TechRadar
+
+            radar = TechRadar()
+            results = radar.search_by_keywords(gap_description, top_k=top_k)
+
+            # Format as JSON
+            matched = []
+            for name, tech, score in results:
+                matched.append({
+                    "name": name,
+                    "maturity": tech["mature_score"],
+                    "license": tech["license"],
+                    "github_url": tech["github_url"],
+                    "paper_url": tech.get("paper_url", ""),
+                    "relevance_areas": tech["labs_relevance_areas"],
+                    "integration_complexity": tech["integration_complexity"],
+                    "notes": tech.get("notes", ""),
+                    "score": score,
+                })
+
+            return json.dumps({
+                "gap": gap_description,
+                "matched_technologies": matched,
+                "count": len(matched),
+            })
+        except Exception as e:
+            return json.dumps({"error": str(e), "type": type(e).__name__})
+
+    # ===================================================================
     # BENCHMARK
     # ===================================================================
 
