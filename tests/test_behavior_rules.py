@@ -1412,3 +1412,118 @@ class TestParallelDispatchRequired:
                             params={"subagent_type": "eng-platform"}
                         )
                         assert result2 is None  # Allow (different battle)
+
+
+class TestCEOSubstantiveResponseArticle11Trace:
+    """Test CEO substantive response requires Article 11 trace (AMENDMENT-013)."""
+
+    def test_ceo_write_report_without_l0_marker_warns(self):
+        """CEO writing report without L0 marker should emit WARN."""
+        config = {
+            "session_id": "test_session",
+            "agent_behavior_rules": {
+                "ceo": {"article_11_always_on_substantive": True}
+            }
+        }
+
+        with patch("ystar.adapters.identity_detector._load_session_config", return_value=config):
+            with patch("ystar.adapters.boundary_enforcer._record_behavior_rule_cieu") as mock_cieu:
+                with patch("ystar.adapters.boundary_enforcer._check_session_start_protocol_completed", return_value=None):
+                    result = _check_behavior_rules(
+                        who="ceo",
+                        tool_name="Write",
+                        params={
+                            "file_path": "reports/strategic_plan.md",
+                            "content": "We should decide to build this new feature. " * 50  # >500 chars
+                        }
+                    )
+
+                    # Should not block (return None)
+                    assert result is None
+                    # But should have emitted CIEU warning
+                    assert mock_cieu.called
+                    call_args = mock_cieu.call_args[1]
+                    assert call_args["rule_name"] == "ceo_substantive_response_requires_article_11_trace"
+                    assert call_args["decision"] == "WARN"
+                    assert call_args["passed"] is False
+
+    def test_ceo_write_report_with_l0_marker_passes(self):
+        """CEO writing report with L0 marker should pass."""
+        config = {
+            "session_id": "test_session",
+            "agent_behavior_rules": {
+                "ceo": {"article_11_always_on_substantive": True}
+            }
+        }
+
+        with patch("ystar.adapters.identity_detector._load_session_config", return_value=config):
+            with patch("ystar.adapters.boundary_enforcer._record_behavior_rule_cieu") as mock_cieu:
+                with patch("ystar.adapters.boundary_enforcer._check_session_start_protocol_completed", return_value=None):
+                    result = _check_behavior_rules(
+                        who="ceo",
+                        tool_name="Write",
+                        params={
+                            "file_path": "reports/strategic_plan.md",
+                            "content": "L0 Intent: Build this feature. " + "Analysis follows. " * 50
+                        }
+                    )
+
+                    assert result is None
+                    assert mock_cieu.called
+                    call_args = mock_cieu.call_args[1]
+                    assert call_args["passed"] is True
+                    assert call_args["decision"] == "PASS"
+
+    def test_engineer_write_any_length_skipped(self):
+        """Engineer writing reports should skip this check (CEO-only)."""
+        config = {
+            "session_id": "test_session",
+            "agent_behavior_rules": {
+                "eng-kernel": {"article_11_always_on_substantive": True}
+            }
+        }
+
+        with patch("ystar.adapters.identity_detector._load_session_config", return_value=config):
+            with patch("ystar.adapters.boundary_enforcer._record_behavior_rule_cieu") as mock_cieu:
+                with patch("ystar.adapters.boundary_enforcer._check_session_start_protocol_completed", return_value=None):
+                    result = _check_behavior_rules(
+                        who="eng-kernel",
+                        tool_name="Write",
+                        params={
+                            "file_path": "reports/technical_report.md",
+                            "content": "We should design this architecture. " * 100
+                        }
+                    )
+
+                    assert result is None
+                    # Should not have triggered the rule (CEO-only)
+                    if mock_cieu.called:
+                        for call in mock_cieu.call_args_list:
+                            assert call[1].get("rule_name") != "ceo_substantive_response_requires_article_11_trace"
+
+    def test_ceo_trivial_response_skipped(self):
+        """CEO trivial response (<500 chars, no strategic keywords) should skip check."""
+        config = {
+            "session_id": "test_session",
+            "agent_behavior_rules": {
+                "ceo": {"article_11_always_on_substantive": True}
+            }
+        }
+
+        with patch("ystar.adapters.identity_detector._load_session_config", return_value=config):
+            with patch("ystar.adapters.boundary_enforcer._record_behavior_rule_cieu") as mock_cieu:
+                with patch("ystar.adapters.boundary_enforcer._check_session_start_protocol_completed", return_value=None):
+                    result = _check_behavior_rules(
+                        who="ceo",
+                        tool_name="Write",
+                        params={
+                            "file_path": "reports/daily_log.md",
+                            "content": "Completed task X today."  # Short, no strategic keywords
+                        }
+                    )
+
+                    assert result is None
+                    # Should not have triggered (not substantive)
+                    if mock_cieu.called:
+                        for call in mock_cieu.call_args_list:
+                            assert call[1].get("rule_name") != "ceo_substantive_response_requires_article_11_trace"

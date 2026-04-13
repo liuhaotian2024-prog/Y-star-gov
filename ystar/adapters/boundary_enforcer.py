@@ -1022,6 +1022,95 @@ def _check_autonomous_mission_requires_article_11(
     return None
 
 
+def _check_ceo_substantive_response_requires_article_11_trace(
+    who: str, tool_name: str, params: dict, agent_rules: dict
+) -> Optional[PolicyResult]:
+    """
+    Rule: ceo_substantive_response_requires_article_11_trace (AMENDMENT-013)
+
+    CEO substantive responses (strategic decisions, reports, dispatches) must
+    include Article 11 cognitive trace markers (L0-L7 or "第十一条" or "12层").
+
+    Trigger conditions (any one):
+    - agent_id == "ceo"
+    - AND tool_call is Write/Edit to reports/ or knowledge/ceo/ OR tool_call is Agent (dispatch)
+    - AND params contain strategic keywords: decide, plan, design, analyze, propose, 决策, 设计, 分析, 提议, 战略, 架构
+    - OR content length > 500 chars (for writes/edits)
+
+    Detection: Check if content contains Article 11 markers
+    Action: WARN (not DENY) - emit CIEU event for audit trail, CEO self-corrects
+    """
+    if not agent_rules.get("article_11_always_on_substantive"):
+        return None
+
+    # Only applies to CEO
+    if who != "ceo":
+        return None
+
+    # Check if this is a substantive response
+    is_substantive = False
+    content = ""
+
+    # Strategic keywords
+    strategic_keywords = [
+        "decide", "plan", "design", "analyze", "propose",
+        "决策", "设计", "分析", "提议", "战略", "架构"
+    ]
+
+    if tool_name in ["Write", "Edit"]:
+        file_path = params.get("file_path", "")
+        content = params.get("content", "") or params.get("new_string", "")
+
+        # Check if writing to strategic paths
+        if any(p in file_path for p in ["reports/", "knowledge/ceo/"]):
+            # Check strategic keywords or length
+            if any(kw in content for kw in strategic_keywords) or len(content) > 500:
+                is_substantive = True
+
+    elif tool_name == "Agent":
+        # Dispatch is substantive
+        is_substantive = True
+        content = params.get("task", "") + params.get("instructions", "")
+
+    if not is_substantive:
+        return None
+
+    # Check for Article 11 markers
+    article_11_markers = [
+        "L0", "L1", "L2", "L3", "L4", "L5", "L6", "L7",
+        "第0层", "第1层", "第2层", "第3层", "第4层", "第5层", "第6层", "第7层",
+        "第十一条", "12层", "Article 11"
+    ]
+
+    has_marker = any(marker in content for marker in article_11_markers)
+
+    event_type = "ARTICLE_11_INVOKED" if has_marker else "ARTICLE_11_OMITTED"
+
+    try:
+        _record_behavior_rule_cieu(
+            who=who,
+            rule_name="ceo_substantive_response_requires_article_11_trace",
+            event_type="BEHAVIOR_RULE_WARNING",
+            decision="WARN" if not has_marker else "PASS",
+            passed=has_marker,
+            reason=(
+                "CEO substantive response includes Article 11 trace" if has_marker
+                else "CEO substantive response missing Article 11 trace (L0-L7 markers)"
+            ),
+            params={
+                "tool": tool_name,
+                "has_marker": has_marker,
+                "content_length": len(content),
+                "event_type": event_type
+            }
+        )
+    except Exception as e:
+        _log.warning(f"Failed to record CIEU for article_11_trace: {e}")
+
+    # Always return None (WARNING only, no block)
+    return None
+
+
 def _check_must_dispatch_via_cto(
     who: str, tool_name: str, params: dict, agent_rules: dict
 ) -> Optional[PolicyResult]:
@@ -2061,6 +2150,7 @@ def _check_behavior_rules(
         return deny_result
 
     # WARNING rules (log but don't block)
+    _check_ceo_substantive_response_requires_article_11_trace(who, tool_name, params, agent_rules)
     _check_verification_before_assertion(who, tool_name, params, agent_rules)
     _check_root_cause_fix_required(who, tool_name, params, agent_rules)
     _check_document_requires_execution_plan(who, tool_name, params, agent_rules)
