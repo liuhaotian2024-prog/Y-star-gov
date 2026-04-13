@@ -25,12 +25,14 @@ import contextlib
 import threading
 import time
 from pathlib import Path
+from typing import Optional
 
 SOCK_PATH = Path(os.environ.get("YSTAR_HOOK_SOCK", "/tmp/ystar_hook.sock"))
 PID_FILE = Path("/tmp/ystar_hook_daemon.pid")
 LOG_FILE = Path("/tmp/ystar_hook_daemon.log")
 BUFFER_SIZE = 65536
 SESSION_JSON_PATH = Path(".ystar_session.json")
+IDLE_THRESHOLD_SECONDS = 300  # 5 minutes
 
 
 def _log(msg: str) -> None:
@@ -46,7 +48,13 @@ class HookDaemon:
         self.agent_id = ""
         self._session_config_cache = None
         self._session_config_mtime = 0.0
+        self._last_user_message_time = time.time()
+        self._autonomy_driver = None
+        self._idle_check_thread = None
+        self._shutdown_flag = False
         self._load_policy()
+        self._init_autonomy_driver()
+        self._start_idle_monitor()
 
     def _load_policy(self) -> None:
         """Load policy from AGENTS.md (once at startup)."""
@@ -85,11 +93,117 @@ class HookDaemon:
             _log(f"Session config load error: {e}")
         return {}
 
+    def _init_autonomy_driver(self) -> None:
+        """Initialize AutonomyDriver for idle-pull and OFF_TARGET detection."""
+        try:
+            from ystar.governance.autonomy_driver import create_autonomy_driver
+            # Use default priority_brief path (reports/priority_brief.md)
+            self._autonomy_driver = create_autonomy_driver()
+            _log("AutonomyDriver initialized")
+        except Exception as e:
+            _log(f"AutonomyDriver init error: {e}")
+            self._autonomy_driver = None
+
+    def _start_idle_monitor(self) -> None:
+        """Start background thread that monitors for idle periods."""
+        def monitor():
+            while not self._shutdown_flag:
+                time.sleep(60)  # Check every minute
+                if self._shutdown_flag:
+                    break
+
+                idle_time = time.time() - self._last_user_message_time
+                if idle_time >= IDLE_THRESHOLD_SECONDS and self._autonomy_driver:
+                    self._trigger_idle_pull()
+                    # Reset timer to avoid repeated pulls
+                    self._last_user_message_time = time.time()
+
+        self._idle_check_thread = threading.Thread(target=monitor, daemon=True)
+        self._idle_check_thread.start()
+        _log("Idle monitor started")
+
+    def _trigger_idle_pull(self) -> None:
+        """Pull next action from AutonomyDriver and emit CIEU event."""
+        try:
+            if not self.agent_id or not self._autonomy_driver:
+                return
+
+            action = self._autonomy_driver.pull_next_action(self.agent_id)
+            if action:
+                _log(f"[IDLE_PULL] {self.agent_id} → {action.description[:60]}")
+                self._write_cieu_event("IDLE_PULL_TRIGGERED", {
+                    "agent_id": self.agent_id,
+                    "action_id": action.action_id,
+                    "description": action.description,
+                    "why": action.why,
+                    "verify": action.verify,
+                    "priority": action.priority,
+                    "idle_duration_s": time.time() - self._last_user_message_time
+                })
+        except Exception as e:
+            _log(f"[IDLE_PULL] error: {e}")
+
+    def _detect_off_target(self, current_action: str) -> None:
+        """Detect if current action is OFF_TARGET and emit warning."""
+        try:
+            if not self.agent_id or not self._autonomy_driver:
+                return
+
+            is_off_target = self._autonomy_driver.detect_off_target(
+                self.agent_id, current_action
+            )
+            if is_off_target:
+                _log(f"[OFF_TARGET] {self.agent_id}: {current_action[:60]}")
+                self._write_cieu_event("OFF_TARGET_WARNING", {
+                    "agent_id": self.agent_id,
+                    "current_action": current_action,
+                })
+        except Exception as e:
+            _log(f"[OFF_TARGET] detection error: {e}")
+
+    def _write_cieu_event(self, event_type: str, params: dict) -> None:
+        """Write event to CIEU store (fail-open)."""
+        try:
+            # Try to get CIEU store from omission_engine
+            if hasattr(self._autonomy_driver, 'omission_store'):
+                store = self._autonomy_driver.omission_store
+                if hasattr(store, 'cieu_store') and store.cieu_store:
+                    import uuid
+                    record = {
+                        "event_id": str(uuid.uuid4()),
+                        "session_id": "hook_daemon",
+                        "agent_id": self.agent_id,
+                        "event_type": event_type,
+                        "decision": "info",
+                        "evidence_grade": "ops",
+                        "created_at": time.time(),
+                        "seq_global": time.time_ns() // 1000,
+                        "params": params,
+                        "violations": [],
+                        "drift_detected": False,
+                        "human_initiator": self.agent_id,
+                    }
+                    store.cieu_store.write_dict(record)
+        except Exception:
+            pass  # fail-open
+
+    def _update_last_message_time(self, payload: dict) -> None:
+        """Update last user message timestamp. Reset idle timer on user interaction."""
+        # Check if this is a user-initiated message (not autonomous action)
+        # Look for indicators in payload
+        tool_name = payload.get("tool_name", "")
+        # Any tool call suggests agent is active (responding to user or autonomous action)
+        # We reset on any activity to avoid pulling while agent is working
+        self._last_user_message_time = time.time()
+
     def handle(self, payload_json: str) -> str:
         """Process a hook payload, return JSON response."""
         t0 = time.perf_counter()
         try:
             payload = json.loads(payload_json)
+
+            # Update last message timestamp (reset idle timer)
+            self._update_last_message_time(payload)
 
             from ystar.adapters.hook import check_hook
             from ystar.adapters.hook_response import detect_host, convert_ygov_result
@@ -113,6 +227,13 @@ class HookDaemon:
                         msg = cr.violations[0].message if cr.violations else "deny"
                         ygov_result = {"action": "block", "message": f"[Y*] {msg}"}
 
+            # OFF_TARGET detection (PreToolUse hook timing)
+            # Extract action description from tool parameters
+            if self._autonomy_driver and payload.get("tool_name"):
+                current_action = self._extract_action_description(payload)
+                if current_action:
+                    self._detect_off_target(current_action)
+
             response = convert_ygov_result(ygov_result, host)
             elapsed_ms = (time.perf_counter() - t0) * 1000
 
@@ -123,6 +244,31 @@ class HookDaemon:
             elapsed_ms = (time.perf_counter() - t0) * 1000
             _log(f"  {elapsed_ms:.1f}ms ERROR: {e}")
             return "{}"
+
+    def _extract_action_description(self, payload: dict) -> Optional[str]:
+        """Extract meaningful action description from tool payload."""
+        tool_name = payload.get("tool_name", "")
+        tool_input = payload.get("tool_input", {})
+
+        # Try to get description field first
+        if "description" in tool_input:
+            return tool_input["description"]
+
+        # Fallback: construct from tool_name + key parameters
+        if tool_name == "Bash":
+            cmd = tool_input.get("command", "")
+            return f"bash: {cmd[:80]}" if cmd else None
+        elif tool_name == "Edit":
+            file_path = tool_input.get("file_path", "")
+            return f"edit {file_path}" if file_path else None
+        elif tool_name == "Write":
+            file_path = tool_input.get("file_path", "")
+            return f"write {file_path}" if file_path else None
+        elif tool_name == "Read":
+            file_path = tool_input.get("file_path", "")
+            return f"read {file_path}" if file_path else None
+
+        return f"{tool_name} tool"
 
 
 def _handle_client(conn: socket.socket, daemon: HookDaemon) -> None:
@@ -171,6 +317,7 @@ def start_daemon() -> None:
 
     def shutdown(signum, frame):
         _log("Daemon shutting down")
+        daemon._shutdown_flag = True
         server.close()
         SOCK_PATH.unlink(missing_ok=True)
         PID_FILE.unlink(missing_ok=True)
