@@ -50,10 +50,12 @@ class HookDaemon:
         self._session_config_mtime = 0.0
         self._last_user_message_time = time.time()
         self._autonomy_driver = None
+        self._residual_loop_engine = None
         self._idle_check_thread = None
         self._shutdown_flag = False
         self._load_policy()
         self._init_autonomy_driver()
+        self._init_residual_loop_engine()
         self._start_idle_monitor()
 
     def _load_policy(self) -> None:
@@ -94,15 +96,49 @@ class HookDaemon:
         return {}
 
     def _init_autonomy_driver(self) -> None:
-        """Initialize AutonomyDriver for idle-pull and OFF_TARGET detection."""
+        """Initialize AutonomyEngine for idle-pull and OFF_TARGET detection."""
         try:
-            from ystar.governance.autonomy_driver import create_autonomy_driver
+            from ystar.governance.autonomy_engine import AutonomyEngine
+            from ystar.governance.cieu_store import CIEUStore
             # Use default priority_brief path (reports/priority_brief.md)
-            self._autonomy_driver = create_autonomy_driver()
-            _log("AutonomyDriver initialized")
+            cieu_store = CIEUStore()  # Default .ystar_cieu.db
+            self._autonomy_driver = AutonomyEngine(
+                mode="desire-driven",
+                cieu_store=cieu_store
+            )
+            _log("AutonomyEngine initialized")
         except Exception as e:
-            _log(f"AutonomyDriver init error: {e}")
+            _log(f"AutonomyEngine init error: {e}")
             self._autonomy_driver = None
+
+    def _init_residual_loop_engine(self) -> None:
+        """Initialize ResidualLoopEngine (AMENDMENT-014)."""
+        try:
+            if not self._autonomy_driver:
+                _log("RLE init skipped: no AutonomyEngine")
+                return
+
+            from ystar.governance.residual_loop_engine import ResidualLoopEngine
+            from ystar.governance.cieu_store import CIEUStore
+
+            cieu_store = CIEUStore()  # Same store as autonomy_driver
+
+            # Target provider: extract Y* from event params
+            def target_provider(event):
+                return event.get("params", {}).get("target_y_star")
+
+            self._residual_loop_engine = ResidualLoopEngine(
+                autonomy_engine=self._autonomy_driver,
+                cieu_store=cieu_store,
+                target_provider=target_provider,
+                max_iterations=10,
+                convergence_epsilon=0.05,
+                damping_gamma=0.9,
+            )
+            _log("ResidualLoopEngine initialized")
+        except Exception as e:
+            _log(f"RLE init error: {e}")
+            self._residual_loop_engine = None
 
     def _start_idle_monitor(self) -> None:
         """Start background thread that monitors for idle periods."""
@@ -187,6 +223,33 @@ class HookDaemon:
         except Exception:
             pass  # fail-open
 
+    def _trigger_residual_loop(self, payload: dict, ygov_result: dict) -> None:
+        """Trigger ResidualLoopEngine on PostToolUse (AMENDMENT-014)."""
+        try:
+            # Build CIEU event from payload + ygov_result
+            event = {
+                "event_id": str(uuid.uuid4()),
+                "session_id": payload.get("session_id", "hook_daemon"),
+                "agent_id": self.agent_id,
+                "event_type": payload.get("tool_name", "ToolUse"),
+                "decision": ygov_result.get("action", "allow"),
+                "evidence_grade": "ops",
+                "created_at": time.time(),
+                "seq_global": time.time_ns() // 1000,
+                "params": {
+                    "tool_input": payload.get("tool_input", {}),
+                    "tool_result": payload.get("tool_result", {}),
+                    "target_y_star": payload.get("tool_input", {}).get("target_y_star"),
+                    "y_actual": payload.get("tool_result", {}).get("output"),
+                },
+                "violations": ygov_result.get("violations", []),
+                "drift_detected": ygov_result.get("drift_detected", False),
+                "human_initiator": self.agent_id,
+            }
+            self._residual_loop_engine.on_cieu_event(event)
+        except Exception as e:
+            _log(f"[RLE] trigger error: {e}")
+
     def _update_last_message_time(self, payload: dict) -> None:
         """Update last user message timestamp. Reset idle timer on user interaction."""
         # Check if this is a user-initiated message (not autonomous action)
@@ -233,6 +296,11 @@ class HookDaemon:
                 current_action = self._extract_action_description(payload)
                 if current_action:
                     self._detect_off_target(current_action)
+
+            # AMENDMENT-014: ResidualLoopEngine — trigger on PostToolUse
+            # (after tool execution, check residual and emit next action if needed)
+            if self._residual_loop_engine and payload.get("hook_timing") == "PostToolUse":
+                self._trigger_residual_loop(payload, ygov_result)
 
             response = convert_ygov_result(ygov_result, host)
             elapsed_ms = (time.perf_counter() - t0) * 1000

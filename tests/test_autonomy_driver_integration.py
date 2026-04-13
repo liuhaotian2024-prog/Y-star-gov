@@ -1,6 +1,8 @@
 """
-tests.test_autonomy_driver_integration  —  ADE 集成测试
-========================================================
+tests.test_autonomy_driver_integration  —  AutonomyEngine 集成测试
+====================================================================
+
+AMENDMENT-014: AutonomyDriver merged into AutonomyEngine.
 
 模拟真实场景：
   1. CEO idle 5 min → ADE 自动 pull → CEO context 收到下一活
@@ -13,7 +15,8 @@ import time
 from pathlib import Path
 import pytest
 
-from ystar.governance.autonomy_driver import create_autonomy_driver
+from ystar.governance.autonomy_engine import AutonomyEngine
+from ystar.governance.omission_engine import OmissionEngine
 from ystar.governance.omission_store import InMemoryOmissionStore
 from ystar.governance.omission_models import (
     ObligationRecord, ObligationStatus, Severity
@@ -42,10 +45,12 @@ this_week_targets:
         f.write(brief_content)
         brief_path = f.name
 
-    # 创建 store + driver
+    # 创建 store + engine
     store = InMemoryOmissionStore()
-    driver = create_autonomy_driver(
-        omission_store=store,
+    oe = OmissionEngine(store=store)
+    driver = AutonomyEngine(
+        mode="desire-driven",
+        omission_engine=oe,
         priority_brief_path=brief_path
     )
 

@@ -1,6 +1,8 @@
 """
-tests.test_autonomy_driver  —  AutonomyDriver 单元测试
-========================================================
+tests.test_autonomy_driver  —  AutonomyEngine (prescriptive queue) 单元测试
+==========================================================================
+
+AMENDMENT-014: AutonomyDriver merged into AutonomyEngine.
 
 测试覆盖：
   1. pull_next_action 返回非空
@@ -16,8 +18,8 @@ import tempfile
 from pathlib import Path
 import pytest
 
-from ystar.governance.autonomy_driver import (
-    AutonomyDriver, Action, PriorityBrief, create_autonomy_driver
+from ystar.governance.autonomy_engine import (
+    AutonomyEngine, Action, PriorityBrief
 )
 from ystar.governance.omission_store import InMemoryOmissionStore
 from ystar.governance.omission_models import (
@@ -94,14 +96,17 @@ this_month_targets:
 
 @pytest.fixture
 def driver(omission_store, priority_brief_file):
-    """创建测试用 AutonomyDriver。"""
+    """创建测试用 AutonomyEngine (prescriptive mode)。"""
+    from ystar.governance.omission_engine import OmissionEngine
     role_capabilities = {
         "ceo": ["delegation", "coordination"],
         "cto": ["code", "test", "debug"],
         "cmo": ["content", "blog"],
     }
-    return AutonomyDriver(
-        omission_store=omission_store,
+    oe = OmissionEngine(store=omission_store)
+    return AutonomyEngine(
+        mode="desire-driven",
+        omission_engine=oe,
         role_capabilities=role_capabilities,
         priority_brief_path=str(priority_brief_file)
     )
@@ -139,14 +144,14 @@ def test_detect_off_target_false(driver):
 def test_claim_orphan_obligations(driver):
     """测试 claim_orphan_obligations 认领孤儿义务。"""
     # 初始状态：obl_003 是 orphan
-    orphan = driver.omission_store.get_obligation("obl_003")
+    orphan = driver.omission_engine.store.get_obligation("obl_003")
     assert orphan.actor_id == ""
 
     # 认领
     driver.claim_orphan_obligations()
 
     # 验证：orphan 已被认领
-    orphan_after = driver.omission_store.get_obligation("obl_003")
+    orphan_after = driver.omission_engine.store.get_obligation("obl_003")
     assert orphan_after.actor_id != ""
     assert orphan_after.actor_id == "cto"  # code_review → cto
 
@@ -191,10 +196,10 @@ def test_get_action_queue_summary(driver):
 
 
 def test_create_autonomy_driver_factory():
-    """测试工厂函数 create_autonomy_driver。"""
-    driver = create_autonomy_driver()
-    assert isinstance(driver, AutonomyDriver)
-    assert driver.omission_store is not None
+    """测试 AutonomyEngine 工厂构造（AMENDMENT-014: no separate factory)。"""
+    driver = AutonomyEngine(mode="desire-driven")
+    assert isinstance(driver, AutonomyEngine)
+    assert driver.omission_engine.store is not None
     assert len(driver.role_capabilities) > 0
 
 

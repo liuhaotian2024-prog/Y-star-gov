@@ -484,6 +484,12 @@ class GEventType:
     GAP_IDENTIFIED     = "gap_identified"
     GAP_FILLED         = "gap_filled"
 
+    # AMENDMENT-014: Prescriptive action queue events
+    ACTION_PULLED      = "action_pulled"
+    ACTION_QUEUE_RECOMPUTED = "action_queue_recomputed"
+    OFF_TARGET_WARNING = "off_target_warning"
+    ORPHAN_CLAIMED     = "orphan_claimed"
+
     # v0.50: gov_dispatch layer (task delegation governance)
     TASK_DISPATCHED    = "task_dispatched"      # dispatcher sends task to target_agent
     TASK_ACKNOWLEDGED  = "task_acknowledged"    # target_agent acknowledges receipt

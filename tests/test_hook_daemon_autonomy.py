@@ -2,6 +2,8 @@
 tests.test_hook_daemon_autonomy — Hook daemon idle-pull + OFF_TARGET tests
 ===========================================================================
 
+AMENDMENT-014: AutonomyDriver merged into AutonomyEngine.
+
 测试覆盖：
   1. idle_trigger: 静默 ≥5min 触发 pull_next_action
   2. off_target_positive: 当前动作不在 daily_targets → emit OFF_TARGET_WARNING
@@ -17,7 +19,7 @@ from unittest.mock import Mock, patch, MagicMock
 import pytest
 
 from ystar._hook_daemon import HookDaemon, IDLE_THRESHOLD_SECONDS
-from ystar.governance.autonomy_driver import Action, create_autonomy_driver
+from ystar.governance.autonomy_engine import Action, AutonomyEngine
 
 
 @pytest.fixture
@@ -52,10 +54,11 @@ this_month_targets:
 
 @pytest.fixture
 def mock_daemon(temp_priority_brief):
-    """创建 mock HookDaemon with AutonomyDriver。"""
+    """创建 mock HookDaemon with AutonomyEngine。"""
     daemon = HookDaemon()
-    # Override autonomy_driver to use test priority_brief
-    daemon._autonomy_driver = create_autonomy_driver(
+    # AMENDMENT-014: AutonomyDriver merged into AutonomyEngine
+    daemon._autonomy_driver = AutonomyEngine(
+        mode="desire-driven",
         priority_brief_path=str(temp_priority_brief)
     )
     daemon.agent_id = "eng-kernel"

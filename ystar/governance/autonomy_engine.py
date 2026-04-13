@@ -1,5 +1,5 @@
 """
-autonomy_engine.py — GOV-010 Phase 3
+autonomy_engine.py — GOV-010 Phase 3 + AMENDMENT-014
 
 AutonomyEngine wraps OmissionEngine and adds desire-driven governance:
 agents can declare their own intents (not just react to Board directives),
@@ -14,6 +14,12 @@ Architecture decision (Board, non-negotiable):
 
 Both modes write CIEU. The audit chain is unified.
 
+AMENDMENT-014 (2026-04-12):
+  Merged AutonomyDriver (ADE) functionality into AutonomyEngine:
+    - pull_next_action / recompute_action_queue (prescriptive action queue)
+    - detect_off_target (daily_target deviation detection)
+    - claim_orphan_obligations (auto-assign orphan obligations)
+
 Usage::
 
     from ystar.governance.autonomy_engine import AutonomyEngine
@@ -24,20 +30,54 @@ Usage::
     engine.omission_engine.register_entity(...)
     engine.omission_engine.ingest_event(...)
 
-    # New desire-driven methods:
+    # Desire-driven methods:
     intent = engine.declare_intent(actor="cto", task="build theory lib",
                                    steps=4, estimate_minutes=60)
     engine.update_progress(intent["task_id"], step=2, note="halfway")
     stalled = engine.scan_stalled()
     gaps = engine.get_gap_map("cto")
+
+    # Prescriptive action queue (AMENDMENT-014):
+    action = engine.pull_next_action(agent_id="cto")
+    engine.recompute_action_queue(agent_id="cto")
+    is_off = engine.detect_off_target(agent_id="cto", current_action="X")
+    engine.claim_orphan_obligations()
 """
+import re
 import time
 import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 from ystar.governance.omission_engine import OmissionEngine
-from ystar.governance.omission_models import GEventType
+from ystar.governance.omission_models import GEventType, ObligationStatus
+
+
+# ── Action Model ──────────────────────────────────────────────────────────────
+
+@dataclass
+class Action:
+    """Single action item (prescriptive queue entry)."""
+    action_id: str
+    description: str
+    why: str  # why do this
+    verify: str  # how to verify completion
+    on_fail: str  # what to do on failure
+    priority: int = 0  # lower = higher priority
+    tags: List[str] = field(default_factory=list)
+    source: str = "unknown"  # source: daily_target / obligation / orphan
+
+
+@dataclass
+class PriorityBrief:
+    """Priority brief structure (parsed from reports/priority_brief.md)."""
+    today_targets: List[str] = field(default_factory=list)
+    this_week_targets: List[str] = field(default_factory=list)
+    this_month_targets: List[str] = field(default_factory=list)
+    campaign: Optional[str] = None
+    day: Optional[int] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class AutonomyEngine:
@@ -71,6 +111,8 @@ class AutonomyEngine:
         stall_multiplier: float = 2.0,
         knowledge_root: Optional[Any] = None,
         cieu_store: Any = None,
+        role_capabilities: Optional[Dict[str, List[str]]] = None,
+        priority_brief_path: str = "reports/priority_brief.md",
     ) -> None:
         if mode not in self.VALID_MODES:
             raise ValueError(
@@ -88,6 +130,26 @@ class AutonomyEngine:
         # because active_task.py (Labs side) already persists to
         # knowledge/{role}/active_task.json.
         self._intents: dict[str, dict] = {}
+
+        # AMENDMENT-014: Prescriptive action queue (from AutonomyDriver)
+        self.role_capabilities = role_capabilities or self._default_capabilities()
+        self.priority_brief_path = Path(priority_brief_path)
+        self.action_queues: Dict[str, List[Action]] = {}  # agent_id → action_queue
+
+    @staticmethod
+    def _default_capabilities() -> Dict[str, List[str]]:
+        """Default role capabilities."""
+        return {
+            "ceo": ["delegation", "coordination", "reporting", "board_interface"],
+            "cto": ["code", "test", "architecture", "git", "debug"],
+            "cmo": ["content", "blog", "marketing", "social_media"],
+            "cso": ["sales", "lead_gen", "crm", "patent"],
+            "cfo": ["finance", "pricing", "token", "budget"],
+            "eng-kernel": ["kernel", "causal_engine", "pulse", "meta_learning"],
+            "eng-governance": ["governance", "omission_engine", "intervention", "rules"],
+            "eng-platform": ["platform", "mcp", "cli", "adapters"],
+            "eng-domains": ["domains", "domain_packs", "industry_rules"],
+        }
 
     # ─── Desire-driven methods ───────────────────────────────────────
 
@@ -283,7 +345,236 @@ class AutonomyEngine:
 
         return result
 
-    # ─── Internal helpers ────────────────────────────────────────────
+    # ─── Prescriptive Action Queue (AMENDMENT-014) ──────────────────
+
+    def pull_next_action(self, agent_id: str) -> Optional[Action]:
+        """
+        Pull next action from action_queue.
+
+        If queue is empty, auto recompute.
+        Returns None if no actions available after recompute.
+        """
+        if agent_id not in self.action_queues or not self.action_queues[agent_id]:
+            self.recompute_action_queue(agent_id)
+
+        queue = self.action_queues.get(agent_id, [])
+        if not queue:
+            return None
+
+        # Pop highest priority (lowest priority value)
+        action = queue.pop(0)
+        self._write_event(GEventType.ACTION_PULLED, agent_id, {
+            "action_id": action.action_id,
+            "description": action.description,
+            "source": action.source,
+        })
+        return action
+
+    def recompute_action_queue(self, agent_id: str):
+        """
+        Recompute action queue for agent.
+
+        Algorithm:
+          1. Parse priority_brief → extract today_targets
+          2. Read pending obligations from omission_engine
+          3. Filter by role_capabilities
+          4. Sort by priority (daily → obligation → weekly)
+        """
+        brief = self._load_priority_brief()
+        actions: List[Action] = []
+
+        # 1. today_targets → actions (priority=0, highest)
+        for idx, target in enumerate(brief.today_targets):
+            actions.append(Action(
+                action_id=f"daily_{idx}",
+                description=target,
+                why="daily_target",
+                verify="check completion in DISPATCH.md",
+                on_fail="escalate to CEO if blocked",
+                priority=0,
+                tags=["daily_target"],
+                source="priority_brief"
+            ))
+
+        # 2. pending obligations → actions (priority=1)
+        pending = self._get_pending_obligations(agent_id)
+        for obl in pending:
+            description = obl.notes if obl.notes else f"{obl.obligation_type} for {obl.entity_id}"
+            actions.append(Action(
+                action_id=obl.obligation_id,
+                description=description,
+                why=f"obligation {obl.obligation_type}",
+                verify="check obligation fulfillment event",
+                on_fail="report to CEO",
+                priority=1,
+                tags=["obligation", obl.obligation_type],
+                source="obligation_backlog"
+            ))
+
+        # 3. this_week_targets → actions (priority=2)
+        for idx, target in enumerate(brief.this_week_targets):
+            actions.append(Action(
+                action_id=f"weekly_{idx}",
+                description=target,
+                why="weekly_target",
+                verify="check weekly progress",
+                on_fail="adjust timeline",
+                priority=2,
+                tags=["weekly_target"],
+                source="priority_brief"
+            ))
+
+        # Sort by priority ascending
+        actions.sort(key=lambda a: a.priority)
+        self.action_queues[agent_id] = actions
+
+    def detect_off_target(self, agent_id: str, current_action: str) -> bool:
+        """
+        Detect if current_action deviates from daily_target.
+
+        Returns:
+          - True: OFF_TARGET (current action not in daily_targets)
+          - False: ON_TARGET
+        """
+        brief = self._load_priority_brief()
+        if not brief.today_targets:
+            return False  # No targets, cannot be off-target
+
+        # Simple keyword matching
+        current_lower = current_action.lower()
+        for target in brief.today_targets:
+            target_lower = target.lower()
+            # Extract keywords (words > 3 chars)
+            keywords = [w for w in target_lower.split() if len(w) > 3]
+            if any(kw in current_lower for kw in keywords):
+                return False  # ON_TARGET
+
+        # OFF_TARGET detected
+        self._write_event("OFF_TARGET_WARNING", agent_id, {
+            "current_action": current_action,
+            "daily_targets": brief.today_targets,
+        })
+        return True
+
+    def claim_orphan_obligations(self):
+        """
+        Auto-claim orphan obligations (actor_id="").
+
+        Algorithm:
+          1. Read all pending obligations from omission_engine
+          2. Find orphans (actor_id="" or None)
+          3. Infer owner from obligation_type
+          4. Update obligation.actor_id
+        """
+        store = self.omission_engine.store
+        all_obligations = store.list_obligations()
+        orphans = [o for o in all_obligations if not o.actor_id and o.status == ObligationStatus.PENDING]
+
+        if not orphans:
+            return
+
+        claimed_count = 0
+        for orphan in orphans:
+            actor = self._infer_owner(orphan.obligation_type)
+            if actor:
+                orphan.actor_id = actor
+                store.update_obligation(orphan)
+                claimed_count += 1
+                self._write_event("ORPHAN_CLAIMED", actor, {
+                    "obligation_id": orphan.obligation_id,
+                    "obligation_type": orphan.obligation_type,
+                })
+
+    def get_action_queue_summary(self, agent_id: str) -> str:
+        """Return action_queue summary (for boot_packages.category_11)."""
+        if agent_id not in self.action_queues or not self.action_queues[agent_id]:
+            self.recompute_action_queue(agent_id)
+
+        queue = self.action_queues.get(agent_id, [])
+        if not queue:
+            return "No actions queued"
+
+        lines = []
+        for i, action in enumerate(queue[:5], 1):  # Show first 5
+            lines.append(f"  [{i}] {action.description[:60]}")
+            lines.append(f"      why: {action.why}, verify: {action.verify[:40]}")
+        if len(queue) > 5:
+            lines.append(f"  ... and {len(queue) - 5} more")
+        return "\n".join(lines)
+
+    # ─── Private Helpers (AMENDMENT-014) ─────────────────────────────
+
+    def _load_priority_brief(self) -> PriorityBrief:
+        """Parse priority_brief.md into structured data."""
+        if not self.priority_brief_path.exists():
+            return PriorityBrief()
+
+        content = self.priority_brief_path.read_text(encoding="utf-8")
+        brief = PriorityBrief()
+
+        # Parse today_targets
+        today_match = re.search(r"today_targets:\s*\n((?:  - .+\n?)+)", content, re.MULTILINE)
+        if today_match:
+            lines = today_match.group(1).strip().split("\n")
+            brief.today_targets = [line.strip("- ").strip() for line in lines]
+
+        # Parse this_week_targets
+        week_match = re.search(r"this_week_targets:\s*\n((?:  - .+\n?)+)", content, re.MULTILINE)
+        if week_match:
+            lines = week_match.group(1).strip().split("\n")
+            brief.this_week_targets = [line.strip("- ").strip() for line in lines]
+
+        # Parse this_month_targets
+        month_match = re.search(r"this_month_targets:\s*\n((?:  - .+\n?)+)", content, re.MULTILINE)
+        if month_match:
+            lines = month_match.group(1).strip().split("\n")
+            brief.this_month_targets = [line.strip("- ").strip() for line in lines]
+
+        # Parse campaign
+        campaign_match = re.search(r"campaign:\s*(.+)", content)
+        if campaign_match:
+            brief.campaign = campaign_match.group(1).strip()
+
+        # Parse day
+        day_match = re.search(r"day:\s*(\d+)", content)
+        if day_match:
+            brief.day = int(day_match.group(1))
+
+        return brief
+
+    def _get_pending_obligations(self, agent_id: str) -> List[Any]:
+        """Get pending obligations from omission_engine for agent_id."""
+        store = self.omission_engine.store
+        return store.list_obligations(
+            actor_id=agent_id,
+            status=ObligationStatus.PENDING
+        )
+
+    def _infer_owner(self, obligation_type: str) -> Optional[str]:
+        """Infer owner from obligation_type (simple heuristic)."""
+        type_lower = obligation_type.lower()
+        if any(kw in type_lower for kw in ["ceo", "delegation", "coordination"]):
+            return "ceo"
+        elif any(kw in type_lower for kw in ["cto", "bug", "test", "code"]):
+            return "cto"
+        elif any(kw in type_lower for kw in ["cmo", "content", "blog", "article"]):
+            return "cmo"
+        elif any(kw in type_lower for kw in ["cso", "sales", "lead"]):
+            return "cso"
+        elif any(kw in type_lower for kw in ["cfo", "finance", "token"]):
+            return "cfo"
+        elif "kernel" in type_lower:
+            return "eng-kernel"
+        elif "governance" in type_lower:
+            return "eng-governance"
+        elif "platform" in type_lower:
+            return "eng-platform"
+        elif "domains" in type_lower:
+            return "eng-domains"
+        else:
+            return None
+
+    # ─── Internal helpers (original) ─────────────────────────────────
 
     def _write_event(self, event_type: str, actor: str, params: dict):
         """Write a CIEU event if cieu_store is available. Fail-open."""

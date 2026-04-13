@@ -1,5 +1,5 @@
 """
-tests/test_omission_engine.py — OmissionEngine 幂等性、双阶段超时
+tests/test_omission_engine.py — OmissionEngine 幂等性、双阶段超时、live-reload
 """
 import pytest
 import time
@@ -8,11 +8,14 @@ import uuid
 from ystar.governance.omission_engine import OmissionEngine, EngineResult
 from ystar.governance.omission_models import (
     ObligationRecord, ObligationStatus, GovernanceEvent, GEventType, Severity,
-    RestorationResult,
+    RestorationResult, OmissionType,
 )
 from ystar.governance.omission_store import InMemoryOmissionStore
 from ystar.governance.omission_rules import reset_registry
 from ystar.governance.cieu_store import NullCIEUStore, CIEUStore
+from ystar.governance.obligation_triggers import (
+    ObligationTrigger, TriggerRegistry, reset_trigger_registry
+)
 
 
 def make_obligation(overdue_secs=0, hard_overdue_secs=30.0,
@@ -425,3 +428,181 @@ class TestRestoration:
         expected = now + 4000
         actual = ob.restoration_deadline()
         assert abs(actual - expected) < 1.0  # 允许浮点误差
+
+
+# ── Live-Reload Trigger Registration ────────────────────────────────────────
+
+class TestLiveReload:
+    """Test live-reload: new trigger registration immediately scans pending events."""
+
+    def test_trigger_registration_with_engine_creates_retroactive_obligations(self):
+        """When a new trigger is registered with engine parameter, immediately scan events."""
+        # Setup: create engine with trigger registry
+        store = InMemoryOmissionStore()
+        trigger_registry = reset_trigger_registry()
+        engine = OmissionEngine(
+            store=store,
+            registry=reset_registry(),
+            cieu_store=NullCIEUStore(),
+            trigger_registry=trigger_registry,
+        )
+
+        # Register entity first
+        from ystar.governance.omission_models import TrackedEntity, EntityStatus
+        entity = TrackedEntity(
+            entity_id="session_001",
+            entity_type="session",
+            initiator_id="test_agent",
+            current_owner_id="test_agent",
+            status=EntityStatus.ACTIVE,
+        )
+        store.upsert_entity(entity)
+
+        # Inject a tool_call event BEFORE registering the trigger
+        ev = GovernanceEvent(
+            event_id=uuid.uuid4().hex[:8],
+            event_type="tool_call",
+            entity_id="session_001",
+            actor_id="test_agent",
+            ts=time.time(),
+            payload={
+                "tool_name": "WebSearch",
+                "tool_input": {"query": "governance patterns"},
+                "decision": "ALLOW",
+            }
+        )
+        engine.ingest_event(ev)
+
+        # Verify: no obligations yet (trigger not registered)
+        assert len(store.list_obligations()) == 0
+
+        # NOW: register new trigger with live-reload (pass engine parameter)
+        new_trigger = ObligationTrigger(
+            trigger_id="test_live_reload",
+            trigger_tool_pattern=r"WebSearch",
+            obligation_type=OmissionType.KNOWLEDGE_UPDATE_REQUIRED,
+            description="Test live-reload: knowledge update after WebSearch",
+            target_agent="caller",
+            deadline_seconds=1800,
+            severity="SOFT",
+            fulfillment_event="file_write",
+            required_event_types=["file_write"],
+            enabled=True,
+            deduplicate=True,
+        )
+        trigger_registry.register(new_trigger, engine=engine)
+
+        # Verify: obligation was created retroactively from the earlier event
+        obligations = store.list_obligations()
+        assert len(obligations) == 1
+        ob = obligations[0]
+        assert ob.obligation_type == OmissionType.KNOWLEDGE_UPDATE_REQUIRED
+        assert ob.actor_id == "test_agent"
+        assert ob.entity_id == "session_001"
+        assert ob.triggered_by_event_id == ev.event_id
+
+    def test_live_reload_skips_deny_events(self):
+        """Live-reload only creates obligations for ALLOW decisions, not DENY."""
+        store = InMemoryOmissionStore()
+        trigger_registry = reset_trigger_registry()
+        engine = OmissionEngine(
+            store=store,
+            registry=reset_registry(),
+            cieu_store=NullCIEUStore(),
+            trigger_registry=trigger_registry,
+        )
+
+        # Inject DENY event
+        ev_deny = GovernanceEvent(
+            event_id=uuid.uuid4().hex[:8],
+            event_type="tool_call",
+            entity_id="session_002",
+            actor_id="test_agent",
+            ts=time.time(),
+            payload={
+                "tool_name": "Write",
+                "tool_input": {"file_path": "AGENTS.md"},
+                "decision": "DENY",
+            }
+        )
+        engine.ingest_event(ev_deny)
+
+        # Register trigger
+        trigger_registry.register(
+            ObligationTrigger(
+                trigger_id="write_trigger",
+                trigger_tool_pattern=r"Write",
+                obligation_type=OmissionType.TECHNICAL_REVIEW_REQUIRED,
+                description="Test DENY skip",
+                target_agent="caller",
+                deadline_seconds=3600,
+                severity="SOFT",
+                fulfillment_event="review_complete",
+                required_event_types=["review_complete"],
+            ),
+            engine=engine
+        )
+
+        # Verify: no obligation created (DENY events don't trigger obligations in live-reload)
+        assert len(store.list_obligations()) == 0
+
+    def test_live_reload_deduplicates(self):
+        """Live-reload respects deduplicate flag and doesn't create duplicate obligations."""
+        store = InMemoryOmissionStore()
+        trigger_registry = reset_trigger_registry()
+        engine = OmissionEngine(
+            store=store,
+            registry=reset_registry(),
+            cieu_store=NullCIEUStore(),
+            trigger_registry=trigger_registry,
+        )
+
+        # Register entity first
+        from ystar.governance.omission_models import TrackedEntity, EntityStatus
+        entity = TrackedEntity(
+            entity_id="session_003",
+            entity_type="session",
+            initiator_id="test_agent",
+            current_owner_id="test_agent",
+            status=EntityStatus.ACTIVE,
+        )
+        store.upsert_entity(entity)
+
+        # Inject event
+        ev = GovernanceEvent(
+            event_id=uuid.uuid4().hex[:8],
+            event_type="tool_call",
+            entity_id="session_003",
+            actor_id="test_agent",
+            ts=time.time(),
+            payload={
+                "tool_name": "Edit",
+                "tool_input": {"file_path": "content/blog.md"},
+                "decision": "ALLOW",
+            }
+        )
+        engine.ingest_event(ev)
+
+        # Register trigger (with deduplicate=True)
+        trigger = ObligationTrigger(
+            trigger_id="edit_trigger",
+            trigger_tool_pattern=r"Edit",
+            obligation_type=OmissionType.TECHNICAL_REVIEW_REQUIRED,
+            description="Test deduplication",
+            target_agent="caller",
+            deadline_seconds=7200,
+            severity="SOFT",
+            fulfillment_event="review_complete",
+            required_event_types=["review_complete"],
+            deduplicate=True,
+        )
+        trigger_registry.register(trigger, engine=engine)
+
+        # Verify: obligation created
+        assert len(store.list_obligations()) == 1
+
+        # Try to register same trigger again (simulate re-registration)
+        trigger_registry.register(trigger, engine=engine)
+
+        # Verify: still only 1 obligation (deduplication worked)
+        assert len(store.list_obligations()) == 1

@@ -300,6 +300,115 @@ class OmissionEngine:
             self.store.update_violation(v_ob)
             result.escalated.append(v_ob)
 
+        return result
+
+    def _scan_obligation_type(self, obligation_type: str) -> EngineResult:
+        """
+        Live-reload scan: immediately scan for obligations of a newly registered type.
+
+        Called by TriggerRegistry.register() when a new trigger is added with engine parameter.
+        Scans all entities' recent events to see if any should retroactively create obligations.
+
+        Args:
+            obligation_type: The newly registered obligation type to scan for
+
+        Returns:
+            EngineResult with any newly created obligations
+        """
+        result = EngineResult()
+        now = self._now()
+
+        # Get all triggers for this obligation type
+        if self.trigger_registry is None:
+            return result
+
+        matching_triggers = [
+            t for t in self.trigger_registry.all_enabled()
+            if t.obligation_type == obligation_type
+        ]
+
+        if not matching_triggers:
+            return result
+
+        # Collect all events from all tracked entities
+        # (InMemoryOmissionStore/OmissionStore don't have list_events(), only events_for_entity)
+        all_entities = self.store.list_entities()
+        all_events = []
+        for entity in all_entities:
+            # Get recent events for this entity (last 100 per entity to limit scan cost)
+            entity_events = self.store.events_for_entity(entity.entity_id, limit=100)
+            all_events.extend(entity_events)
+
+        for ev in all_events:
+            # Only check tool_call events (triggers only fire on tool calls)
+            if ev.event_type != "tool_call":
+                continue
+
+            payload = ev.payload or {}
+            tool_name = payload.get("tool_name")
+            tool_input = payload.get("tool_input", {})
+            decision = payload.get("decision", "ALLOW")
+
+            # Only ALLOW decisions create obligations (DENY handled separately)
+            if decision != "ALLOW" or not tool_name:
+                continue
+
+            # Check if this event matches any of the new triggers
+            for trigger in matching_triggers:
+                if not trigger.matches_tool(tool_name):
+                    continue
+                if not trigger.matches_params(tool_input):
+                    continue
+
+                # Found a match - create obligation if not already exists
+                target_actor = trigger.get_target_actor(ev.actor_id)
+
+                # Deduplicate: check if same type already pending for this entity+actor
+                if trigger.deduplicate:
+                    existing = self.store.list_obligations(
+                        entity_id=ev.entity_id,
+                        status=ObligationStatus.PENDING
+                    )
+                    if any(
+                        ob.obligation_type == trigger.obligation_type
+                        and ob.actor_id == target_actor
+                        for ob in existing
+                    ):
+                        continue  # Skip duplicate
+
+                # Create new obligation from trigger
+                ob = ObligationRecord(
+                    obligation_id=str(uuid.uuid4()),
+                    entity_id=ev.entity_id,
+                    obligation_type=trigger.obligation_type,
+                    actor_id=target_actor,
+                    triggered_by_event_id=ev.event_id,
+                    created_at=ev.ts,  # Use original event time
+                    due_at=ev.ts + trigger.deadline_seconds,
+                    effective_due_at=ev.ts + trigger.deadline_seconds,
+                    status=ObligationStatus.PENDING,
+                    severity=Severity[trigger.severity],
+                    required_event_types=trigger.required_event_types or [trigger.fulfillment_event],
+                    description=trigger.description,
+                    grace_period_secs=trigger.grace_period_secs,
+                    hard_overdue_secs=trigger.hard_overdue_secs,
+                    escalation_policy=EscalationPolicy(
+                        escalate_to_hard=trigger.escalate_to_hard,
+                        escalate_after_secs=trigger.hard_overdue_secs,
+                        escalate_to_actor=trigger.escalate_to_actor,
+                        deny_closure_on_open=trigger.deny_closure_on_open,
+                    ),
+                )
+                self.store.add_obligation(ob)
+                result.new_obligations.append(ob)
+
+                _log.info(
+                    f"[OmissionEngine] Live-reload: created {obligation_type} obligation "
+                    f"for retroactive event {ev.event_id[:8]}"
+                )
+            self.store.update_violation(v_ob)
+            result.escalated.append(v_ob)
+
         # 二次扫描 C: 已 EXPIRED 但尚未升级的 obligation（跨 scan 周期的迟到升级）
         for ob in self.store.list_obligations(status=ObligationStatus.EXPIRED):
             if ob.escalated:
