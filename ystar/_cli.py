@@ -24,6 +24,7 @@ Commands:
   ystar policy-builder     Launch local HTML policy builder (port 7921)
   ystar domain             Discover and use domain packs (list|describe|init)
   ystar governance-coverage Show governance coverage report (agent/tool coverage)
+  ystar safemode           Board override mechanism (bypass governance with audit trail)
   ystar version            Show version
 
 Quick start (3 steps to integrate with OpenClaw):
@@ -50,6 +51,7 @@ from ystar.cli.quality_cmd import (
 from ystar.cli.domain_cmd import main_domain_cmd
 from ystar.cli.impact_cmd import _cmd_check_impact
 from ystar.cli.archive_cmd import _cmd_archive_cieu, _cmd_archive
+from ystar.cli.safemode_cmd import safemode as _cmd_safemode
 
 # Backward compatibility: these were previously defined inline
 from ystar.cli.init_cmd import (
@@ -632,13 +634,17 @@ def main() -> None:
     elif cmd == "governance-coverage":
         _cmd_governance_coverage()
 
+    elif cmd == "safemode":
+        # Safemode is a click command, invoke it directly
+        _cmd_safemode(rest)
+
     else:
         print(f"Unknown command: {cmd}\n")
         print("Available commands: demo, setup, hook-install, doctor, verify, report,")
         print("                    seal, policy-builder, audit, check, check-impact,")
         print("                    init, version, simulate, quality, baseline, delta,")
         print("                    trend, domain, archive, archive-cieu, reset-breaker,")
-        print("                    governance-coverage")
+        print("                    governance-coverage, safemode")
         sys.exit(1)
 
 
