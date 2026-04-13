@@ -494,6 +494,7 @@ class OmissionEngine:
         检查新事件是否能履行某些 open obligations。
         匹配条件：entity_id 相同 + event_type 在 required_event_types 中。
         v0.33: 扩展到 PENDING / SOFT_OVERDUE / HARD_OVERDUE 状态。
+        v0.50: Auto-fulfillment via fulfiller event pattern matching (AMENDMENT-012)
         """
         fulfilled = []
         # check all open-status obligations (PENDING + SOFT_OVERDUE + HARD_OVERDUE)
@@ -501,11 +502,26 @@ class OmissionEngine:
         for ob in all_obs:
             if not ob.status.is_open:
                 continue
+
+            # Original fulfillment: exact event_type match
             if ev.event_type in ob.required_event_types:
                 ob.status = ObligationStatus.FULFILLED
                 ob.fulfilled_by_event_id = ev.event_id
                 self.store.update_obligation(ob)
                 fulfilled.append(ob)
+                continue
+
+            # v0.50: Auto-fulfillment via fulfiller pattern matching
+            if self._matches_fulfiller_pattern(ob, ev):
+                ob.status = ObligationStatus.FULFILLED
+                ob.fulfilled_by_event_id = ev.event_id
+                self.store.update_obligation(ob)
+                fulfilled.append(ob)
+                _log.info(
+                    f"[AutoFulfill] Obligation {ob.obligation_id[:8]} ({ob.obligation_type}) "
+                    f"fulfilled by event {ev.event_type} via pattern match"
+                )
+
         return fulfilled
 
     # ── 私有：trigger (ObligationTrigger framework) ──────────────────────────
@@ -819,6 +835,58 @@ class OmissionEngine:
         return now >= (ob.due_at - reminder_secs)
 
     # ── 私有：escalation ───────────────────────────────────────────────────────
+
+    def _matches_fulfiller_pattern(self, ob: ObligationRecord, ev: GovernanceEvent) -> bool:
+        """
+        v0.50: Check if event matches the fulfiller pattern for this obligation type.
+
+        Auto-fulfillment logic (AMENDMENT-012 integration):
+          1. Lookup fulfiller descriptor for obligation_type
+          2. Check if event_type matches fulfillment_event_pattern
+          3. Substitute template variables ($OBLIGATION_ACTOR_ID → ob.actor_id)
+          4. Return True if pattern matches
+
+        Returns:
+            True if event fulfills this obligation via pattern match, False otherwise.
+        """
+        try:
+            # Import fulfiller registry (lazy load to avoid circular dependency)
+            import sys
+            from pathlib import Path
+            ystar_root = Path(__file__).parent.parent.parent
+            sys.path.insert(0, str(ystar_root / "scripts"))
+            from migrate_9_obligation_fulfillers import get_fulfiller_for_type
+        except ImportError:
+            # Fulfiller migration not installed yet
+            return False
+
+        fulfiller = get_fulfiller_for_type(ob.obligation_type)
+        if fulfiller is None or fulfiller.fulfillment_event_pattern is None:
+            return False
+
+        pattern = fulfiller.fulfillment_event_pattern
+
+        # Match event_type (can be single string or list of strings)
+        pattern_event_type = pattern.get("event_type")
+        if pattern_event_type:
+            if isinstance(pattern_event_type, list):
+                if ev.event_type not in pattern_event_type:
+                    return False
+            elif ev.event_type != pattern_event_type:
+                return False
+
+        # Match actor_id with template substitution
+        pattern_actor_id = pattern.get("actor_id")
+        if pattern_actor_id:
+            # Substitute template variable
+            expected_actor_id = pattern_actor_id.replace("$OBLIGATION_ACTOR_ID", ob.actor_id)
+            if ev.actor_id != expected_actor_id:
+                return False
+
+        # Additional pattern fields (future: payload matching, file path matching, etc.)
+        # For MVP: only event_type + actor_id matching
+
+        return True
 
     def _should_escalate(self, ob: ObligationRecord, now: float) -> bool:
         if ob.escalated:
