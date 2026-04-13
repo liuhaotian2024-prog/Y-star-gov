@@ -128,6 +128,38 @@ def _get_immutable_config() -> Tuple[list, list]:
     return patterns, override_roles
 
 
+# ── Safemode Check (AMENDMENT-015 Layer 4) ────────────────────────────────
+def _is_safemode_active(check_name: Optional[str] = None) -> bool:
+    """
+    Check if safemode is active (Board override).
+
+    Args:
+        check_name: Optional check name to bypass (e.g., "restricted_write_paths")
+
+    Returns:
+        True if safemode is active and applies to this check
+    """
+    if os.environ.get("YSTAR_SAFEMODE") != "1":
+        return False
+
+    # Check expiry
+    expires_str = os.environ.get("YSTAR_SAFEMODE_EXPIRES", "0")
+    try:
+        expires = float(expires_str)
+        if time.time() > expires:
+            _log.warning("Safemode expired, governance restored")
+            return False
+    except ValueError:
+        pass
+
+    # Check if specific bypass requested
+    bypass = os.environ.get("YSTAR_SAFEMODE_BYPASS", "")
+    if bypass and check_name and bypass != check_name:
+        return False  # Not bypassing this specific check
+
+    return True
+
+
 # ── 不可变路径检查 ────────────────────────────────────────────────────────
 def _check_immutable_paths(
     tool_name: str, params: dict, who: str = ""
@@ -144,6 +176,11 @@ def _check_immutable_paths(
     Returns:
         None 表示放行，PolicyResult(allowed=False) 表示拦截
     """
+    # Safemode bypass (Layer 4)
+    if _is_safemode_active("immutable_paths"):
+        _log.warning(f"SAFEMODE: Bypassing immutable_paths check for {params.get('file_path', '')}")
+        return None
+
     if tool_name not in _WRITE_TOOLS:
         return None
 

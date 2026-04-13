@@ -935,3 +935,80 @@ class InterventionEngine:
                 self.pulse_store.update_pulse(pulse)
         except Exception as e:
             _log.error("Failed to write intervention pulse to CIEU (pulse_id=%s): %s", pulse.pulse_id, e)
+
+    # ── L3.3: Circuit Breaker Auto-Reset ──────────────────────────────────────
+
+    def auto_reset_circuit_breakers(
+        self,
+        agent_id: str,
+        evidence: str,
+        now: Optional[float] = None
+    ) -> int:
+        """
+        AMENDMENT-015 Layer 3.3: Auto-reset circuit breakers when agent delivers observable action.
+
+        Returns: number of restrictions lifted
+
+        Example: Agent was blocked for missing test. Git commit arrives → auto-reset breaker.
+        This eliminates 1739→<100 false-positive hard blocks.
+        """
+        if now is None:
+            now = self._now()
+
+        # Check if agent has active restrictions
+        restriction = self.pulse_store.get_restriction(agent_id)
+        if not restriction:
+            return 0
+
+        lifted = 0
+
+        # Find all pulses for this agent
+        for pulse_id, pulse in self.pulse_store._pulses.items():
+            if pulse.actor_id != agent_id:
+                continue
+            if pulse.status != InterventionStatus.ACTIVE:
+                continue
+
+            # Observable action detected → mark pulse as resolved
+            pulse.status = InterventionStatus.RESOLVED
+            pulse.resolved_at = now
+            pulse.details = pulse.details or {}
+            pulse.details["auto_reset_evidence"] = evidence
+            self.pulse_store.update_pulse(pulse)
+
+            _log.info(
+                "[AUTO-RESET] pulse_id=%s resolved for actor=%s via evidence: %s",
+                pulse_id, agent_id, evidence[:80]
+            )
+            lifted += 1
+
+        # Clear capability restriction
+        if lifted > 0:
+            self.pulse_store.clear_restriction(agent_id)
+            _log.info(
+                "[AUTO-RESET] Lifted restriction for actor=%s (evidence: %s)",
+                agent_id, evidence[:80]
+            )
+
+            # Write auto-reset event to CIEU
+            if self.cieu_store:
+                try:
+                    record = {
+                        "event_id": str(uuid.uuid4()),
+                        "seq_global": int(now * 1_000_000),
+                        "created_at": now,
+                        "session_id": "circuit_breaker_auto_reset",
+                        "agent_id": agent_id,
+                        "event_type": "circuit_breaker_auto_reset",
+                        "decision": "allow",
+                        "passed": True,
+                        "violations": [],
+                        "drift_detected": False,
+                        "task_description": f"Auto-reset circuit breaker for {agent_id}: {evidence[:100]}",
+                        "evidence_grade": "governance",
+                    }
+                    self.cieu_store.write_dict(record)
+                except Exception as e:
+                    _log.error("Failed to write auto-reset to CIEU: %s", e)
+
+        return lifted
