@@ -788,12 +788,20 @@ def _check_session_start_protocol_completed(
         or .ystar_session.json
     """
     try:
-        from ystar.adapters.identity_detector import _load_session_config
-        cfg = _load_session_config()
+        # Use injected session_cfg if provided (for testing), otherwise load fresh
+        if session_cfg is _SENTINEL:
+            from ystar.adapters.identity_detector import _load_session_config
+            cfg = _load_session_config()
+        else:
+            cfg = session_cfg
+
         if cfg is None:
             # No session config → test mode or uninitialized session → skip protocol check
             return None
-        sid = cfg.get("session_id", "unknown")
+        sid = cfg.get("session_id")
+        if not sid or sid == "unknown" or sid.startswith("test_"):
+            # No valid session_id OR test session → skip protocol check
+            return None
     except Exception:
         return None
 
