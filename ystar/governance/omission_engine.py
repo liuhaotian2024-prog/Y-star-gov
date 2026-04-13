@@ -336,8 +336,9 @@ class OmissionEngine:
         all_events = []
         for entity in all_entities:
             # Get recent events for this entity (last 100 per entity to limit scan cost)
-            entity_events = self.store.events_for_entity(entity.entity_id, limit=100)
-            all_events.extend(entity_events)
+            entity_events = self.store.events_for_entity(entity.entity_id)
+            # Manually limit to last 100 events per entity
+            all_events.extend(entity_events[-100:] if len(entity_events) > 100 else entity_events)
 
         for ev in all_events:
             # Only check tool_call events (triggers only fire on tool calls)
