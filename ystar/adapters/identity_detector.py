@@ -82,15 +82,16 @@ def _detect_agent_id(hook_payload: Dict[str, Any]) -> str:
     """
     从多个来源检测当前操作的 agent 身份。
 
-    优先级：
+    优先级（AMENDMENT-015 Layer 1 更新）：
     1. hook_payload 里的 agent_id 字段
     1.5. hook_payload 里的 agent_type 字段 (Claude Code subagents)
     2. 环境变量 YSTAR_AGENT_ID
     3. 环境变量 CLAUDE_AGENT_NAME（Claude Code 可能设置）
     4. session_id 提取（格式 "agentName_sessionId"）
     5. transcript_path 提取
-    6. .ystar_active_agent 文件（agent 在 session start 时写入）
-    7. 回退到 "agent"
+    6. .ystar_session.json (single source of truth, reads agent_stack)
+    7. DEPRECATED: .ystar_active_agent 文件（向后兼容，优先级降至最低）
+    8. 回退到 "agent"
     """
     # 1. payload
     aid = hook_payload.get("agent_id", "")
@@ -144,18 +145,27 @@ def _detect_agent_id(hook_payload: Dict[str, Any]) -> str:
             return stem
         _log.debug("transcript_path present but no agent name extracted: %s", transcript_path)
 
-    # 6. marker file
+    # 6. session config (Layer 1: single source of truth per AMENDMENT-015)
+    try:
+        from ystar.session import current_agent
+        agent_from_session = current_agent()
+        if agent_from_session != "agent":
+            _log.debug("Agent ID from session config: %s", agent_from_session)
+            return agent_from_session
+    except Exception as e:
+        _log.debug("Failed to read agent from session config: %s", e)
+
+    # 7. DEPRECATED: marker file (.ystar_active_agent)
+    # Kept for backward compatibility during migration, but session config takes precedence
     marker = Path(".ystar_active_agent")
     if marker.exists():
         try:
             content = marker.read_text(encoding="utf-8").strip()
             if content:
-                _log.debug("Agent ID from marker file: %s", content)
+                _log.warning("Agent ID from DEPRECATED marker file (use session config instead): %s", content)
                 return content
         except Exception as e:
             _log.warning("Failed to read agent marker file: %s", e)
-    else:
-        _log.debug("Marker file .ystar_active_agent not found")
 
     _log.debug("All agent ID detection methods failed, falling back to 'agent'")
     return "agent"

@@ -501,3 +501,264 @@ class Policy:
 
         params.update(normalised)
         return params
+
+
+# ── Layer 1: Identity Source of Truth (AMENDMENT-015 Phase 4) ────────
+
+def load_session_config(path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Load .ystar_session.json from disk (single source of truth).
+
+    Args:
+        path: Explicit path to session config. If None, searches current dir.
+
+    Returns:
+        Session config dict, or empty dict if not found.
+    """
+    import json
+
+    if path is None:
+        # Search current directory
+        candidate = _Path(".ystar_session.json")
+        if candidate.exists():
+            path = str(candidate)
+        else:
+            return {}
+
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_session_config(config: Dict[str, Any], path: Optional[str] = None) -> None:
+    """
+    Save session config to .ystar_session.json atomically.
+
+    Args:
+        config: Session config dict
+        path: Explicit path. If None, writes to .ystar_session.json in cwd.
+    """
+    import json
+
+    if path is None:
+        path = ".ystar_session.json"
+
+    # Atomic write: write to temp file, then rename
+    temp_path = f"{path}.tmp"
+    with open(temp_path, 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=2)
+
+    _Path(temp_path).replace(path)
+
+
+def current_agent() -> str:
+    """
+    Get current active agent ID from session config.
+
+    Returns:
+        Agent ID string (e.g., 'ceo', 'cto', 'eng-kernel'), or 'agent' as fallback.
+    """
+    config = load_session_config()
+
+    # Check agent_stack first (top of stack is current agent)
+    agent_stack = config.get("agent_stack", [])
+    if agent_stack:
+        return agent_stack[-1]
+
+    # Fallback to legacy agent_id field
+    agent_id = config.get("agent_id", "")
+    if agent_id:
+        return agent_id
+
+    # Ultimate fallback
+    return "agent"
+
+
+def push_agent(agent_id: str, session_config_path: Optional[str] = None) -> None:
+    """
+    Push new agent onto identity stack (for sub-agent delegation).
+
+    Args:
+        agent_id: Agent ID to activate (e.g., 'cto')
+        session_config_path: Path to session config (None = auto-detect)
+
+    Example:
+        # CEO delegates to CTO
+        push_agent('cto')
+        # Now current_agent() returns 'cto'
+    """
+    config = load_session_config(session_config_path)
+
+    # Initialize agent_stack if not present
+    if "agent_stack" not in config:
+        # Bootstrap from legacy agent_id if present
+        existing = config.get("agent_id", "agent")
+        config["agent_stack"] = [existing]
+
+    # Push new agent
+    config["agent_stack"].append(agent_id)
+
+    # Update legacy agent_id field for backward compatibility
+    config["agent_id"] = agent_id
+
+    save_session_config(config, session_config_path)
+
+    # Emit CIEU event (fail-open)
+    try:
+        from .governance.cieu_store import CIEUStore
+        store = CIEUStore()
+        store.write_dict({
+            "event_type": "AGENT_PUSH",
+            "agent_id": agent_id,
+            "decision": "allow",
+            "evidence_grade": "ops",
+            "params": {"agent_stack": config["agent_stack"]},
+        })
+    except Exception:
+        pass  # fail-open
+
+
+def pop_agent(session_config_path: Optional[str] = None) -> str:
+    """
+    Pop agent from identity stack (restore caller after sub-agent completes).
+
+    Args:
+        session_config_path: Path to session config (None = auto-detect)
+
+    Returns:
+        Restored agent ID (now current)
+
+    Example:
+        # CTO sub-agent completes, restore CEO
+        restored = pop_agent()
+        # Now current_agent() returns 'ceo'
+    """
+    config = load_session_config(session_config_path)
+
+    agent_stack = config.get("agent_stack", [])
+    if not agent_stack:
+        # Nothing to pop, return fallback
+        return "agent"
+
+    if len(agent_stack) == 1:
+        # Don't pop the last agent (root agent must remain)
+        return agent_stack[0]
+
+    # Pop sub-agent
+    popped = agent_stack.pop()
+
+    # Update legacy agent_id field
+    config["agent_id"] = agent_stack[-1]
+
+    save_session_config(config, session_config_path)
+
+    # Emit CIEU event (fail-open)
+    try:
+        from .governance.cieu_store import CIEUStore
+        store = CIEUStore()
+        store.write_dict({
+            "event_type": "AGENT_POP",
+            "agent_id": agent_stack[-1],
+            "decision": "allow",
+            "evidence_grade": "ops",
+            "params": {
+                "popped_agent": popped,
+                "restored_agent": agent_stack[-1],
+                "agent_stack": agent_stack
+            },
+        })
+    except Exception:
+        pass  # fail-open
+
+    return agent_stack[-1]
+
+
+def set_agent(agent_id: str, session_config_path: Optional[str] = None) -> None:
+    """
+    Set agent ID directly (replace entire stack with single agent).
+
+    Use this for initial session setup. For delegation, use push_agent/pop_agent.
+
+    Args:
+        agent_id: Agent ID to set (e.g., 'ceo')
+        session_config_path: Path to session config (None = auto-detect)
+    """
+    config = load_session_config(session_config_path)
+
+    # Replace stack with single agent
+    config["agent_stack"] = [agent_id]
+    config["agent_id"] = agent_id
+
+    save_session_config(config, session_config_path)
+
+    # Emit CIEU event (fail-open)
+    try:
+        from .governance.cieu_store import CIEUStore
+        store = CIEUStore()
+        store.write_dict({
+            "event_type": "AGENT_SET",
+            "agent_id": agent_id,
+            "decision": "allow",
+            "evidence_grade": "ops",
+            "params": {"agent_stack": [agent_id]},
+        })
+    except Exception:
+        pass  # fail-open
+
+
+def check_agent_stack_timeout(timeout_seconds: int = 300, session_config_path: Optional[str] = None) -> bool:
+    """
+    Check if agent_stack is stale (unchanged for > timeout_seconds).
+
+    If stale, auto-pop to root agent. Guards against sub-agent crashes.
+
+    Args:
+        timeout_seconds: Timeout threshold (default 300s = 5min)
+        session_config_path: Path to session config (None = auto-detect)
+
+    Returns:
+        True if stack was stale and auto-popped, False otherwise
+    """
+    config = load_session_config(session_config_path)
+
+    agent_stack = config.get("agent_stack", [])
+    if len(agent_stack) <= 1:
+        # Only root agent, nothing to timeout
+        return False
+
+    # Check last_agent_change timestamp
+    last_change = config.get("agent_stack_last_change", 0)
+    now = time.time()
+
+    if now - last_change > timeout_seconds:
+        # Timeout: reset to root agent
+        root_agent = agent_stack[0]
+        config["agent_stack"] = [root_agent]
+        config["agent_id"] = root_agent
+        config["agent_stack_last_change"] = now
+
+        save_session_config(config, session_config_path)
+
+        # Emit CIEU event
+        try:
+            from .governance.cieu_store import CIEUStore
+            store = CIEUStore()
+            store.write_dict({
+                "event_type": "AGENT_STACK_TIMEOUT",
+                "agent_id": root_agent,
+                "decision": "allow",
+                "evidence_grade": "ops",
+                "params": {
+                    "stale_stack": agent_stack,
+                    "restored_agent": root_agent,
+                    "timeout_seconds": timeout_seconds,
+                },
+            })
+        except Exception:
+            pass  # fail-open
+
+        return True
+
+    return False

@@ -52,11 +52,13 @@ class HookDaemon:
         self._autonomy_driver = None
         self._residual_loop_engine = None
         self._idle_check_thread = None
+        self._file_watch_thread = None
         self._shutdown_flag = False
         self._load_policy()
         self._init_autonomy_driver()
         self._init_residual_loop_engine()
         self._start_idle_monitor()
+        self._start_file_watcher()
 
     def _load_policy(self) -> None:
         """Load policy from AGENTS.md (once at startup)."""
@@ -68,9 +70,9 @@ class HookDaemon:
                      contextlib.redirect_stderr(io.StringIO()):
                     self.policy = Policy.from_agents_md(str(agents_md), confirm=False)
 
-            marker = Path(".ystar_active_agent")
-            if marker.exists():
-                self.agent_id = marker.read_text().strip()
+            # Layer 1: Read agent identity from session config (single source of truth)
+            from ystar.session import current_agent
+            self.agent_id = current_agent()
 
             if self.agent_id and self.policy and self.agent_id not in self.policy:
                 if "agent" in self.policy._rules:
@@ -157,6 +159,43 @@ class HookDaemon:
         self._idle_check_thread = threading.Thread(target=monitor, daemon=True)
         self._idle_check_thread.start()
         _log("Idle monitor started")
+
+    def _start_file_watcher(self) -> None:
+        """
+        Start background thread to watch .ystar_session.json for changes.
+
+        Layer 1 (AMENDMENT-015): Replace mtime-based cache with file watcher.
+        On macOS uses FSEvents (via polling fallback for portability).
+        """
+        def watcher():
+            last_mtime = SESSION_JSON_PATH.stat().st_mtime if SESSION_JSON_PATH.exists() else 0
+
+            while not self._shutdown_flag:
+                time.sleep(2)  # Poll every 2s (FSEvents would be more efficient but requires pyobjc)
+                if self._shutdown_flag:
+                    break
+
+                try:
+                    if SESSION_JSON_PATH.exists():
+                        current_mtime = SESSION_JSON_PATH.stat().st_mtime
+                        if current_mtime > last_mtime:
+                            # File changed, reload agent_id
+                            from ystar.session import current_agent
+                            new_agent_id = current_agent()
+                            if new_agent_id != self.agent_id:
+                                _log(f"Agent ID changed: {self.agent_id} → {new_agent_id}")
+                                self.agent_id = new_agent_id
+                                # Update policy mapping if needed
+                                if self.policy and self.agent_id not in self.policy:
+                                    if "agent" in self.policy._rules:
+                                        self.policy._rules[self.agent_id] = self.policy._rules["agent"]
+                            last_mtime = current_mtime
+                except Exception as e:
+                    _log(f"File watcher error: {e}")
+
+        self._file_watch_thread = threading.Thread(target=watcher, daemon=True)
+        self._file_watch_thread.start()
+        _log("File watcher started (polling .ystar_session.json every 2s)")
 
     def _trigger_idle_pull(self) -> None:
         """Pull next action from AutonomyDriver and emit CIEU event."""
