@@ -54,7 +54,8 @@ only_domains: list[str]
   例："only_domains": ["api.stripe.com", "api.github.com"]
 
 invariant: list[str]
-  对函数输入参数的 Python 布尔表达式（必须满足）
+  对函数输入参数的 Python 布尔表达式
+  默认行为：当参数缺失时 fail-open (不阻止执行)，除非规则显式设置 strict: true
   例："invariant": ["amount > 0", "risk_approved == True"]
 
 optional_invariant: list[str]
