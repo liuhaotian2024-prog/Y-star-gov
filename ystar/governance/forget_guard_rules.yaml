@@ -1,0 +1,11 @@
+# ForgetGuard Rules Schema v0.42
+# Detects agents forgetting organizational principles/hierarchy/constraints after session restart
+
+rules:
+  - name: ceo_direct_engineer_dispatch
+    pattern: "CEO assigns code|git|build|test|pytest|commit task directly to eng-kernel|eng-governance|eng-platform|eng-domains without CTO approval"
+    mode: deny
+    message: "CEO直接派代码任务给工程师。按第三条（hierarchy discipline），必须经CTO分工。"
+    rationale: "AGENTS.md Article 3 — CEO coordinates C-suite, CTO manages engineers. Direct CEO→engineer dispatch bypasses technical leadership and breaks delegation chain."
+    dry_run_until: null  # null = immediately enforce; set to Unix timestamp for grace period
+    created_at: "2026-04-13T16:30:00Z"
