@@ -60,6 +60,59 @@ _PARALLEL_DISPATCH_WINDOW = 60  # seconds: window for detecting serial dispatche
 _SERIAL_DISPATCH_GAP = 30  # seconds: max gap between dispatches to consider "serial"
 
 
+# ── CROBA (Contract-Reinforced Onboarding Boundary Awareness) M6 ─────────────
+def _inject_contract_on_high_risk_write(who: str, file_path: str, tool_name: str):
+    """
+    CROBA M6: Inject full IntentContract rule text into agent prompt on high-risk write.
+
+    When agent attempts write outside allowed paths, inject AGENTS.md contract section
+    into next prompt so agent sees boundary before next action (not after violation).
+
+    Mechanism: Write to /tmp/ystar_contract_inject_{agent}.txt, which hook daemon
+    can append to UserPromptSubmit hook on next turn.
+    """
+    try:
+        # Read agent's contract from AGENTS.md
+        agents_md = Path("/Users/haotianliu/.openclaw/workspace/ystar-company/AGENTS.md")
+        if not agents_md.exists():
+            return
+
+        content = agents_md.read_text()
+
+        # Extract agent's section (simple heuristic: find ## {agent} heading)
+        agent_section = ""
+        in_section = False
+        for line in content.splitlines():
+            if line.startswith("## ") and who.lower() in line.lower():
+                in_section = True
+            elif line.startswith("## ") and in_section:
+                break  # End of agent's section
+            if in_section:
+                agent_section += line + "\n"
+
+        if not agent_section:
+            return
+
+        # Write to injection file
+        inject_file = Path(f"/tmp/ystar_contract_inject_{who}.txt")
+        inject_file.write_text(f"""
+--- BOUNDARY VIOLATION DETECTED —---
+You attempted: {tool_name}("{file_path}")
+This path is OUTSIDE your allowed write scope.
+
+Your contract from AGENTS.md:
+{agent_section}
+
+Before proceeding, verify your action respects your role boundaries.
+If this requires cross-boundary write, delegate to the responsible agent.
+""")
+
+        _log.info(f"[CROBA] Contract injection prepared for {who} at {inject_file}")
+
+    except Exception as e:
+        _log.warning(f"[CROBA] Contract injection failed: {e}")
+
+
 # ── Agent Mode Manager Integration ────────────────────────────────────────────
 def _get_current_mode(agent_id: str = "ceo") -> Dict[str, Any]:
     """
@@ -475,6 +528,9 @@ def _check_write_boundary(
 
     # AMENDMENT-012: Structured remediation for write boundary violations
     from ystar.session import Remediation
+
+    # CROBA (M6): Inject full contract rule text into agent prompt on high-risk write
+    _inject_contract_on_high_risk_write(who, file_path, tool_name)
 
     # Determine which engineer scope this belongs to
     scope_map = {
