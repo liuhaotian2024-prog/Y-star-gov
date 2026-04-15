@@ -331,6 +331,135 @@ class HookDaemon:
         except Exception as e:
             _log(f"[RLE] trigger error: {e}")
 
+    def _compress_subgoal_on_completion(self, task_id: str) -> None:
+        """
+        HiAgent V3: Compress completed subgoal's CIEU transcript into 2-3 line summary.
+        Called by session_close_yml.py or explicit TASK_COMPLETED event.
+
+        Algorithm (spec §1.4):
+        1. Read .czl_subgoals.json → get current_subgoal matching task_id
+        2. Query CIEU for all events with task_id + agent_id + timestamp range
+        3. LLM (claude-3-5-haiku-20241022) compresses to 2-3 lines
+        4. Append to completed[] with {id, goal, summary, duration_min}
+        5. Fail-open: if LLM API fails, write raw Yt+1 + mark [AI_COMPRESS_FAILED]
+        """
+        try:
+            from pathlib import Path
+            import json
+            from datetime import datetime, timezone, timedelta
+
+            czl_path = Path(".czl_subgoals.json")
+            if not czl_path.exists():
+                _log(f"CZL compress skipped: no .czl_subgoals.json")
+                return
+
+            data = json.loads(czl_path.read_text(encoding="utf-8"))
+            current = data.get("current_subgoal")
+
+            if not current or current.get("id") != task_id:
+                _log(f"CZL compress: task_id {task_id} != current {current.get('id') if current else 'None'}")
+                return
+
+            # Query CIEU for task events
+            from ystar.governance.cieu_store import CIEUStore
+            cieu_store = CIEUStore()
+
+            started_ts = current.get("started", "")
+            try:
+                start_dt = datetime.fromisoformat(started_ts.replace("Z", "+00:00"))
+            except:
+                start_dt = datetime.now(timezone.utc) - timedelta(hours=1)  # fallback: last 1h
+
+            end_dt = datetime.now(timezone.utc)
+
+            # Get all CIEU events for this task
+            events = cieu_store.query_events(
+                agent_id=current.get("agent_id"),
+                start_time=start_dt.isoformat(),
+                end_time=end_dt.isoformat()
+            )
+
+            # Extract key state transitions (tool_use success/fail, pivot, Rt+1)
+            transcript_lines = []
+            for ev in events:
+                event_type = ev.get("event_type", "")
+                metadata = ev.get("metadata", {})
+                if event_type in ["TOOL_USE", "PIVOT", "RT1_UPDATE", "TASK_COMPLETED"]:
+                    transcript_lines.append(f"{event_type}: {json.dumps(metadata)[:100]}")
+
+            transcript = "\n".join(transcript_lines[-20:])  # last 20 events only
+
+            # LLM compression (Haiku via Anthropic SDK)
+            try:
+                import anthropic
+                client = anthropic.Anthropic()  # Uses ANTHROPIC_API_KEY from env
+
+                compression_prompt = f"""Compress this task transcript into 2-3 lines. Include: what shipped [LX maturity], key blockers overcome, measurable outcome.
+
+Task: {current.get('goal')}
+
+Transcript (last 20 CIEU events):
+{transcript}
+
+Example format:
+"hook_session_start.py 加 _append_yml_memories 载 15 CEO memories; hook_session_end.py 调 session_close_yml.py; settings.json 加 SessionEnd hook. 4/4 E2E 过. [L3]"
+
+Output ONLY the 2-3 line summary, nothing else."""
+
+                response = client.messages.create(
+                    model="claude-3-5-haiku-20241022",
+                    max_tokens=200,
+                    messages=[{"role": "user", "content": compression_prompt}]
+                )
+
+                summary = response.content[0].text.strip()
+
+                # Vague summary detection (spec §4.2)
+                import re
+                concrete_nouns = re.findall(r'\b[A-Z]\w+|\b\w+\.(py|sh|json|md)\b|\b\d+\b', summary)
+                if len(concrete_nouns) < 3:
+                    summary = f"{summary} [SUMMARY_VAGUE]"
+                    _log(f"CZL compress: vague summary detected for {task_id}")
+
+            except Exception as llm_err:
+                _log(f"CZL compress LLM failed: {llm_err}")
+                # Fail-open: use raw goal text
+                summary = f"{current.get('goal', 'task completed')} [AI_COMPRESS_FAILED]"
+
+            # Calculate duration
+            duration_min = int((end_dt - start_dt).total_seconds() / 60)
+
+            # Append to completed[]
+            completed_entry = {
+                "id": task_id,
+                "goal": current.get("goal"),
+                "summary": summary,
+                "duration_min": duration_min
+            }
+
+            if "completed" not in data:
+                data["completed"] = []
+            data["completed"].append(completed_entry)
+
+            # Clear current_subgoal (CEO must explicitly push next)
+            data["current_subgoal"] = None
+
+            # Write back
+            czl_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+            # Emit CIEU event
+            self._write_cieu_event("SUBGOAL_COMPRESSED", {
+                "task_id": task_id,
+                "summary": summary,
+                "duration_min": duration_min
+            })
+
+            _log(f"CZL compress: {task_id} → completed[] ({duration_min} min)")
+
+        except Exception as e:
+            _log(f"CZL compress error: {e}")
+            # Fail-open: do not crash daemon
+
     def _update_last_message_time(self, payload: dict) -> None:
         """Update last user message timestamp. Reset idle timer on user interaction."""
         # Check if this is a user-initiated message (not autonomous action)
@@ -345,6 +474,15 @@ class HookDaemon:
         t0 = time.perf_counter()
         try:
             payload = json.loads(payload_json)
+
+            # HiAgent V4: Handle compress_subgoal action (from session_close_yml.py)
+            if payload.get("action") == "compress_subgoal":
+                task_id = payload.get("task_id")
+                if task_id:
+                    self._compress_subgoal_on_completion(task_id)
+                    return json.dumps({"status": "compression_triggered", "task_id": task_id})
+                else:
+                    return json.dumps({"error": "missing_task_id"})
 
             # Update last message timestamp (reset idle timer)
             self._update_last_message_time(payload)
