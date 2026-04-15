@@ -272,3 +272,98 @@ class ContractLifecycle:
         if draft and draft.contract:
             return getattr(draft.contract, 'hash', '') or ''
         return ''
+
+
+# ============================================================================
+# Y* Schema v2 — CZL Persistence Extension (W5, Phase 2)
+# ============================================================================
+
+VALID_ARTIFACT_PERSISTENCE = [
+    "commit_to_origin",
+    "referenced_in_covenant",
+    "tagged_in_genesis",
+    "none_ephemeral"
+]
+
+VALID_FRESHNESS_POLICY = [
+    "never_deprecate",
+    "stale_at_7d",
+    "stale_at_30d",
+    "tied_to_campaign"
+]
+
+VALID_AGENT_IDS = [
+    "ceo", "cto", "cmo", "cso", "cfo",
+    "eng-kernel", "eng-governance", "eng-platform", "eng-domains",
+    "secretary"
+]
+
+
+def validate_y_star_schema_v2(contract_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Validate that a Y* contract satisfies Schema v2 requirements.
+
+    Schema v2 adds three mandatory fields to prevent artifact loss:
+    - artifact_persistence: list of persistence methods
+    - freshness_policy: when the Y* becomes stale
+    - owner_after_rt1: who owns the artifact after Rt+1=0
+
+    Args:
+        contract_dict: Y* contract to validate
+
+    Returns:
+        {
+            "valid": bool,
+            "missing": list of missing field names,
+            "invalid": dict of {field: reason}
+        }
+    """
+    result = {
+        "valid": True,
+        "missing": [],
+        "invalid": {}
+    }
+
+    # Check artifact_persistence
+    if "artifact_persistence" not in contract_dict:
+        result["valid"] = False
+        result["missing"].append("artifact_persistence")
+    else:
+        ap = contract_dict["artifact_persistence"]
+        if not isinstance(ap, list):
+            result["valid"] = False
+            result["invalid"]["artifact_persistence"] = "must be a list"
+        else:
+            invalid_values = [v for v in ap if v not in VALID_ARTIFACT_PERSISTENCE]
+            if invalid_values:
+                result["valid"] = False
+                result["invalid"]["artifact_persistence"] = (
+                    f"invalid values: {invalid_values}. "
+                    f"Must be in {VALID_ARTIFACT_PERSISTENCE}"
+                )
+
+    # Check freshness_policy
+    if "freshness_policy" not in contract_dict:
+        result["valid"] = False
+        result["missing"].append("freshness_policy")
+    else:
+        fp = contract_dict["freshness_policy"]
+        if fp not in VALID_FRESHNESS_POLICY:
+            result["valid"] = False
+            result["invalid"]["freshness_policy"] = (
+                f"'{fp}' not in {VALID_FRESHNESS_POLICY}"
+            )
+
+    # Check owner_after_rt1
+    if "owner_after_rt1" not in contract_dict:
+        result["valid"] = False
+        result["missing"].append("owner_after_rt1")
+    else:
+        owner = contract_dict["owner_after_rt1"]
+        if owner not in VALID_AGENT_IDS:
+            result["valid"] = False
+            result["invalid"]["owner_after_rt1"] = (
+                f"'{owner}' not in {VALID_AGENT_IDS}"
+            )
+
+    return result
