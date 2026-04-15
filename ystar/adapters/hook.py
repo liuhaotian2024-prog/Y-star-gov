@@ -623,6 +623,37 @@ def check_hook(
                         ],
                     }
 
+    # ── LESSON_READ tracking (Maya 2026-04-15, 蒸馏 verification Layer 1) ──
+    # 匹配 knowledge/*/lessons/*.md, emit LESSON_READ CIEU event
+    if tool_name == "Read":
+        _file_path = params_early.get("file_path", "")
+        if _file_path and "/lessons/" in _file_path and _file_path.endswith(".md"):
+            try:
+                import re as _re
+                with open(_file_path, "r", encoding="utf-8") as _f:
+                    _content = _f.read(500)
+                _fm = _re.match(r'^---\n(.*?)\n---', _content, _re.DOTALL)
+                if _fm:
+                    _id_m = _re.search(r'^lesson_id:\s*(\S+)', _fm.group(1), _re.MULTILINE)
+                    if _id_m:
+                        _cieu_db = ".ystar_cieu.db"
+                        _scfg = _load_session_config_cached()
+                        if _scfg:
+                            _cieu_db = _scfg.get("cieu_db", _cieu_db)
+                        from ystar.governance.cieu_store import CIEUStore as _CS_LR
+                        _CS_LR(_cieu_db).write_dict({
+                            "session_id": session_id_payload or "unknown",
+                            "agent_id": who,
+                            "event_type": "LESSON_READ",
+                            "decision": "allow",
+                            "passed": True,
+                            "file_path": _file_path,
+                            "evidence_grade": "action",
+                            "params_json": '{"lesson_id":"' + _id_m.group(1) + '"}',
+                        })
+            except Exception:
+                pass  # fail-open for observability path
+
     # ── I1: 外部CLAUDE.md读取检测 ──────────────────────────────────
     if tool_name == "Read":
         file_path = params_early.get("file_path", "")
