@@ -680,6 +680,30 @@ def check_hook(
         except ImportError as e:
             _log.warning("[router-bridge] fail-open (cannot import router): %s", e)
 
+    # ── CEO AVOIDANCE DRIFT enforcement (Board 2026-04-14: CIEU always-on) ──
+    # spec: reports/ceo_avoidance_enforcement_20260414.md
+    # 行: hook 层 enforce CEO 不许出 "推别的"/"换到"/"defer"/"重启" 等 phrase
+    if result.allowed and who == "ceo":
+        AVOIDANCE_PHRASES = [
+            "推别的", "推下一个", "换到", "或者先", "你决定", "让 Board 定",
+            "让 board 定", "defer", "等下次", "session 结束", "可以重启",
+            "/clear", "清 context", "/restart",
+        ]
+        scan_text = " ".join(
+            str(v) for v in params.values() if isinstance(v, (str, int, float))
+        )[:8000]
+        scan_lower = scan_text.lower()
+        for phrase in AVOIDANCE_PHRASES:
+            if phrase.lower() in scan_lower:
+                result = PolicyResult(
+                    allowed=False,
+                    reason=f"CEO_AVOIDANCE_DRIFT: phrase '{phrase}' detected. Continue current task or escalate per ceo_avoidance_enforcement_20260414.md.",
+                )
+                _log.warning("[avoidance] CEO blocked on phrase '%s' in %s tool", phrase, tool_name)
+                _write_cieu(who, tool_name, params, result,
+                            session_id_payload or "unknown", contract_hash, cieu_db)
+                break
+
     # ── NEW: Process obligation triggers after check() ──────────────────────
     # If the check passed (ALLOW), check for any triggered obligations
     if result.allowed:
