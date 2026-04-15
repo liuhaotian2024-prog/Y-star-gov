@@ -24,6 +24,7 @@ import sys
 import contextlib
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -162,13 +163,27 @@ class HookDaemon:
 
     def _start_file_watcher(self) -> None:
         """
-        Start background thread to watch .ystar_session.json for changes.
+        Start background thread to watch governance files for changes.
 
-        Layer 1 (AMENDMENT-015): Replace mtime-based cache with file watcher.
-        On macOS uses FSEvents (via polling fallback for portability).
+        Monitors:
+        - .ystar_session.json (agent_id changes)
+        - .ystar_active_agent (active agent changes)
+        - AGENTS.md (policy rule changes)
+
+        On change: invalidate daemon caches, reload identity/policy.
+        Layer 1 (AMENDMENT-015 + exp7 backport): Eliminates daemon cache lock.
+        Fail-open: watcher errors do not crash daemon.
         """
         def watcher():
-            last_mtime = SESSION_JSON_PATH.stat().st_mtime if SESSION_JSON_PATH.exists() else 0
+            # Track mtimes for all three files
+            agents_md = Path("AGENTS.md")
+            active_agent = Path(".ystar_active_agent")
+
+            mtimes = {
+                "session_json": SESSION_JSON_PATH.stat().st_mtime if SESSION_JSON_PATH.exists() else 0,
+                "agents_md": agents_md.stat().st_mtime if agents_md.exists() else 0,
+                "active_agent": active_agent.stat().st_mtime if active_agent.exists() else 0,
+            }
 
             while not self._shutdown_flag:
                 time.sleep(2)  # Poll every 2s (FSEvents would be more efficient but requires pyobjc)
@@ -176,26 +191,53 @@ class HookDaemon:
                     break
 
                 try:
+                    # Check .ystar_session.json
                     if SESSION_JSON_PATH.exists():
                         current_mtime = SESSION_JSON_PATH.stat().st_mtime
-                        if current_mtime > last_mtime:
+                        if current_mtime > mtimes["session_json"]:
                             # File changed, reload agent_id
                             from ystar.session import current_agent
                             new_agent_id = current_agent()
                             if new_agent_id != self.agent_id:
-                                _log(f"Agent ID changed: {self.agent_id} → {new_agent_id}")
+                                _log(f"[watcher] Agent ID changed: {self.agent_id} → {new_agent_id}")
                                 self.agent_id = new_agent_id
                                 # Update policy mapping if needed
                                 if self.policy and self.agent_id not in self.policy:
                                     if "agent" in self.policy._rules:
                                         self.policy._rules[self.agent_id] = self.policy._rules["agent"]
-                            last_mtime = current_mtime
+                            mtimes["session_json"] = current_mtime
+
+                    # Check AGENTS.md
+                    if agents_md.exists():
+                        current_mtime = agents_md.stat().st_mtime
+                        if current_mtime > mtimes["agents_md"]:
+                            _log(f"[watcher] AGENTS.md changed, reloading policy")
+                            self._load_policy()  # Full policy reload
+                            mtimes["agents_md"] = current_mtime
+
+                    # Check .ystar_active_agent
+                    if active_agent.exists():
+                        current_mtime = active_agent.stat().st_mtime
+                        if current_mtime > mtimes["active_agent"]:
+                            # Active agent file changed, reload agent_id
+                            from ystar.session import current_agent
+                            new_agent_id = current_agent()
+                            if new_agent_id != self.agent_id:
+                                _log(f"[watcher] Active agent file changed: {self.agent_id} → {new_agent_id}")
+                                self.agent_id = new_agent_id
+                                # Update policy mapping if needed
+                                if self.policy and self.agent_id not in self.policy:
+                                    if "agent" in self.policy._rules:
+                                        self.policy._rules[self.agent_id] = self.policy._rules["agent"]
+                            mtimes["active_agent"] = current_mtime
+
                 except Exception as e:
-                    _log(f"File watcher error: {e}")
+                    # Fail-open: log error but don't crash daemon
+                    _log(f"[watcher] ERROR: {e}")
 
         self._file_watch_thread = threading.Thread(target=watcher, daemon=True)
         self._file_watch_thread.start()
-        _log("File watcher started (polling .ystar_session.json every 2s)")
+        _log("File watcher started (polling session.json/AGENTS.md/.ystar_active_agent every 2s)")
 
     def _trigger_idle_pull(self) -> None:
         """Pull next action from AutonomyDriver and emit CIEU event."""
@@ -341,6 +383,15 @@ class HookDaemon:
             if self._residual_loop_engine and payload.get("hook_timing") == "PostToolUse":
                 self._trigger_residual_loop(payload, ygov_result)
 
+            # AMENDMENT-018: Whitelist MATCH/DRIFT emission (async, fail-open)
+            # Check Bash commands against whitelist and emit CIEU events
+            if payload.get("tool_name") == "Bash" and cmd:
+                threading.Thread(
+                    target=self._check_whitelist_async,
+                    args=(cmd, self.agent_id),
+                    daemon=True
+                ).start()
+
             response = convert_ygov_result(ygov_result, host)
             elapsed_ms = (time.perf_counter() - t0) * 1000
 
@@ -351,6 +402,14 @@ class HookDaemon:
             elapsed_ms = (time.perf_counter() - t0) * 1000
             _log(f"  {elapsed_ms:.1f}ms ERROR: {e}")
             return "{}"
+
+    def _check_whitelist_async(self, command: str, agent_id: str) -> None:
+        """Async whitelist check + CIEU emission (AMENDMENT-018)."""
+        try:
+            from ystar._whitelist_emit import check_whitelist_and_emit
+            check_whitelist_and_emit(command, agent_id)
+        except Exception as e:
+            _log(f"[WHITELIST] emit error: {e}")
 
     def _extract_action_description(self, payload: dict) -> Optional[str]:
         """Extract meaningful action description from tool payload."""

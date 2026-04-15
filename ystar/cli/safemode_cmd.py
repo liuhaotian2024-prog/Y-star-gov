@@ -28,7 +28,7 @@ def _get_cieu_db() -> Optional[Path]:
     """Find CIEU database path."""
     candidates = [
         Path.cwd() / ".ystar_cieu.db",
-        Path("/Users/haotianliu/.openclaw/workspace/ystar-company/.ystar_cieu.db"),
+        Path(os.path.expanduser("~/.openclaw/workspace/ystar-company/.ystar_cieu.db")),
     ]
     for c in candidates:
         if c.exists():
@@ -190,7 +190,7 @@ def _restore_agent_identity(target_agent: str, justification: str):
     session_config = None
     candidates = [
         Path.cwd() / ".ystar_session.json",
-        Path("/Users/haotianliu/.openclaw/workspace/ystar-company/.ystar_session.json"),
+        Path(os.path.expanduser("~/.openclaw/workspace/ystar-company/.ystar_session.json")),
     ]
     for c in candidates:
         if c.exists():

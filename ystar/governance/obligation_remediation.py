@@ -1,3 +1,4 @@
+import os
 # Layer: Foundation
 """
 ystar.governance.obligation_remediation — Obligation-specific Remediation Payloads
@@ -37,7 +38,7 @@ OBLIGATION_REMEDIATION_MAP: Dict[str, Remediation] = {
         correct_steps=[
             "# If you just responded but hook blocked: wait 5-10s for heartbeat auto-ack to process",
             "# If urgent and heartbeat hasn't caught up:",
-            'python3 -c "import sys; sys.path.insert(0, \\"/Users/haotianliu/.openclaw/workspace/ystar-company\\"); from tools.cieu.ygva.governor import emit_event; emit_event(\\"DIRECTIVE_ACKNOWLEDGED\\", {\\"source\\": \\"ceo\\", \\"directive_id\\": \\"<Board_message_id>\\"})"',
+            'python3 -c "import sys; sys.path.insert(0, \\os.path.expanduser("~/.openclaw/workspace/ystar-company\\")); from tools.cieu.ygva.governor import emit_event; emit_event(\\"DIRECTIVE_ACKNOWLEDGED\\", {\\"source\\": \\"ceo\\", \\"directive_id\\": \\"<Board_message_id>\\"})"',
             "# If daemon still blocking after emit: pkill -f _hook_daemon.py (LaunchAgent will auto-restart with fresh state)",
         ],
         skill_ref="knowledge/ceo/skills/respond_within_sla.md",

@@ -1,3 +1,4 @@
+import os
 # Layer: Foundation
 """
 ystar.adapters.activation_triggers  —  Proactive Skill Activation Registry  v0.49.0
@@ -319,7 +320,7 @@ def _load_skill_content(skill_id: str) -> Optional[str]:
         Skill content (markdown) or None if file not found
     """
     # Resolve against ystar-company workspace
-    workspace = Path("/Users/haotianliu/.openclaw/workspace/ystar-company")
+    workspace = Path(os.path.expanduser("~/.openclaw/workspace/ystar-company"))
     skill_path = workspace / skill_id
 
     if not skill_path.exists():

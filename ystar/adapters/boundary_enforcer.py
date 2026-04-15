@@ -73,7 +73,7 @@ def _inject_contract_on_high_risk_write(who: str, file_path: str, tool_name: str
     """
     try:
         # Read agent's contract from AGENTS.md
-        agents_md = Path("/Users/haotianliu/.openclaw/workspace/ystar-company/AGENTS.md")
+        agents_md = Path(os.path.expanduser("~/.openclaw/workspace/ystar-company/AGENTS.md"))
         if not agents_md.exists():
             return
 
@@ -126,7 +126,7 @@ def _get_current_mode(agent_id: str = "ceo") -> Dict[str, Any]:
     """
     import json
 
-    mode_file = Path(f"/Users/haotianliu/.openclaw/workspace/ystar-company/.ystar_{agent_id}_mode.json")
+    mode_file = Path(fos.path.expanduser("~/.openclaw/workspace/ystar-company/.ystar_{agent_id}_mode.json"))
 
     if not mode_file.exists():
         return {
@@ -499,16 +499,16 @@ def _check_write_boundary(
             # Expand CEO write paths
             expanded = list(allowed)
             autonomous_paths = [
-                "/Users/haotianliu/.openclaw/workspace/Y-star-gov/",
-                "/Users/haotianliu/.openclaw/workspace/gov-mcp/",
-                "/Users/haotianliu/.openclaw/workspace/ystar-company/scripts/"
+                os.path.expanduser("~/.openclaw/workspace/Y-star-gov/"),
+                os.path.expanduser("~/.openclaw/workspace/gov-mcp/"),
+                os.path.expanduser("~/.openclaw/workspace/ystar-company/scripts/")
             ]
             for p in autonomous_paths:
                 if p not in expanded:
                     expanded.append(p)
 
             if mode == "break_glass":
-                break_glass_path = "/Users/haotianliu/.openclaw/workspace/ystar-company/.claude/agents/"
+                break_glass_path = os.path.expanduser("~/.openclaw/workspace/ystar-company/.claude/agents/")
                 if break_glass_path not in expanded:
                     expanded.append(break_glass_path)
 

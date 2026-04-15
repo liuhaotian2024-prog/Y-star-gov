@@ -83,7 +83,7 @@ class CapabilityEngine:
             # Auto-detect session config
             candidates = [
                 Path.cwd() / ".ystar_session.json",
-                Path("/Users/haotianliu/.openclaw/workspace/ystar-company/.ystar_session.json"),
+                Path(os.path.expanduser("~/.openclaw/workspace/ystar-company/.ystar_session.json")),
             ]
             for c in candidates:
                 if c.exists():
