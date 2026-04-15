@@ -985,7 +985,7 @@ def _check_hook_full(
                 _log.warning("[avoidance-full] CEO blocked on phrase '%s' in %s tool", phrase, tool_name)
                 cieu_db = session_cfg.get("cieu_db", ".ystar_cieu.db") if session_cfg else ".ystar_cieu.db"
                 contract = policy._rules.get(who)
-                deny_result = PolicyResult(allowed=False, reason=deny_msg)
+                deny_result = PolicyResult(allowed=False, reason=deny_msg, who=who, what=tool_name)
                 _write_cieu(who, tool_name, params, deny_result,
                             session_id, contract.hash if contract else "", cieu_db)
                 return {"action": "block", "message": f"[Y*] {deny_msg}"}
