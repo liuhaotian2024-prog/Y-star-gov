@@ -126,7 +126,7 @@ def _get_current_mode(agent_id: str = "ceo") -> Dict[str, Any]:
     """
     import json
 
-    mode_file = Path(fos.path.expanduser("~/.openclaw/workspace/ystar-company/.ystar_{agent_id}_mode.json"))
+    mode_file = Path(os.path.expanduser(f"~/.openclaw/workspace/ystar-company/.ystar_{agent_id}_mode.json"))
 
     if not mode_file.exists():
         return {

@@ -926,6 +926,29 @@ def _check_hook_full(
     # ── Orchestrator: feed advanced governance subsystems (ALLOW path) ────
     _run_orchestrator(who, tool_name, params, decision, session_cfg)
 
+    # ── CEO AVOIDANCE DRIFT enforcement (FULL PATH, Ethan 2026-04-15 stress test P0 fix) ──
+    # Bug: commit 4997d6c only added AVOIDANCE to light path; full path early-returned never reaching it
+    if who == "ceo":
+        AVOIDANCE_PHRASES = [
+            "推别的", "推下一个", "换到", "或者先", "你决定", "让 Board 定",
+            "让 board 定", "defer", "等下次", "session 结束", "可以重启",
+            "/clear", "清 context", "/restart",
+        ]
+        scan_text = " ".join(
+            str(v) for v in params.values() if isinstance(v, (str, int, float))
+        )[:8000]
+        scan_lower = scan_text.lower()
+        for phrase in AVOIDANCE_PHRASES:
+            if phrase.lower() in scan_lower:
+                deny_msg = f"CEO_AVOIDANCE_DRIFT: phrase '{phrase}' detected (full path). Continue current task or escalate per ceo_avoidance_enforcement_20260414.md."
+                _log.warning("[avoidance-full] CEO blocked on phrase '%s' in %s tool", phrase, tool_name)
+                cieu_db = session_cfg.get("cieu_db", ".ystar_cieu.db") if session_cfg else ".ystar_cieu.db"
+                contract = policy._rules.get(who)
+                deny_result = PolicyResult(allowed=False, reason=deny_msg)
+                _write_cieu(who, tool_name, params, deny_result,
+                            session_id, contract.hash if contract else "", cieu_db)
+                return {"action": "block", "message": f"[Y*] {deny_msg}"}
+
     # ── Path B: feed observation for metalearning ────────────────────────
     _feed_path_b(who, tool_name, params, {}, session_id)
 
