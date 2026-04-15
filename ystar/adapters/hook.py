@@ -731,6 +731,8 @@ def check_hook(
                     result = PolicyResult(
                         allowed=False,
                         reason=f"router._WRITE_PATTERNS matched: {pat.pattern}",
+                        who=who,
+                        what=tool_name,
                     )
                     _log.warning("[router-bridge] blocked by %s: %s", pat.pattern, command[:80])
                     # Re-write CIEU as deny
@@ -763,6 +765,8 @@ def check_hook(
                 result = PolicyResult(
                     allowed=False,
                     reason=f"CEO_AVOIDANCE_DRIFT: phrase '{phrase}' detected. Continue current task or escalate per ceo_avoidance_enforcement_20260414.md.",
+                    who=who,
+                    what=tool_name,
                 )
                 _log.warning("[avoidance] CEO blocked on phrase '%s' in %s tool", phrase, tool_name)
                 _write_cieu(who, tool_name, params, result,
@@ -790,6 +794,8 @@ def check_hook(
             result = PolicyResult(
                 allowed=False,
                 reason=f"CIEU_MARKER_MISSING: Iron Rule 1.6 requires CIEU 5-tuple markers (Y*/Xt/U/Yt+1/Rt+1) in tool call. Found {markers_found}. Unified protocol §7 mandatory per Board 2026-04-15.",
+                who=who,
+                what=tool_name,
             )
             _log.warning("[cieu-marker] %s blocked: only %d/4 markers found in %s tool",
                          who, len(markers_found), tool_name)
