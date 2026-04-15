@@ -291,3 +291,122 @@ class NarrativeCoherenceDetector:
             })
         except Exception as e:
             _log.error(f"Failed to write narrative gap to CIEU: {e}")
+
+
+# ============================================================================
+# W7 Phase 2: Prompt Gate — Subgoal Coherence Check
+# ============================================================================
+
+def check_ceo_output_vs_subgoal(
+    reply_text: str,
+    subgoal_file: str = ".czl_subgoals.json"
+) -> dict:
+    """
+    Check if CEO's reply text aligns with current subgoal.
+
+    W7 Phase 2: Prevents subgoal drift where agent works on X while current_subgoal says Y.
+    This is a WARN-level check (does not block), emits CIEU event for drift.
+
+    Args:
+        reply_text: CEO's output text to check
+        subgoal_file: Path to .czl_subgoals.json
+
+    Returns:
+        {
+            "aligned": bool,
+            "drift_score": float (0.0 = perfect alignment, 1.0 = complete drift),
+            "warnings": [str],
+            "current_subgoal": str (for reference)
+        }
+    """
+    import json
+    import os
+    from pathlib import Path
+
+    result = {
+        "aligned": True,
+        "drift_score": 0.0,
+        "warnings": [],
+        "current_subgoal": ""
+    }
+
+    # Load current subgoal
+    subgoal_path = Path(subgoal_file)
+    if not subgoal_path.exists():
+        result["warnings"].append(f"{subgoal_file} not found")
+        result["drift_score"] = 0.5  # Unknown state
+        return result
+
+    try:
+        with open(subgoal_path) as f:
+            subgoal_data = json.load(f)
+    except Exception as e:
+        result["warnings"].append(f"Cannot parse {subgoal_file}: {e}")
+        result["drift_score"] = 0.5
+        return result
+
+    current_subgoal = subgoal_data.get("current_subgoal", {})
+    if not current_subgoal:
+        result["warnings"].append("No current_subgoal defined")
+        result["drift_score"] = 0.5
+        return result
+
+    goal_text = current_subgoal.get("goal", "")
+    result["current_subgoal"] = goal_text
+
+    if not goal_text:
+        result["warnings"].append("current_subgoal.goal is empty")
+        result["drift_score"] = 0.5
+        return result
+
+    # Extract keywords from goal (simple keyword density approach)
+    # This is intentionally simple — we want fast, high-recall detection
+    goal_keywords = set(
+        word.lower()
+        for word in re.findall(r'\b[a-z_]{3,}\b', goal_text.lower())
+        if word not in {'the', 'and', 'for', 'with', 'from', 'that', 'this', 'are', 'was'}
+    )
+
+    reply_keywords = set(
+        word.lower()
+        for word in re.findall(r'\b[a-z_]{3,}\b', reply_text.lower())
+        if word not in {'the', 'and', 'for', 'with', 'from', 'that', 'this', 'are', 'was'}
+    )
+
+    if not goal_keywords:
+        # Can't determine alignment if goal has no keywords
+        result["drift_score"] = 0.0
+        return result
+
+    # Keyword overlap ratio
+    overlap = goal_keywords & reply_keywords
+    overlap_ratio = len(overlap) / len(goal_keywords) if goal_keywords else 1.0
+
+    # drift_score = 1 - overlap_ratio (inverted)
+    drift_score = 1.0 - overlap_ratio
+
+    # Additional checks for artifact_persistence
+    y_star_criteria = subgoal_data.get("y_star_criteria", [])
+    if isinstance(y_star_criteria, list) and y_star_criteria:
+        # Check if any criterion mentions artifact_persistence and reply doesn't
+        for criterion in y_star_criteria:
+            if isinstance(criterion, dict):
+                persistence = criterion.get("artifact_persistence", [])
+                if persistence and "commit" in str(persistence).lower():
+                    # If criterion requires commit but reply doesn't mention it
+                    if "commit" not in reply_text.lower() and "git" not in reply_text.lower():
+                        result["warnings"].append(
+                            f"Criterion requires commit to origin but reply doesn't mention commit/git"
+                        )
+                        drift_score += 0.2  # Boost drift score
+
+    result["drift_score"] = min(drift_score, 1.0)  # Cap at 1.0
+
+    if drift_score > 0.7:
+        result["aligned"] = False
+        result["warnings"].append(
+            f"High drift detected: only {overlap_ratio*100:.1f}% keyword overlap "
+            f"with current subgoal '{goal_text[:60]}...'"
+        )
+
+    return result
