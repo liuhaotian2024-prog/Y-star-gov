@@ -745,9 +745,14 @@ def check_hook(
     # 行: hook 层 enforce CEO 不许出 "推别的"/"换到"/"defer"/"重启" 等 phrase
     if result.allowed and who == "ceo":
         AVOIDANCE_PHRASES = [
+            # Original 14 (CEO_AVOIDANCE_DRIFT, 2026-04-14):
             "推别的", "推下一个", "换到", "或者先", "你决定", "让 Board 定",
             "让 board 定", "defer", "等下次", "session 结束", "可以重启",
             "/clear", "清 context", "/restart",
+            # Extended 2026-04-15 (IR 1.8 candidate CEO_TIME_CONCESSION_DRIFT):
+            "明早", "明天", "今天先", "今天到此", "先到这里", "先停",
+            "等会儿", "稍后", "过几小时", "下 session", "下个 session", "等到明",
+            "推到明天", "先休息", "明日",
         ]
         scan_text = " ".join(
             str(v) for v in params.values() if isinstance(v, (str, int, float))
@@ -961,9 +966,14 @@ def _check_hook_full(
     # Bug: commit 4997d6c only added AVOIDANCE to light path; full path early-returned never reaching it
     if who == "ceo":
         AVOIDANCE_PHRASES = [
+            # Original 14 (CEO_AVOIDANCE_DRIFT, 2026-04-14):
             "推别的", "推下一个", "换到", "或者先", "你决定", "让 Board 定",
             "让 board 定", "defer", "等下次", "session 结束", "可以重启",
             "/clear", "清 context", "/restart",
+            # Extended 2026-04-15 (IR 1.8 candidate CEO_TIME_CONCESSION_DRIFT):
+            "明早", "明天", "今天先", "今天到此", "先到这里", "先停",
+            "等会儿", "稍后", "过几小时", "下 session", "下个 session", "等到明",
+            "推到明天", "先休息", "明日",
         ]
         scan_text = " ".join(
             str(v) for v in params.values() if isinstance(v, (str, int, float))
