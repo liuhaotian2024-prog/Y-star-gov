@@ -3,9 +3,35 @@
 
 rules:
   - name: ceo_direct_engineer_dispatch
-    pattern: "CEO assigns code|git|build|test|pytest|commit task directly to eng-kernel|eng-governance|eng-platform|eng-domains without CTO approval"
+    pattern: "ceo task eng-"
     mode: deny
     message: "CEO直接派代码任务给工程师。按第三条（hierarchy discipline），必须经CTO分工。"
     rationale: "AGENTS.md Article 3 — CEO coordinates C-suite, CTO manages engineers. Direct CEO→engineer dispatch bypasses technical leadership and breaks delegation chain."
     dry_run_until: null  # null = immediately enforce; set to Unix timestamp for grace period
     created_at: "2026-04-13T16:30:00Z"
+
+  - name: ceo_skip_gov_dispatch
+    pattern: "(?i)(agent.*eng-|dispatch.*eng-|spawn.*eng-)(?!.*DISPATCH:)"
+    mode: deny
+    message: "CEO派工程任务缺失 gov_dispatch token。必须先调用 gov_dispatch MCP tool 获取 token，再在 Agent prompt 里包含 [DISPATCH:token]。"
+    rationale: "WORKING_STYLE.md 第十二条 + .claude/agents/ceo.md Dispatch Gate Protocol — 防止 CEO 绕过 CTO 审批直接派代码任务。所有工程 dispatch 必须经 gov_dispatch MCP 工具生成 token。"
+    dry_run_until: null
+    created_at: "2026-04-15T14:00:00Z"
+
+  - name: task_dispatch_without_y_star
+    pattern: "(?i)\\b(task|dispatch|mission|directive)\\s*[:\\-](?!.*(Y\\*|Y\\s*\\*|理想契约))"
+    mode: deny
+    message: "任务 dispatch 缺失 CIEU 5-tuple (Y*/Xt/U/Yt+1/Rt+1)。按 WORKING_STYLE.md 第十二条，所有任务必须包含 Y* 理想契约定义。"
+    rationale: "WORKING_STYLE.md 第十二条 CIEU 任务工作法 + Board Iron Rule 1.6 — 防止 agent 绕过 5-tuple 格式回到'印象驱动执行'。Y* 缺失 = 无验证标准 = 不可审计。"
+    dry_run_until: 1744750800  # 2026-04-22 00:00:00 UTC — 7-day grace period for ecosystem adaptation
+    created_at: "2026-04-15T14:00:00Z"
+
+# Whitelists — Files exempt from ForgetGuard checks (referenced by stem)
+whitelists:
+  - role_mandate
+  - inter_role_sop
+  - event_workflow
+  - escape_hatch
+  - project_procedure
+  - constitutional
+  - rapid_matrix

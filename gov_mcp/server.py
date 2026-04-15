@@ -1078,12 +1078,20 @@ def create_server(
         import sys
         from pathlib import Path
 
-        # Find ystar-company workspace (sibling to Y-star-gov)
+        # Find ystar-company workspace (env-based with fallback to sibling)
+        import os
         ystar_gov = Path(__file__).parent.parent
-        ystar_company = ystar_gov.parent / "ystar-company"
+
+        # Get Labs directory from environment variable or default to sibling workspace
+        labs_dir_str = os.environ.get('YSTAR_LABS_DIR')
+        if labs_dir_str:
+            ystar_company = Path(labs_dir_str)
+        else:
+            # Fallback: assume ystar-company is sibling to Y-star-gov
+            ystar_company = ystar_gov.parent / "ystar-company"
 
         if not ystar_company.exists():
-            return json.dumps({"error": "ystar-company workspace not found", "path": str(ystar_company)})
+            return json.dumps({"error": "Y* Bridge Labs workspace not found", "path": str(ystar_company), "hint": "Set YSTAR_LABS_DIR env variable or place ystar-company as sibling to Y-star-gov"})
 
         scripts_path = ystar_company / "scripts"
         if str(scripts_path) not in sys.path:
