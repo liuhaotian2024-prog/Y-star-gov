@@ -660,6 +660,26 @@ def check_hook(
     _write_cieu(who, tool_name, params, result,
                 session_id_payload or "unknown", contract_hash, cieu_db)
 
+    # ── router._WRITE_PATTERNS 兜底（Board 2026-04-14 指令: 两套黑名单打通）──
+    if result.allowed and tool_name == "Bash":
+        command = params.get("command", "")
+        try:
+            from gov_mcp.router import _SHELL_WRITE_PATTERNS, _PYTHON_WRITE_PATTERNS
+            all_patterns = list(_SHELL_WRITE_PATTERNS) + list(_PYTHON_WRITE_PATTERNS)
+            for pat in all_patterns:
+                if pat.search(command):
+                    result = PolicyResult(
+                        allowed=False,
+                        reason=f"router._WRITE_PATTERNS matched: {pat.pattern}",
+                    )
+                    _log.warning("[router-bridge] blocked by %s: %s", pat.pattern, command[:80])
+                    # Re-write CIEU as deny
+                    _write_cieu(who, tool_name, params, result,
+                                session_id_payload or "unknown", contract_hash, cieu_db)
+                    break
+        except ImportError as e:
+            _log.warning("[router-bridge] fail-open (cannot import router): %s", e)
+
     # ── NEW: Process obligation triggers after check() ──────────────────────
     # If the check passed (ALLOW), check for any triggered obligations
     if result.allowed:
@@ -844,6 +864,10 @@ _session_cache: Dict[str, tuple[Dict[str, Any], float]] = {}
 # 缓存：避免每次 hook 都重建 omission adapter
 _omission_cache_key: Optional[str] = None
 
+# AGENTS.md mtime cache: avoid repeated stat() during I/O storms (A025-E1 fix)
+# Key: agents_md_path, Value: (last_check_time, cached_mtime)
+_agents_md_mtime_cache: Dict[str, tuple[float, float]] = {}
+
 
 def _load_session_config_cached() -> Optional[Dict[str, Any]]:
     """
@@ -909,9 +933,25 @@ def _get_or_build_policy(agents_md_path: Optional[str] = None) -> Optional[Polic
     if not os.path.exists(agents_md_path):
         return None
 
-    # Check cache
+    # Check cache with I/O storm mitigation (A025-E1)
+    # Only stat() AGENTS.md once per second to avoid directory lock contention
     try:
+        import time
+        now = time.time()
+
+        # Fast path: use cached mtime if checked <1s ago
+        if agents_md_path in _agents_md_mtime_cache:
+            last_check, cached_mtime = _agents_md_mtime_cache[agents_md_path]
+            if now - last_check < 1.0:  # Checked within last second
+                if agents_md_path in _policy_cache:
+                    cached_policy, policy_cached_mtime = _policy_cache[agents_md_path]
+                    if cached_mtime == policy_cached_mtime:
+                        return cached_policy
+
+        # Slow path: actually stat the file
         current_mtime = os.path.getmtime(agents_md_path)
+        _agents_md_mtime_cache[agents_md_path] = (now, current_mtime)
+
         if agents_md_path in _policy_cache:
             cached_policy, cached_mtime = _policy_cache[agents_md_path]
             if current_mtime == cached_mtime:
