@@ -108,6 +108,35 @@ def _extract_params(tool_name: str, tool_input: dict) -> dict:
         "tool_name": tool_name,
     }
 
+    # ── Agent tool: set .ystar_active_agent to subagent_type ──────────────
+    if tool_name == "Agent":
+        subagent_type = tool_input.get("subagent_type")
+        if subagent_type:
+            try:
+                active_agent_path = os.path.join(os.getcwd(), ".ystar_active_agent")
+                with open(active_agent_path, "w") as f:
+                    f.write(subagent_type)
+                # Emit CIEU event
+                from ystar.governance.cieu_store import CIEUStore
+                cieu_db = ".ystar_cieu.db"
+                try:
+                    store = CIEUStore(cieu_db)
+                    store.write_dict({
+                        "session_id":    "unknown",  # Will be overwritten by caller if known
+                        "agent_id":      subagent_type,
+                        "event_type":    "AGENT_IDENTITY_SET",
+                        "decision":      "allow",
+                        "passed":        True,
+                        "file_path":     active_agent_path,
+                        "evidence_grade": "action",
+                        "params":        {"subagent_type": subagent_type},
+                    })
+                    _log.info("AGENT_IDENTITY_SET: .ystar_active_agent → %s", subagent_type)
+                except Exception as e:
+                    _log.error("Failed to write AGENT_IDENTITY_SET event: %s", e)
+            except Exception as e:
+                _log.error("Failed to set .ystar_active_agent: %s", e)
+
     # 主要字段：根据工具类型映射
     primary_field = None
     for prefix, field in _TOOL_PARAMS.items():
