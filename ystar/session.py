@@ -31,6 +31,7 @@ import hashlib
 from pathlib import Path as _Path
 from .kernel.dimensions import IntentContract
 from .kernel.engine import check as _check
+from .kernel.cieu import emit
 
 # Re-export Remediation + SkillActivation for convenience (AMENDMENT-012, 013)
 __all__ = ["Policy", "PolicyResult", "Remediation", "SkillActivation", "IntentContract"]
@@ -505,6 +506,51 @@ class Policy:
 
 # ── Layer 1: Identity Source of Truth (AMENDMENT-015 Phase 4) ────────
 
+# Session schema required keys (Patch 2 from CIEU K9 Ryan rsync disaster 2026-04-14)
+_SESSION_SCHEMA_REQUIRED = [
+    "immutable_paths",
+    "override_roles",
+    "contract",
+    "agent_behavior_rules"
+]
+
+
+def _validate_session_schema(config: Dict[str, Any], path: str) -> None:
+    """
+    Validate session config has required schema keys.
+
+    Raises SESSION_JSON_SCHEMA_VIOLATION CIEU + SchemaError if required keys missing.
+    This prevents silent acceptance of truncated/corrupted session.json (e.g., rsync --delete
+    overwriting with test fixture).
+
+    Args:
+        config: Session config dict
+        path: Path to session file (for CIEU context)
+
+    Raises:
+        ValueError: If required keys missing
+    """
+    missing = [k for k in _SESSION_SCHEMA_REQUIRED if k not in config]
+    if missing:
+        emit(
+            "SESSION_JSON_SCHEMA_VIOLATION",
+            who="kernel",
+            what="load_session_config",
+            legitimacy=False,
+            reason=f"Missing required keys {missing} in {path}",
+            context={
+                "path": path,
+                "missing_keys": missing,
+                "present_keys": list(config.keys())
+            }
+        )
+        raise ValueError(
+            f"Invalid session config at {path}: missing required keys {missing}. "
+            f"This is likely a corrupted/truncated session.json. "
+            f"Found keys: {list(config.keys())}"
+        )
+
+
 def load_session_config(path: Optional[str] = None) -> Dict[str, Any]:
     """
     Load .ystar_session.json from disk (single source of truth).
@@ -514,6 +560,9 @@ def load_session_config(path: Optional[str] = None) -> Dict[str, Any]:
 
     Returns:
         Session config dict, or empty dict if not found.
+
+    Raises:
+        ValueError: If session config missing required schema keys (Patch 2)
     """
     import json
 
@@ -527,7 +576,13 @@ def load_session_config(path: Optional[str] = None) -> Dict[str, Any]:
 
     try:
         with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            config = json.load(f)
+
+        # Validate schema (Patch 2: prevent silent acceptance of corrupted session.json)
+        if config:  # Only validate non-empty configs
+            _validate_session_schema(config, path)
+
+        return config
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
