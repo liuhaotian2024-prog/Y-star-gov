@@ -733,6 +733,33 @@ def check_hook(
                             session_id_payload or "unknown", contract_hash, cieu_db)
                 break
 
+    # ── CIEU MARKER enforcement (Board 2026-04-15: K9 v2 unified protocol §7) ──
+    # spec: reports/k9_upgrade_daily_patrol_spec_20260415.md §7.1
+    # Iron Rule 1.6: CEO + sub-agent 每层必 emit CIEU 5-tuple (Y*/Xt/U/Yt+1/Rt+1)
+    # Check: tool call params (command/description/file_path/content) 含任一 marker → pass
+    #        否则 → deny
+    if result.allowed and who in ("ceo", "cto", "cmo", "cso", "cfo",
+                                   "eng-kernel", "eng-governance", "eng-platform", "eng-domains"):
+        REQUIRED_MARKERS = ["Y*", "Xt", "Yt+1", "Rt+1"]  # U is implicit in action
+        scan_text = " ".join(
+            str(v) for v in params.values() if isinstance(v, (str, int, float))
+        )[:8000]
+
+        # Count how many markers present
+        markers_found = [m for m in REQUIRED_MARKERS if m in scan_text]
+
+        # Require at least 2 markers (relaxed from 4 for practical execution)
+        # Full 5-tuple (Y*/Xt/U/Yt+1/Rt+1) ideal, but U implicit in tool call itself
+        if len(markers_found) < 2:
+            result = PolicyResult(
+                allowed=False,
+                reason=f"CIEU_MARKER_MISSING: Iron Rule 1.6 requires CIEU 5-tuple markers (Y*/Xt/U/Yt+1/Rt+1) in tool call. Found {markers_found}. Unified protocol §7 mandatory per Board 2026-04-15.",
+            )
+            _log.warning("[cieu-marker] %s blocked: only %d/4 markers found in %s tool",
+                         who, len(markers_found), tool_name)
+            _write_cieu(who, tool_name, params, result,
+                        session_id_payload or "unknown", contract_hash, cieu_db)
+
     # ── NEW: Process obligation triggers after check() ──────────────────────
     # If the check passed (ALLOW), check for any triggered obligations
     if result.allowed:

@@ -1,5 +1,3 @@
-import os
-# Layer: Foundation
 """
 ystar.adapters.activation_triggers  —  Proactive Skill Activation Registry  v0.49.0
 ===================================================================================
@@ -31,6 +29,8 @@ Usage::
         inject_skill(activation)
 """
 from __future__ import annotations
+
+import os
 import logging
 import re
 import sys
