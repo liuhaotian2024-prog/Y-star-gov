@@ -26,6 +26,38 @@ rules:
     dry_run_until: 1744750800  # 2026-04-22 00:00:00 UTC — 7-day grace period for ecosystem adaptation
     created_at: "2026-04-15T14:00:00Z"
 
+  - name: defer_language
+    pattern: "(?i)(明日|tomorrow morning|等会儿|晚些|以后再|改天|明晚|tomorrow|queued for|next session|明早|wait for|稍后|later|下周|next week)"
+    mode: deny
+    message: "Defer language detected. Only explicit Board 'stop' / '收工' permits deferral. Otherwise execute now, spawn sub-agent (Article 11), or ask Board explicitly."
+    rationale: "feedback_no_clock_out.md — Unilateral deferral violates autonomous operation principle. Board expects work to continue until explicit stop signal."
+    dry_run_until: null
+    created_at: "2026-04-15T20:00:00Z"
+
+  - name: choice_question_to_board
+    pattern: "(?i)(Option A|Option B|请选择|1\\)|2\\)|3\\)|方案一|方案二)"
+    mode: deny
+    message: "Choice questions to Board are PROHIBITED. CEO must make unilateral decisions and execute. Board will override if wrong."
+    rationale: "CLAUDE.md 硬约束 + AGENTS.md CEO role — Choice questions block autonomous operation. Unattended systems cannot answer 'pick 1/2/3' questions."
+    dry_run_until: null
+    created_at: "2026-04-15T20:00:00Z"
+
+  - name: defer_language_in_commit_msg
+    pattern: "(?i)git commit.*(-m|--message).*['\"].*?(明日|tomorrow morning|等会儿|晚些|以后再|改天|明晚|明早|tomorrow|next session|queued for|wait for|稍后|later|下周|next week)"
+    mode: deny
+    message: "禁止在 commit message 中使用 defer 语义词汇。Commit 表示'已完成落盘'，与'明日/queued/稍后'语义冲突。"
+    rationale: "feedback_no_clock_out.md — Commit messages must reflect actual completion state [LX], not future intent."
+    dry_run_until: null
+    created_at: "2026-04-15T20:00:00Z"
+
+  - name: defer_language_in_echo
+    pattern: "(?i)echo.*['\"].*?(明日|tomorrow morning|等会儿|晚些|以后再|改天|明晚|明早|tomorrow|next session|queued for|wait for|稍后|later|下周|next week)"
+    mode: deny
+    message: "禁止 echo defer 语义到 Board 可见输出（如 reports/、session_close 等）。Board 期望自主执行，defer 语义违反 autonomous operation 原则。"
+    rationale: "feedback_no_clock_out.md — Output to Board must reflect immediate action or explicit escalation, not unilateral deferral."
+    dry_run_until: null
+    created_at: "2026-04-15T20:00:00Z"
+
 # Whitelists — Files exempt from ForgetGuard checks (referenced by stem)
 whitelists:
   - role_mandate
