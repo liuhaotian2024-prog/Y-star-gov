@@ -359,31 +359,70 @@ def check_ceo_output_vs_subgoal(
         result["drift_score"] = 0.5
         return result
 
-    # Extract keywords from goal (simple keyword density approach)
-    # This is intentionally simple — we want fast, high-recall detection
-    goal_keywords = set(
-        word.lower()
-        for word in re.findall(r'\b[a-z_]{3,}\b', goal_text.lower())
-        if word not in {'the', 'and', 'for', 'with', 'from', 'that', 'this', 'are', 'was'}
-    )
+    # W7.2: Hybrid keyword + TF-IDF drift detection
+    # Keyword overlap handles short subgoals, TF-IDF handles longer nuanced text
+    try:
+        # Method 1: Keyword overlap (fast, works for short subgoals)
+        # Extract words (including alphanumeric like R3, E2E, CZL)
+        goal_keywords = set(
+            word.lower()
+            for word in re.findall(r'\b[a-z0-9_]{2,}\b', goal_text.lower())
+            if word not in {'the', 'and', 'for', 'with', 'from', 'that', 'this', 'are', 'was', 'were', 'been', 'have', 'has', 'had', 'will', 'can', 'should', 'would'}
+        )
 
-    reply_keywords = set(
-        word.lower()
-        for word in re.findall(r'\b[a-z_]{3,}\b', reply_text.lower())
-        if word not in {'the', 'and', 'for', 'with', 'from', 'that', 'this', 'are', 'was'}
-    )
+        reply_keywords = set(
+            word.lower()
+            for word in re.findall(r'\b[a-z0-9_]{2,}\b', reply_text.lower())
+            if word not in {'the', 'and', 'for', 'with', 'from', 'that', 'this', 'are', 'was', 'were', 'been', 'have', 'has', 'had', 'will', 'can', 'should', 'would'}
+        )
 
-    if not goal_keywords:
-        # Can't determine alignment if goal has no keywords
+        overlap = goal_keywords & reply_keywords
+        keyword_overlap_ratio = len(overlap) / len(goal_keywords) if goal_keywords else 1.0
+        keyword_alignment = keyword_overlap_ratio  # 0.0 (no overlap) to 1.0 (perfect overlap)
+
+        # Method 2: TF-IDF cosine similarity (precise for longer text)
+        tfidf_alignment = 0.0
+        try:
+            from sklearn.feature_extraction.text import TfidfVectorizer
+            from sklearn.metrics.pairwise import cosine_similarity
+
+            corpus = [goal_text, reply_text]
+            vectorizer = TfidfVectorizer(
+                stop_words='english',
+                max_features=50,  # Keep vocabulary small for short subgoals
+                ngram_range=(1, 2),  # Unigrams + bigrams
+                min_df=1  # Allow rare terms (important for short corpus)
+            )
+            tfidf_matrix = vectorizer.fit_transform(corpus)
+            tfidf_similarity = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0]
+            tfidf_alignment = tfidf_similarity  # 0.0 (orthogonal) to 1.0 (identical)
+        except ImportError:
+            # sklearn not available — use keyword alignment only
+            tfidf_alignment = keyword_alignment
+        except Exception as e:
+            # TF-IDF failed (e.g., empty vocabulary) — use keyword alignment only
+            _log.warning(f"TF-IDF failed: {e}, using keyword alignment only")
+            tfidf_alignment = keyword_alignment
+
+        # Hybrid: length-weighted fusion
+        # Short subgoals (< 20 chars): trust keyword overlap more (80% weight)
+        # Long subgoals (>= 20 chars): trust TF-IDF more (80% weight)
+        subgoal_length = len(goal_text)
+        if subgoal_length < 20:
+            # Short subgoal: keyword-dominant
+            combined_alignment = 0.8 * keyword_alignment + 0.2 * tfidf_alignment
+        else:
+            # Long subgoal: TF-IDF-dominant
+            combined_alignment = 0.2 * keyword_alignment + 0.8 * tfidf_alignment
+
+        # Convert alignment to drift
+        drift_score = 1.0 - combined_alignment
+
+    except Exception as e:
+        # Fail-open: if algorithm crashes, return low drift (don't block work)
+        _log.error(f"Drift algorithm failed: {e}")
         result["drift_score"] = 0.0
         return result
-
-    # Keyword overlap ratio
-    overlap = goal_keywords & reply_keywords
-    overlap_ratio = len(overlap) / len(goal_keywords) if goal_keywords else 1.0
-
-    # drift_score = 1 - overlap_ratio (inverted)
-    drift_score = 1.0 - overlap_ratio
 
     # Additional checks for artifact_persistence
     y_star_criteria = subgoal_data.get("y_star_criteria", [])
@@ -404,9 +443,33 @@ def check_ceo_output_vs_subgoal(
 
     if drift_score > 0.7:
         result["aligned"] = False
+        similarity_pct = (1.0 - drift_score) * 100
         result["warnings"].append(
-            f"High drift detected: only {overlap_ratio*100:.1f}% keyword overlap "
+            f"High drift detected: only {similarity_pct:.1f}% similarity "
             f"with current subgoal '{goal_text[:60]}...'"
         )
+
+    # Emit CIEU event for drift check (W7.2 requirement)
+    try:
+        import subprocess
+        import json as json_module
+        event_data = json_module.dumps({
+            "drift_score": round(drift_score, 3),
+            "aligned": result["aligned"],
+            "subgoal": goal_text[:100],  # truncate for CIEU
+            "reply_preview": reply_text[:100]
+        })
+        subprocess.run(
+            [
+                "python3", "-c",
+                f'import sys; sys.path.insert(0, "~/.openclaw/workspace/ystar-company"); '
+                f'from tools.cieu.ygva.governor import emit_event; '
+                f'emit_event("PROMPT_SUBGOAL_CHECK", {event_data})'
+            ],
+            capture_output=True,
+            timeout=2
+        )
+    except Exception as e:
+        _log.warning(f"Failed to emit CIEU event for drift check: {e}")
 
     return result
