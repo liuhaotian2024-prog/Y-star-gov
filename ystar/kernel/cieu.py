@@ -77,6 +77,14 @@ def emit(
         store = CIEUStore(db_path)
         store.write_dict(event)
 
+        # P1-C: Bridge to YML memory ingest
+        try:
+            from ystar.memory.ingest import enqueue
+            memory_db_path = os.environ.get("YSTAR_MEMORY_DB", ".ystar_memory.db")
+            enqueue(event, memory_db_path)
+        except Exception as bridge_err:
+            _log.debug(f"YML bridge failed (non-fatal): {bridge_err}")
+
         _log.debug(f"CIEU event emitted: {event_type} (agent={agent})")
 
     except Exception as e:

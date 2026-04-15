@@ -48,7 +48,7 @@ def _write_boot_record(who: str, session_id: str, cieu_db: str) -> None:
     try:
         from ystar.governance.cieu_store import CIEUStore
         store = CIEUStore(cieu_db)
-        store.write_dict({
+        boot_event = {
             "session_id":    session_id,
             "agent_id":      who,
             "event_type":    "HOOK_BOOT",
@@ -58,7 +58,18 @@ def _write_boot_record(who: str, session_id: str, cieu_db: str) -> None:
             "params":        {"boot_time": time.time(), "message": "Y*gov hook activated"},
             "contract_hash": "",
             "evidence_grade": "ops",  # [P2-3] HOOK_BOOT 是运维诊断事件
-        })
+        }
+        store.write_dict(boot_event)
+
+        # P1-C: Bridge to YML memory ingest
+        try:
+            import os
+            from ystar.memory.ingest import enqueue
+            memory_db_path = os.environ.get("YSTAR_MEMORY_DB", ".ystar_memory.db")
+            enqueue(boot_event, memory_db_path)
+        except Exception as bridge_err:
+            _log.debug(f"YML bridge failed (non-fatal): {bridge_err}")
+
         _log.info("HOOK_BOOT record written — CIEU is alive")
     except Exception as e:
         _log.error("Failed to write HOOK_BOOT record: %s", e)
