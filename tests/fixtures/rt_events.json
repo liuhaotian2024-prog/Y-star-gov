@@ -1,0 +1,65 @@
+[
+  {
+    "schema_version": "1.0",
+    "task_id": "ceo_k9_fuse_001_clean",
+    "rt_value": 0.0,
+    "y_star": "RT schema + tests pass",
+    "x_t": "No rt_measurement.py exists",
+    "u": [
+      "Write rt_measurement.py",
+      "Write test_rt_measurement.py",
+      "pytest tests/kernel/test_rt_measurement.py"
+    ],
+    "y_t_plus_1": "6/6 tests pass, no scope violations",
+    "timestamp": "2026-04-16T00:00:00Z",
+    "agent_id": "eng-kernel",
+    "role_tags": {
+      "producer": "ceo",
+      "executor": "eng-kernel",
+      "governed": "eng-kernel"
+    },
+    "description": "Clean closure — Rt=0.0, all assertions pass, task complete"
+  },
+  {
+    "schema_version": "1.0",
+    "task_id": "ceo_campaign_v7_incomplete",
+    "rt_value": 2.5,
+    "y_star": "Campaign v7 deployed + live traffic validated",
+    "x_t": "Campaign v6 running, v7 assets staged",
+    "u": [
+      "Deploy campaign v7 frontend",
+      "Run smoke tests",
+      "Check analytics dashboard"
+    ],
+    "y_t_plus_1": "Frontend deployed, analytics not reporting (2 subtasks open, 1 API error unresolved)",
+    "timestamp": "2026-04-16T01:00:00Z",
+    "agent_id": "cmo",
+    "role_tags": {
+      "producer": "cmo",
+      "executor": "cmo",
+      "governed": "cmo"
+    },
+    "description": "Open gap — Rt=2.5, incomplete deployment with unresolved issues"
+  },
+  {
+    "schema_version": "1.0",
+    "task_id": "ceo_boundary_violation_pilot",
+    "rt_value": 1.0,
+    "y_star": "Write K9-RT integration plan to reports/ceo/",
+    "x_t": "No plan document exists",
+    "u": [
+      "Research K9 causal analyzer API",
+      "Draft integration plan",
+      "Write to reports/cto/k9_rt_fuse_dispatch_plan_20260416.md"
+    ],
+    "y_t_plus_1": "Plan written to reports/cto/ (CEO scope violation: producer=ceo, file_path=reports/cto/)",
+    "timestamp": "2026-04-16T02:00:00Z",
+    "agent_id": "ceo",
+    "role_tags": {
+      "producer": "ceo",
+      "executor": "ceo",
+      "governed": "ceo"
+    },
+    "description": "CEO boundary violation — Rt=1.0, producer=ceo writing to CTO territory (./reports/cto/)"
+  }
+]
