@@ -51,12 +51,14 @@ class HookDaemon:
         self._session_config_mtime = 0.0
         self._last_user_message_time = time.time()
         self._autonomy_driver = None
+        self._governance_loop = None
         self._residual_loop_engine = None
         self._idle_check_thread = None
         self._file_watch_thread = None
         self._shutdown_flag = False
         self._load_policy()
         self._init_autonomy_driver()
+        self._init_governance_loop()
         self._init_residual_loop_engine()
         self._start_idle_monitor()
         self._start_file_watcher()
@@ -114,6 +116,22 @@ class HookDaemon:
             _log(f"AutonomyEngine init error: {e}")
             self._autonomy_driver = None
 
+    def _init_governance_loop(self) -> None:
+        """Initialize GovernanceLoop (RLE bridge target)."""
+        try:
+            from ystar.governance.governance_loop import GovernanceLoop
+            from ystar.governance.reporting import ReportEngine
+            from ystar.governance.omission_engine import OmissionStore
+
+            # Minimal GovernanceLoop instance (no full subsystems needed for RLE bridge)
+            omission_store = OmissionStore()
+            report_engine = ReportEngine(omission_store=omission_store)
+            self._governance_loop = GovernanceLoop(report_engine=report_engine)
+            _log("GovernanceLoop initialized (for RLE bridge)")
+        except Exception as e:
+            _log(f"GovernanceLoop init error: {e}")
+            self._governance_loop = None
+
     def _init_residual_loop_engine(self) -> None:
         """Initialize ResidualLoopEngine (AMENDMENT-014)."""
         try:
@@ -130,6 +148,17 @@ class HookDaemon:
             def target_provider(event):
                 return event.get("params", {}).get("target_y_star")
 
+            # Callback: forward RLE suggestions to GovernanceLoop
+            def rle_callback(suggestion_dict: dict) -> None:
+                """Receive RLE escalations and forward to GovernanceLoop."""
+                try:
+                    if self._governance_loop:
+                        self._governance_loop.receive_rle_suggestion(suggestion_dict)
+                    else:
+                        _log(f"[RLE→Loop] No GovernanceLoop available, suggestion dropped: {suggestion_dict.get('trigger')}")
+                except Exception as e:
+                    _log(f"[RLE→Loop] callback error: {e}")
+
             self._residual_loop_engine = ResidualLoopEngine(
                 autonomy_engine=self._autonomy_driver,
                 cieu_store=cieu_store,
@@ -137,6 +166,7 @@ class HookDaemon:
                 max_iterations=10,
                 convergence_epsilon=0.05,
                 damping_gamma=0.9,
+                governance_suggestion_callback=rle_callback,
             )
             _log("ResidualLoopEngine initialized")
         except Exception as e:

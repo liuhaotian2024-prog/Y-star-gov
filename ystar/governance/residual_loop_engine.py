@@ -95,6 +95,7 @@ class ResidualLoopEngine:
         convergence_epsilon: float = 0.0,
         damping_gamma: float = 0.9,
         distance_function: Optional[Callable[[Any, Any], float]] = None,
+        governance_suggestion_callback: Optional[Callable[[Dict], None]] = None,
     ):
         self.autonomy_engine = autonomy_engine
         self.cieu_store = cieu_store
@@ -103,6 +104,7 @@ class ResidualLoopEngine:
         self.convergence_epsilon = convergence_epsilon
         self.damping_gamma = damping_gamma
         self.distance_function = distance_function or self._default_distance
+        self.governance_suggestion_callback = governance_suggestion_callback
 
         # Per-session loop state (keyed by session_id)
         self._loop_state: Dict[str, Dict] = {}
@@ -359,6 +361,24 @@ class ResidualLoopEngine:
         self._write_cieu(event)
         _log.warning(f"[RLE] OSCILLATION_BREAK: session={session_id}")
 
+        # Bridge to Path A: emit GovernanceSuggestion
+        if self.governance_suggestion_callback:
+            try:
+                suggestion_dict = {
+                    "source": "residual_loop_engine",
+                    "trigger": "oscillation_detected",
+                    "session_id": session_id,
+                    "agent_id": agent_id,
+                    "residual_rt_plus_1": rt_plus_1,
+                    "residual_history": list(self._loop_state[session_id]["residual_history"]),
+                    "rationale": f"Task oscillating with Rt+1={rt_plus_1:.4f}. Path A should inspect causal chain for structural issue.",
+                    "suggested_action": "inspect_causal_chain",
+                }
+                self.governance_suggestion_callback(suggestion_dict)
+                _log.info("[RLE→Path A] GovernanceSuggestion emitted (oscillation)")
+            except Exception as e:
+                _log.error(f"[RLE→Path A] callback error: {e}")
+
     def _emit_escalate_board(self, session_id: str, agent_id: str, rt_plus_1: float) -> None:
         """Emit RESIDUAL_LOOP_ESCALATE event."""
         event = {
@@ -381,6 +401,25 @@ class ResidualLoopEngine:
         }
         self._write_cieu(event)
         _log.warning(f"[RLE] ESCALATE_BOARD: session={session_id} iterations={self.max_iterations}")
+
+        # Bridge to Path A: emit GovernanceSuggestion
+        if self.governance_suggestion_callback:
+            try:
+                suggestion_dict = {
+                    "source": "residual_loop_engine",
+                    "trigger": "max_iterations_exceeded",
+                    "session_id": session_id,
+                    "agent_id": agent_id,
+                    "residual_rt_plus_1": rt_plus_1,
+                    "max_iterations": self.max_iterations,
+                    "iterations": self._loop_state[session_id]["iterations"],
+                    "rationale": f"Task non-convergent after {self.max_iterations} iterations (Rt+1={rt_plus_1:.4f}). Path A should propose structural fix or domain pack.",
+                    "suggested_action": "propose_structural_fix",
+                }
+                self.governance_suggestion_callback(suggestion_dict)
+                _log.info("[RLE→Path A] GovernanceSuggestion emitted (escalate)")
+            except Exception as e:
+                _log.error(f"[RLE→Path A] callback error: {e}")
 
     def _write_cieu(self, event: Dict) -> None:
         """Write event to CIEU store (fail-open)."""

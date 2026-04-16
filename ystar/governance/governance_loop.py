@@ -254,6 +254,7 @@ class GovernanceLoop:
         self._experience_bridge   = experience_bridge   # P1-4: Path B experience bridge
         self._observations:       List[GovernanceObservation] = []
         self._baseline:           Optional[GovernanceObservation] = None
+        self._rle_suggestions:    List[GovernanceSuggestion] = []  # RLE-sourced suggestions
 
         # Coverage scan state
         self._last_coverage_rate = 0.0
@@ -285,6 +286,38 @@ class GovernanceLoop:
             # Adopt existing loop's coefficients if available
             if hasattr(ystar_loop, 'coefficients'):
                 self.coefficients = ystar_loop.coefficients
+
+    # ── RLE Integration ───────────────────────────────────────────────────────
+
+    def receive_rle_suggestion(self, suggestion_dict: dict) -> None:
+        """
+        Receive GovernanceSuggestion from ResidualLoopEngine (AMENDMENT-014 bridge).
+
+        Called by RLE when task does not converge (oscillation or max_iterations).
+        Converts dict to GovernanceSuggestion and stores for next tighten() cycle.
+
+        Parameters
+        ----------
+        suggestion_dict : dict
+            Keys: source, trigger, session_id, agent_id, residual_rt_plus_1,
+                  rationale, suggested_action, etc.
+        """
+        from ystar.governance.suggestion_policy import GovernanceSuggestion
+
+        # Convert dict to GovernanceSuggestion
+        suggestion = GovernanceSuggestion(
+            suggestion_type="rle_escalation",
+            target_rule_id=suggestion_dict.get("suggested_action", "unknown"),
+            current_value=suggestion_dict.get("residual_rt_plus_1"),
+            suggested_value=0.0,  # Target: converge to zero residual
+            confidence=0.8,  # High confidence: RLE observed actual non-convergence
+            rationale=suggestion_dict.get("rationale", ""),
+            observation_ref=f"{suggestion_dict.get('trigger')}_session_{suggestion_dict.get('session_id')}"
+        )
+        self._rle_suggestions.append(suggestion)
+        _log.info(f"[GovernanceLoop] RLE suggestion received: {suggestion.suggestion_type} "
+                  f"(trigger={suggestion_dict.get('trigger')}, "
+                  f"Rt+1={suggestion_dict.get('residual_rt_plus_1', 'N/A')})")
 
     # ── 观测 ──────────────────────────────────────────────────────────────────
 
@@ -567,6 +600,42 @@ class GovernanceLoop:
         self._observations.append(obs)
         return obs
 
+    def observe_from_residual_loop(self, rle_event: Dict) -> GovernanceSuggestion:
+        """
+        Observe from ResidualLoopEngine (Path A ↔ RLE bridge).
+
+        When RLE detects non-convergent tasks (oscillation or max iterations),
+        it emits a suggestion dict. This method converts it to GovernanceSuggestion
+        and appends to self._rle_suggestions for consumption in tighten().
+
+        Parameters
+        ----------
+        rle_event : Dict
+            RLE suggestion dict with keys:
+              - source: "residual_loop_engine"
+              - trigger: "oscillation_detected" | "max_iterations_exceeded"
+              - session_id, agent_id, residual_rt_plus_1
+              - rationale, suggested_action
+
+        Returns
+        -------
+        GovernanceSuggestion
+            The converted suggestion.
+        """
+        suggestion = GovernanceSuggestion(
+            suggestion_type="rle_escalation",
+            target_rule_id=f"rle_{rle_event.get('trigger', 'unknown')}",
+            current_value=rle_event.get("residual_rt_plus_1"),
+            suggested_value=rle_event.get("suggested_action", "inspect_causal_chain"),
+            confidence=0.8,  # High confidence since RLE is mathematically grounded
+            rationale=rle_event.get("rationale", "RLE non-convergence detected"),
+            observation_ref=rle_event.get("session_id", "unknown"),
+        )
+        self._rle_suggestions.append(suggestion)
+        _log.info(f"[Path A←RLE] GovernanceSuggestion received: {suggestion.suggestion_type} "
+                  f"trigger={rle_event.get('trigger')}")
+        return suggestion
+
     def set_baseline(self, report: Optional[Report] = None) -> GovernanceObservation:
         """
         设置基线观测（对应 baseline_report）。
@@ -680,6 +749,11 @@ class GovernanceLoop:
         # Connection 2: DimensionDiscovery — new dimension suggestions
         dim_suggestions = self._run_dimension_discovery()
         suggestions = suggestions + dim_suggestions
+        # Path A ↔ RLE bridge: merge RLE-sourced suggestions
+        if self._rle_suggestions:
+            _log.info(f"[Path A←RLE] Merging {len(self._rle_suggestions)} RLE suggestions")
+            suggestions = suggestions + self._rle_suggestions
+            self._rle_suggestions = []  # Consume and clear
 
         # P1-4: Merge experience_bridge suggestion candidates if available
         if self._experience_bridge is not None:
