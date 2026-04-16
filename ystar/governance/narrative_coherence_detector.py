@@ -404,7 +404,31 @@ def check_ceo_output_vs_subgoal(
             _log.warning(f"TF-IDF failed: {e}, using keyword alignment only")
             tfidf_alignment = keyword_alignment
 
-        combined_alignment = max(keyword_alignment, tfidf_alignment)
+        # Method 3: Semantic embedding similarity (W7.3)
+        # Uses sentence-transformers for deep semantic matching
+        embedding_alignment = 0.0
+        try:
+            from sentence_transformers import SentenceTransformer
+            import numpy as np
+
+            model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+            emb_goal = model.encode(goal_text, convert_to_numpy=True)
+            emb_reply = model.encode(reply_text, convert_to_numpy=True)
+
+            # Cosine similarity: dot(A, B) / (norm(A) * norm(B))
+            cosine_sim = np.dot(emb_goal, emb_reply) / (
+                np.linalg.norm(emb_goal) * np.linalg.norm(emb_reply)
+            )
+            embedding_alignment = float(cosine_sim)  # 0.0 to 1.0
+        except ImportError:
+            # sentence-transformers not available — fail-open to existing methods
+            embedding_alignment = max(keyword_alignment, tfidf_alignment)
+        except Exception as e:
+            # Embedding failed (e.g., model download issue) — fail-open
+            _log.warning(f"Embedding similarity failed: {e}, using keyword/TF-IDF only")
+            embedding_alignment = max(keyword_alignment, tfidf_alignment)
+
+        combined_alignment = max(keyword_alignment, tfidf_alignment, embedding_alignment)
 
         drift_score = 1.0 - combined_alignment
 
