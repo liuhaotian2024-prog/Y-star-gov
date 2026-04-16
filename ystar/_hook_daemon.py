@@ -495,13 +495,18 @@ Output ONLY the 2-3 line summary, nothing else."""
             # Reload session config if changed (zero perf cost if unchanged)
             _ = self._get_session_config()
 
+            # AMENDMENT-016: Always read current agent (no caching to avoid stale identity)
+            # This fixes sub-agent spawn → immediate tool call race condition
+            from ystar.session import current_agent
+            fresh_agent_id = current_agent()
+
             # Run Y*gov check
-            ygov_result = check_hook(payload, self.policy, agent_id=self.agent_id or None)
+            ygov_result = check_hook(payload, self.policy, agent_id=fresh_agent_id or None)
 
             # Defense-in-depth: Bash command content scan
             cmd = payload.get("tool_input", {}).get("command", "")
             if payload.get("tool_name") == "Bash" and cmd and self.policy and ygov_result == {}:
-                contract = self.policy._rules.get(self.agent_id) or self.policy._rules.get("agent")
+                contract = self.policy._rules.get(fresh_agent_id) or self.policy._rules.get("agent")
                 if contract:
                     from ystar import check as _chk
                     cr = _chk(params={"command": cmd, "tool_name": "Bash"}, result={}, contract=contract)
@@ -526,7 +531,7 @@ Output ONLY the 2-3 line summary, nothing else."""
             if payload.get("tool_name") == "Bash" and cmd:
                 threading.Thread(
                     target=self._check_whitelist_async,
-                    args=(cmd, self.agent_id),
+                    args=(cmd, fresh_agent_id),
                     daemon=True
                 ).start()
 
