@@ -391,20 +391,17 @@ class OmissionEngine:
                     entity_id=ev.entity_id,
                     obligation_type=trigger.obligation_type,
                     actor_id=target_actor,
-                    triggered_by_event_id=ev.event_id,
+                    trigger_event_id=ev.event_id,
                     created_at=ev.ts,  # Use original event time
                     due_at=ev.ts + trigger.deadline_seconds,
-                    effective_due_at=ev.ts + trigger.deadline_seconds,
                     status=ObligationStatus.PENDING,
                     severity=Severity[trigger.severity],
                     required_event_types=trigger.required_event_types or [trigger.fulfillment_event],
-                    description=trigger.description,
                     grace_period_secs=trigger.grace_period_secs,
                     hard_overdue_secs=trigger.hard_overdue_secs,
                     escalation_policy=EscalationPolicy(
-                        escalate_to_hard=trigger.escalate_to_hard,
                         escalate_after_secs=trigger.hard_overdue_secs,
-                        escalate_to_actor=trigger.escalate_to_actor,
+                        escalate_to=trigger.escalate_to_actor,
                         deny_closure_on_open=trigger.deny_closure_on_open,
                     ),
                 )
@@ -415,8 +412,6 @@ class OmissionEngine:
                     f"[OmissionEngine] Live-reload: created {obligation_type} obligation "
                     f"for retroactive event {ev.event_id[:8]}"
                 )
-            self.store.update_violation(v_ob)
-            result.escalated.append(v_ob)
 
         # 二次扫描 C: 已 EXPIRED 但尚未升级的 obligation（跨 scan 周期的迟到升级）
         for ob in self.store.list_obligations(status=ObligationStatus.EXPIRED):
