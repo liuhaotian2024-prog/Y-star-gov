@@ -404,18 +404,8 @@ def check_ceo_output_vs_subgoal(
             _log.warning(f"TF-IDF failed: {e}, using keyword alignment only")
             tfidf_alignment = keyword_alignment
 
-        # Hybrid: length-weighted fusion
-        # Short subgoals (< 20 chars): trust keyword overlap more (80% weight)
-        # Long subgoals (>= 20 chars): trust TF-IDF more (80% weight)
-        subgoal_length = len(goal_text)
-        if subgoal_length < 20:
-            # Short subgoal: keyword-dominant
-            combined_alignment = 0.8 * keyword_alignment + 0.2 * tfidf_alignment
-        else:
-            # Long subgoal: TF-IDF-dominant
-            combined_alignment = 0.2 * keyword_alignment + 0.8 * tfidf_alignment
+        combined_alignment = max(keyword_alignment, tfidf_alignment)
 
-        # Convert alignment to drift
         drift_score = 1.0 - combined_alignment
 
     except Exception as e:
