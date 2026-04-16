@@ -5,6 +5,7 @@ Verifies that check_hook scans Bash command strings against the contract's
 deny list and deny_commands. Covers cross-platform attack vectors.
 """
 import pytest
+from unittest.mock import patch
 from ystar import Policy, IntentContract
 from ystar.adapters.hook import check_hook
 
@@ -32,7 +33,9 @@ def policy_with_deny():
 def _check(policy, command, agent_id="test-agent"):
     """Helper: run check_hook for a Bash command."""
     payload = {"tool_name": "Bash", "tool_input": {"command": command}}
-    return check_hook(payload, policy, agent_id=agent_id)
+    # Bypass session boot protocol enforcement for unit tests
+    with patch("ystar.adapters.boundary_enforcer._check_session_start_protocol_completed", return_value=None):
+        return check_hook(payload, policy, agent_id=agent_id)
 
 
 class TestDenyPathsInBashCommand:
