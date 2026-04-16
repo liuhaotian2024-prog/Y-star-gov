@@ -46,10 +46,11 @@ class HookDaemon:
 
     def __init__(self) -> None:
         self.policy = None
-        self.agent_id = ""
+        # REMOVED: self.agent_id = "" — W23 stateless: read fresh on every call
         self._session_config_cache = None
         self._session_config_mtime = 0.0
         self._last_user_message_time = time.time()
+        self._last_agent_id_read_ts = 0.0  # W23: timestamp of last agent_id read
         self._autonomy_driver = None
         self._governance_loop = None
         self._residual_loop_engine = None
@@ -73,17 +74,27 @@ class HookDaemon:
                      contextlib.redirect_stderr(io.StringIO()):
                     self.policy = Policy.from_agents_md(str(agents_md), confirm=False)
 
-            # Layer 1: Read agent identity from session config (single source of truth)
+            # W23 stateless: get agent_id fresh for logging only, not stored
             from ystar.session import current_agent
-            self.agent_id = current_agent()
+            agent_id_at_load = current_agent()
 
-            if self.agent_id and self.policy and self.agent_id not in self.policy:
+            if agent_id_at_load and self.policy and agent_id_at_load not in self.policy:
                 if "agent" in self.policy._rules:
-                    self.policy._rules[self.agent_id] = self.policy._rules["agent"]
+                    self.policy._rules[agent_id_at_load] = self.policy._rules["agent"]
 
-            _log(f"Policy loaded: roles={list(self.policy._rules.keys()) if self.policy else 'none'} agent={self.agent_id}")
+            _log(f"Policy loaded: roles={list(self.policy._rules.keys()) if self.policy else 'none'} agent={agent_id_at_load}")
         except Exception as e:
             _log(f"Policy load error: {e}")
+
+    def _get_current_agent(self) -> str:
+        """
+        W23 stateless: Read current agent identity fresh on every call.
+        No caching. Track last read timestamp for diagnostics.
+        """
+        from ystar.session import current_agent
+        agent_id = current_agent()
+        self._last_agent_id_read_ts = time.time()
+        return agent_id
 
     def _get_session_config(self) -> dict:
         """Load session.json with mtime-based caching. Reload on file change."""
@@ -221,20 +232,11 @@ class HookDaemon:
                     break
 
                 try:
-                    # Check .ystar_session.json
+                    # Check .ystar_session.json — only log change, no cache update (W23 stateless)
                     if SESSION_JSON_PATH.exists():
                         current_mtime = SESSION_JSON_PATH.stat().st_mtime
                         if current_mtime > mtimes["session_json"]:
-                            # File changed, reload agent_id
-                            from ystar.session import current_agent
-                            new_agent_id = current_agent()
-                            if new_agent_id != self.agent_id:
-                                _log(f"[watcher] Agent ID changed: {self.agent_id} → {new_agent_id}")
-                                self.agent_id = new_agent_id
-                                # Update policy mapping if needed
-                                if self.policy and self.agent_id not in self.policy:
-                                    if "agent" in self.policy._rules:
-                                        self.policy._rules[self.agent_id] = self.policy._rules["agent"]
+                            _log(f"[watcher] .ystar_session.json changed (mtime={current_mtime:.0f})")
                             mtimes["session_json"] = current_mtime
 
                     # Check AGENTS.md
@@ -245,20 +247,11 @@ class HookDaemon:
                             self._load_policy()  # Full policy reload
                             mtimes["agents_md"] = current_mtime
 
-                    # Check .ystar_active_agent
+                    # Check .ystar_active_agent — only log change, no cache update (W23 stateless)
                     if active_agent.exists():
                         current_mtime = active_agent.stat().st_mtime
                         if current_mtime > mtimes["active_agent"]:
-                            # Active agent file changed, reload agent_id
-                            from ystar.session import current_agent
-                            new_agent_id = current_agent()
-                            if new_agent_id != self.agent_id:
-                                _log(f"[watcher] Active agent file changed: {self.agent_id} → {new_agent_id}")
-                                self.agent_id = new_agent_id
-                                # Update policy mapping if needed
-                                if self.policy and self.agent_id not in self.policy:
-                                    if "agent" in self.policy._rules:
-                                        self.policy._rules[self.agent_id] = self.policy._rules["agent"]
+                            _log(f"[watcher] .ystar_active_agent changed (mtime={current_mtime:.0f})")
                             mtimes["active_agent"] = current_mtime
 
                 except Exception as e:
@@ -272,14 +265,15 @@ class HookDaemon:
     def _trigger_idle_pull(self) -> None:
         """Pull next action from AutonomyDriver and emit CIEU event."""
         try:
-            if not self.agent_id or not self._autonomy_driver:
+            agent_id = self._get_current_agent()  # W23 stateless
+            if not agent_id or not self._autonomy_driver:
                 return
 
-            action = self._autonomy_driver.pull_next_action(self.agent_id)
+            action = self._autonomy_driver.pull_next_action(agent_id)
             if action:
-                _log(f"[IDLE_PULL] {self.agent_id} → {action.description[:60]}")
+                _log(f"[IDLE_PULL] {agent_id} → {action.description[:60]}")
                 self._write_cieu_event("IDLE_PULL_TRIGGERED", {
-                    "agent_id": self.agent_id,
+                    "agent_id": agent_id,
                     "action_id": action.action_id,
                     "description": action.description,
                     "why": action.why,
@@ -293,16 +287,17 @@ class HookDaemon:
     def _detect_off_target(self, current_action: str) -> None:
         """Detect if current action is OFF_TARGET and emit warning."""
         try:
-            if not self.agent_id or not self._autonomy_driver:
+            agent_id = self._get_current_agent()  # W23 stateless
+            if not agent_id or not self._autonomy_driver:
                 return
 
             is_off_target = self._autonomy_driver.detect_off_target(
-                self.agent_id, current_action
+                agent_id, current_action
             )
             if is_off_target:
-                _log(f"[OFF_TARGET] {self.agent_id}: {current_action[:60]}")
+                _log(f"[OFF_TARGET] {agent_id}: {current_action[:60]}")
                 self._write_cieu_event("OFF_TARGET_WARNING", {
-                    "agent_id": self.agent_id,
+                    "agent_id": agent_id,
                     "current_action": current_action,
                 })
         except Exception as e:
@@ -311,6 +306,7 @@ class HookDaemon:
     def _write_cieu_event(self, event_type: str, params: dict) -> None:
         """Write event to CIEU store (fail-open)."""
         try:
+            agent_id = self._get_current_agent()  # W23 stateless
             # Try to get CIEU store from omission_engine
             if hasattr(self._autonomy_driver, 'omission_store'):
                 store = self._autonomy_driver.omission_store
@@ -319,7 +315,7 @@ class HookDaemon:
                     record = {
                         "event_id": str(uuid.uuid4()),
                         "session_id": "hook_daemon",
-                        "agent_id": self.agent_id,
+                        "agent_id": agent_id,
                         "event_type": event_type,
                         "decision": "info",
                         "evidence_grade": "ops",
@@ -328,7 +324,7 @@ class HookDaemon:
                         "params": params,
                         "violations": [],
                         "drift_detected": False,
-                        "human_initiator": self.agent_id,
+                        "human_initiator": agent_id,
                     }
                     store.cieu_store.write_dict(record)
         except Exception:
@@ -337,11 +333,12 @@ class HookDaemon:
     def _trigger_residual_loop(self, payload: dict, ygov_result: dict) -> None:
         """Trigger ResidualLoopEngine on PostToolUse (AMENDMENT-014)."""
         try:
+            agent_id = self._get_current_agent()  # W23 stateless
             # Build CIEU event from payload + ygov_result
             event = {
                 "event_id": str(uuid.uuid4()),
                 "session_id": payload.get("session_id", "hook_daemon"),
-                "agent_id": self.agent_id,
+                "agent_id": agent_id,
                 "event_type": payload.get("tool_name", "ToolUse"),
                 "decision": ygov_result.get("action", "allow"),
                 "evidence_grade": "ops",
@@ -355,7 +352,7 @@ class HookDaemon:
                 },
                 "violations": ygov_result.get("violations", []),
                 "drift_detected": ygov_result.get("drift_detected", False),
-                "human_initiator": self.agent_id,
+                "human_initiator": agent_id,
             }
             self._residual_loop_engine.on_cieu_event(event)
         except Exception as e:
@@ -525,18 +522,16 @@ Output ONLY the 2-3 line summary, nothing else."""
             # Reload session config if changed (zero perf cost if unchanged)
             _ = self._get_session_config()
 
-            # AMENDMENT-016: Always read current agent (no caching to avoid stale identity)
-            # This fixes sub-agent spawn → immediate tool call race condition
-            from ystar.session import current_agent
-            fresh_agent_id = current_agent()
+            # W23 stateless: read current agent fresh (no caching)
+            agent_id = self._get_current_agent()
 
             # Run Y*gov check
-            ygov_result = check_hook(payload, self.policy, agent_id=fresh_agent_id or None)
+            ygov_result = check_hook(payload, self.policy, agent_id=agent_id or None)
 
             # Defense-in-depth: Bash command content scan
             cmd = payload.get("tool_input", {}).get("command", "")
             if payload.get("tool_name") == "Bash" and cmd and self.policy and ygov_result == {}:
-                contract = self.policy._rules.get(fresh_agent_id) or self.policy._rules.get("agent")
+                contract = self.policy._rules.get(agent_id) or self.policy._rules.get("agent")
                 if contract:
                     from ystar import check as _chk
                     cr = _chk(params={"command": cmd, "tool_name": "Bash"}, result={}, contract=contract)
@@ -561,7 +556,7 @@ Output ONLY the 2-3 line summary, nothing else."""
             if payload.get("tool_name") == "Bash" and cmd:
                 threading.Thread(
                     target=self._check_whitelist_async,
-                    args=(cmd, fresh_agent_id),
+                    args=(cmd, agent_id),
                     daemon=True
                 ).start()
 
