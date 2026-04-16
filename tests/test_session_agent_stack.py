@@ -29,11 +29,15 @@ def temp_session_config():
     """Create temporary session config file for isolated testing."""
     with tempfile.TemporaryDirectory() as tmpdir:
         session_path = Path(tmpdir) / ".ystar_session.json"
-        # Initialize with minimal config
+        # Initialize with minimal config + required keys for session.py validation
         config = {
             "session_id": "test",
             "agent_id": "ceo",
-            "agent_stack": ["ceo"]
+            "agent_stack": ["ceo"],
+            "immutable_paths": [],
+            "override_roles": {},
+            "contract": {},
+            "agent_behavior_rules": {}
         }
         with open(session_path, 'w') as f:
             json.dump(config, f)
