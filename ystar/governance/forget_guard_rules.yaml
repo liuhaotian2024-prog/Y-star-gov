@@ -48,7 +48,16 @@ rules:
     message: "禁止在 commit message 中使用 defer 语义词汇。Commit 表示'已完成落盘'，与'明日/queued/稍后'语义冲突。"
     rationale: "feedback_no_clock_out.md — Commit messages must reflect actual completion state [LX], not future intent."
     dry_run_until: null
-    created_at: "2026-04-15T20:00:00Z"
+
+  - name: enforcement_gap_persistent
+    pattern: "(?i)(enforcement.*gap|gap.*enforcement|rule.*not.*enforced|violation.*recur)"
+    mode: warn
+    message: "Enforcement gap detected in ≥2 consecutive observer scans. Auto-Enforcement Meta-Observer recommends runtime ForgetGuard rule creation."
+    rationale: "governance/auto_enforce_meta.md C1 recurrence criterion — Persistent enforcement gaps with ≥3 criteria met should trigger automated ForgetGuard rule generation (warn mode, review before deny)."
+    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h observation period (AI 1 day ≈ human 1 year)
+    dry_run_rationale: "AI iteration cycle: 1 day = ~1 year human time. 48h is the human-equivalent of ~year-long observation."
+    created_at: "2026-04-16T08:00:00Z"
+    helper_script: "ystar/governance/enforcement_observer.py::scan_pending_enforcement_candidates"
 
   - name: defer_language_in_echo
     pattern: "(?i)echo.*['\"].*?(明日|tomorrow morning|等会儿|晚些|以后再|改天|明晚|明早|tomorrow|next session|queued for|wait for|稍后|later|下周|next week)"
@@ -57,6 +66,102 @@ rules:
     rationale: "feedback_no_clock_out.md — Output to Board must reflect immediate action or explicit escalation, not unilateral deferral."
     dry_run_until: null
     created_at: "2026-04-15T20:00:00Z"
+
+  - name: czl_dispatch_missing_5tuple
+    pattern: "(?i)(Agent.*prompt|dispatch.*sub-agent|spawn.*eng-)"
+    mode: deny
+    message: "CZL Gate 1 violation: dispatch lacks 5-tuple structure (Y*/Xt/U/Yt+1/Rt+1). Call czl_protocol.validate_dispatch() before Agent tool spawn."
+    rationale: "CZL Unified Communication Protocol v1.0 — Gate 1 enforcement prevents impression-driven dispatch. All CEO/CTO → sub-agent tasks must include Y* (verifiable contract), Xt (tool-measured pre-state), U (concrete actions ≤15), Yt+1 (post-state verification), Rt+1 (gap target 0). Ref: ystar/kernel/czl_protocol.py, Board 2026-04-16 Constitutional."
+    dry_run_until: null
+    created_at: "2026-04-16T02:00:00Z"
+    validator: czl_protocol.validate_dispatch
+    validator_kwargs:
+      check_speculation: true
+      max_tool_uses: 15
+
+  - name: czl_receipt_rt_not_zero
+    pattern: "(?i)(sub-agent.*return|receipt.*Rt\\+1|完成.*5-tuple)"
+    mode: deny
+    message: "CZL Gate 2 violation: receipt claims Rt+1=0 but empirical verification failed (artifacts missing or tests failed). Call czl_protocol.validate_receipt() after sub-agent return."
+    rationale: "CZL Unified Communication Protocol v1.0 — Gate 2 enforcement rejects hallucinated success via empirical file checks. Receipt rt_value must match actual artifact existence + test pass counts. Prevents Ethan#CZL-1 class of zero-tool hallucination. Ref: ystar/kernel/czl_protocol.py validate_receipt(), Board 2026-04-16 Constitutional."
+    dry_run_until: null
+    created_at: "2026-04-16T02:00:00Z"
+    validator: czl_protocol.validate_receipt
+    validator_kwargs:
+      verify_artifacts: true
+      verify_bash_output: true
+
+  - name: realtime_artifact_archival_sla
+    pattern: "(?i)(new file:|created:|wrote:).*\\b(reports/|knowledge/|products/|content/|governance/).*(?!.*ARCHIVE_INDEX)"
+    mode: audit
+    message: "New artifact created in archival scope (reports/knowledge/products/content/governance). Secretary SLA: index in knowledge/ARCHIVE_INDEX.md ≤30 min + emit ARTIFACT_ARCHIVED. Automated scan: scripts/archive_sla_scan.py (cron)."
+    rationale: "agents/Secretary.md §CZL duties item 6 — real-time artifact archival SLA. Automated enforcement via cron + CIEU breach emission prevents knowledge drift from passive forgetting."
+    dry_run_until: null
+    created_at: "2026-04-16T06:00:00Z"
+
+  - name: coordinator_summary_rt_audit
+    pattern: "(?i)(收敛|complete|全部\\s*done|wave\\s*.*shipped|全部\\s*verified|all\\s+green|fully\\s+resolved|landing\\s+complete|所有.*完成)"
+    mode: warn
+    message: "CZL Meta-Gate violation: coordinator (CEO/CTO) claimed closure (detected phrase: '{claim_phrase}') while {pending_count} unjustified pending tasks exist (IDs: {unjustified_pending_ids}). Call coordinator_audit.check_summary_rt_drift() before summary reply."
+    rationale: "Board 2026-04-16 meta-fix — Gate 2 only validated per-receipt Rt+1, not coordinator-level summaries. CEO wrote 'wave 完整收敛' while TaskList held 12+ pending → undetected drift. Closure claims must have actual Rt+1=0 (zero unjustified pending). Coordinator replies require same rigor as sub-agent receipts. Ref: ystar/governance/coordinator_audit.py, CZL Unified Communication Protocol v1.0."
+    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h warn-only observation (AI 1 day ≈ human 1 year)
+    dry_run_rationale: "AI iteration cycle: 1 day = ~1 year human time. 48h is the human-equivalent of ~year-long observation."
+    created_at: "2026-04-16T07:00:00Z"
+    helper_script: "ystar/governance/coordinator_audit.py::check_summary_rt_drift"
+
+  - name: subagent_tool_uses_claim_mismatch
+    pattern: "(?i)tool[_ -]?(uses?|calls?)\\s*[:：]\\s*(\\d+)"
+    mode: warn
+    message: "Sub-agent receipt tool_uses claim does not match metadata (diff ≥2). Call claim_mismatch.detect_tool_uses_mismatch() to validate. Examples: Ryan C3 (claim 13, metadata 38), Ryan C2 (claim 14, metadata 24), Ryan B3 (claim 9, metadata 22), Ethan#CZL-1 (claim 9, metadata 0). Severity: hallucination (claim > actual), omission (claim < actual), zero_tool_hallucination (claim > 0, actual = 0)."
+    rationale: "E1 priority enforcement (Board 2026-04-16) — Sub-agent receipt must honestly reflect tool_uses count. Drift ≥2 indicates either hallucinated completion (claim > actual) or omitted work acknowledgment (claim < actual). Ethan#CZL-1 zero-tool hallucination class = most severe. Ref: ystar/governance/claim_mismatch.py detect_tool_uses_mismatch()."
+    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h grace for ecosystem adaptation (AI 1 day ≈ human 1 year)
+    dry_run_rationale: "AI iteration cycle: 1 day = ~1 year human time. 48h is the human-equivalent of ~year-long observation."
+    created_at: "2026-04-16T11:00:00Z"
+
+  - name: charter_drift_mid_session
+    pattern: "(?i)(AGENTS\\.md|CLAUDE\\.md|governance/.*\\.md|\\.claude/agents/.*\\.md)"
+    mode: warn
+    message: "Charter file modified mid-session detected. File mtime > session_start_ts indicates silent constitutional drift risk. Call charter_drift.detect_charter_drift() to enumerate drifted files + emit CIEU CHARTER_DRIFT_DETECTED per file with mtime delta + git diff --stat. Recommendation: hot-reload modified files or schedule session restart to re-ingest charter changes."
+    rationale: "I1 Priority (Board 2026-04-16 K9-RT Discussion) — Mid-session charter changes create silent context drift. Agent continues operating under stale constitutional constraints while charter evolves. Detection enables: (1) hot-reload warning to Board, (2) CIEU audit trail for governance forensics, (3) graceful session restart trigger. Reference charter scope: AGENTS.md, CLAUDE.md, governance/*.md, .claude/agents/*.md. Ref: ystar/governance/charter_drift.py detect_charter_drift()."
+    dry_run_until: null  # Immediate enforcement (warn only, non-blocking)
+    created_at: "2026-04-16T15:00:00Z"
+    validator: charter_drift.detect_charter_drift
+    validator_kwargs:
+      session_start_ts: auto  # Daemon reads from .ystar_session.json["session_start_time"]
+    validator: claim_mismatch.detect_tool_uses_mismatch
+    validator_kwargs:
+      # validator receives (receipt_text, metadata_tool_uses) from harness
+      # returns dict {claimed, actual, diff, severity} or None
+
+  - name: wave_scope_undeclared
+    pattern: "(?i)(wave|本批|本轮).*?(收敛|complete|全部\\s*done|shipped|verified|all\\s+green|fully\\s+resolved|landing\\s+complete|所有.*完成)"
+    mode: warn
+    message: "Wave/batch closure claim lacks explicit TaskID scope declaration. Detected wave-language ('{wave_term}') + closure-language ('{closure_term}') but no TaskID list (missing pattern: '#\\d+' or 'task[_\\s]?id'). Call coordinator_audit.check_wave_scope_declared() before wave-level summary reply."
+    rationale: "Board 2026-04-16 batch drift fix — Prose wave closure (e.g., 'wave shipped') without explicit TaskID enumeration creates ambiguous scope. Sub-agents cannot verify which tasks are actually claimed complete. Requires explicit '#123, #124, #125' or equivalent task_id list in same paragraph as closure claim. Extension to coordinator_summary_rt_audit pattern."
+    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h observation period (AI 1 day ≈ human 1 year)
+    dry_run_rationale: "AI iteration cycle: 1 day = ~1 year human time. 48h is the human-equivalent of ~year-long observation."
+    created_at: "2026-04-16T20:00:00Z"
+    helper_script: "ystar/governance/coordinator_audit.py::check_wave_scope_declared"
+
+  - name: subagent_unauthorized_git_op
+    pattern: "git\\s+(commit|push|add|reset|merge|rebase)"
+    mode: warn
+    message: "Sub-agent (agent_id={agent_id}) attempted git operation: '{matched_command}'. Board Decision Rule (CLAUDE.md): code merges require Board confirmation. Sub-agents must not perform git operations unless deliverable explicitly authorizes. CEO/CTO are accountable for git op authorization."
+    rationale: "Board 2026-04-16 K9 forensic trace — Ryan sub-agent d2852174 committed 53 files uncaught. Existing rules only checked commit message content, not actor × command matrix. Sub-agents performing git ops without explicit authorization violates Board Decision Rule: 'All external releases, code merges, and actual payments require manual confirmation.' This rule enforces actor-level constraint: only CEO/CTO may perform git operations unless sub-agent task deliverable contains explicit 'you may commit' token."
+    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h grace period for explicit authorization pattern adoption
+    dry_run_rationale: "AI iteration cycle: 1 day = ~1 year human time. 48h allows ecosystem to adopt explicit authorization tokens in task deliverables before deny enforcement."
+    created_at: "2026-04-16T16:00:00Z"
+    scope:
+      agent_ids:
+        - eng-platform
+        - eng-kernel
+        - eng-governance
+        - eng-domains
+        - secretary
+        - ethan-cto
+        - sofia-cmo
+        - zara-cso
+        - marco-cfo
 
 # Whitelists — Files exempt from ForgetGuard checks (referenced by stem)
 whitelists:
