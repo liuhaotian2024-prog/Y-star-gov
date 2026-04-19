@@ -173,8 +173,8 @@ def _detect_agent_id(hook_payload: Dict[str, Any]) -> str:
     8. 回退到 "guest" (CZL-ARCH-1, 2026-04-18 — read-only default, replaces "agent")
     """
     # 1. payload.agent_id — CZL-ARCH-1-followup (2026-04-18): map through
-    # _map_agent_type so literal pushed names ("Ryan-Platform", "Leo-Kernel",
-    # etc.) resolve to canonical governance IDs ("eng-platform", "eng-kernel")
+    # _map_agent_type so literal pushed names (e.g. alias-based agent names)
+    # resolve to canonical governance IDs ("eng-platform", "eng-kernel")
     # before being returned. Skip if mapping degenerates to generic "agent"
     # so we continue to priority 2+ like the 1.5 filter.
     aid = hook_payload.get("agent_id", "")
@@ -269,7 +269,7 @@ def _detect_agent_id(hook_payload: Dict[str, Any]) -> str:
             try:
                 content = marker_path.read_text(encoding="utf-8").strip()
                 if content:
-                    # Map agent type (e.g., "Ethan-CTO" → "cto", "ystar-cto" → "cto")
+                    # Map agent type (e.g., alias-based names → canonical IDs via session config)
                     mapped = _map_agent_type(content)
                     if mapped and mapped != "agent":
                         _log.warning("Agent ID from DEPRECATED marker file %s (use session config instead): %s (mapped from %s)", marker_path, mapped, content)

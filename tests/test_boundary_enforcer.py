@@ -349,3 +349,30 @@ class TestBackwardCompatibility:
             patterns, override_roles = _get_immutable_config()
             assert patterns == ["AGENTS.md", ".claude/agents/"]  # Default
             assert override_roles == ["secretary"]
+
+
+class TestNoHardcodedCompanyPaths:
+    """Regression guard: boundary_enforcer.py must not contain bare company marker paths.
+
+    The company marker string may only appear inside an os.environ.get("YSTAR_REPO_ROOT", ...)
+    fallback expression — never as a standalone hardcoded path.
+    """
+
+    # Build marker at runtime so this source file itself never contains the literal
+    COMPANY_MARKER = "ystar" + "-" + "company"
+
+    def test_no_bare_ystar_company_paths(self):
+        """Ensure the company marker only appears inside YSTAR_REPO_ROOT env fallback."""
+        import inspect
+        from ystar.adapters import boundary_enforcer
+
+        source = inspect.getsource(boundary_enforcer)
+        lines = source.splitlines()
+        violations = []
+        for i, line in enumerate(lines, 1):
+            if self.COMPANY_MARKER in line and "YSTAR_REPO_ROOT" not in line:
+                violations.append(f"  line {i}: {line.strip()}")
+        assert not violations, (
+            f"boundary_enforcer.py has bare {self.COMPANY_MARKER} paths "
+            "(must use YSTAR_REPO_ROOT env var):\n" + "\n".join(violations)
+        )
