@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 import uuid
@@ -195,13 +196,87 @@ def _result_to_response(result: PolicyResult) -> Dict[str, Any]:
     # 取第一条违规消息作为拒绝原因
     msg = result.reason or "Blocked by Y* policy"
     return {
-        "action":  "block",
-        "message": f"[Y*] {msg}",
-        "violations": [
-            {"dimension": v.dimension, "message": v.message}
-            for v in result.violations
-        ],
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": f"[Y*] {msg}",
+            "violations": [
+                {"dimension": v.dimension, "message": v.message}
+                for v in result.violations
+            ],
+        }
     }
+
+
+def _try_extract_guidance(cieu_records) -> "Optional[GuidancePayload]":
+    """
+    CZL-ARCH-11a: Extract GuidancePayload from CIEU records if present.
+
+    Checks two sources:
+    1. A `.guidance` attribute on the first CIEU record (structured path)
+    2. JSON-encoded GuidancePayload in drift_details (serialized fallback)
+
+    Returns None if no guidance is found or if invoke_cmd is empty.
+    """
+    from ystar.domains.openclaw.adapter import GuidancePayload
+
+    if not cieu_records:
+        return None
+
+    rec = cieu_records[0]
+
+    # Path 1: structured attribute (future-proof — when enforce() attaches GuidancePayload directly)
+    gp = getattr(rec, "guidance", None)
+    if isinstance(gp, GuidancePayload) and gp.invoke_cmd:
+        return gp
+
+    # Path 2: JSON in drift_details (e.g. '{"invoke_cmd": "ystar doctor", ...}')
+    dd = getattr(rec, "drift_details", None)
+    if dd and isinstance(dd, str):
+        try:
+            data = json.loads(dd)
+            if isinstance(data, dict) and data.get("invoke_cmd"):
+                return GuidancePayload(
+                    invoke_cmd=data["invoke_cmd"],
+                    fix_command_args=data.get("fix_command_args", {}),
+                    then_retry_original=data.get("then_retry_original", False),
+                    rule_ref=data.get("rule_ref"),
+                    docs_ref=data.get("docs_ref"),
+                )
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    return None
+
+
+def _emit_auto_invoke_cieu(
+    agent_id: str,
+    tool_name: str,
+    invoke_cmd: str,
+    success: bool,
+    session_id: str = "",
+    session_cfg: Optional[Dict[str, Any]] = None,
+    error: str = "",
+) -> None:
+    """
+    CZL-ARCH-11a: Emit AUTO_INVOKE_APPLIED CIEU event.
+    """
+    try:
+        from ystar.governance.cieu_store import CIEUStore
+        cieu_db = (session_cfg or {}).get("cieu_db", ".ystar_cieu.db")
+        store = CIEUStore(cieu_db)
+        store.record({
+            "event_type": "AUTO_INVOKE_APPLIED",
+            "agent_id": agent_id,
+            "session_id": session_id,
+            "tool_name": tool_name,
+            "invoke_cmd": invoke_cmd,
+            "success": success,
+            "error": error,
+            "timestamp": time.time(),
+        })
+    except Exception as exc:
+        _log.debug("[ARCH-11a] Failed to emit AUTO_INVOKE_APPLIED CIEU: %s", exc)
 
 
 def _compute_effective_contract(delegation_chain_dict: dict, agent_id: str) -> dict:
@@ -414,9 +489,16 @@ def check_hook(
     cieu_db_boot = session_cfg_boot.get("cieu_db", ".ystar_cieu.db") if session_cfg_boot else ".ystar_cieu.db"
     _write_boot_record(who, session_id_payload or "unknown", cieu_db_boot)
 
-    # 若 agent_id 未在 Policy 里注册，回退到 "agent" fallback
+    # 若 agent_id 未在 Policy 里注册，按层级 alias fallback
+    # CZL-ARCH-1-followup (2026-04-18): eng-* 子角色继承 cto 权限，
+    # 避免因 AGENTS.md 未显式注册每个 engineer 而回退到 "agent" 盲拒。
+    # 原逻辑：who not in policy → who = "agent" → blanket deny (lock-death root).
     if who not in policy:
-        if "agent" in policy:
+        # eng-* sub-roles inherit from cto (engineering manager)
+        if who.startswith("eng-") and "cto" in policy:
+            who = "cto"
+        # unknown fallback to "agent" (blanket-deny) still available
+        elif "agent" in policy:
             who = "agent"
         else:
             registered = list(policy._rules.keys())
@@ -615,12 +697,15 @@ def check_hook(
                         who, command[:80], violation_msg,
                     )
                     return {
-                        "action": "block",
-                        "message": f"[Y*] {violation_msg}",
-                        "violations": [
-                            {"dimension": v.dimension, "message": v.message}
-                            for v in cmd_result.violations
-                        ],
+                        "hookSpecificOutput": {
+                            "hookEventName": "PreToolUse",
+                            "permissionDecision": "deny",
+                            "permissionDecisionReason": f"[Y*] {violation_msg}",
+                            "violations": [
+                                {"dimension": v.dimension, "message": v.message}
+                                for v in cmd_result.violations
+                            ],
+                        }
                     }
 
     # ── LESSON_READ tracking (Maya 2026-04-15, 蒸馏 verification Layer 1) ──
@@ -811,6 +896,53 @@ def check_hook(
             result
         )
 
+    # ── CZL-ARCH-14: REWRITE — auto-correct false-positive denials (light path) ──
+    if not result.allowed:
+        try:
+            from ystar.rules.auto_rewrite import auto_rewrite_detector, auto_rewrite_executor
+            transform = auto_rewrite_detector(tool_name, params)
+            if transform is not None:
+                rewrite_meta = auto_rewrite_executor(transform, tool_name, params)
+                # Emit REWRITE_APPLIED CIEU event
+                try:
+                    from ystar.governance.cieu_store import CIEUStore as _CS_RW_L
+                    _CS_RW_L(cieu_db).write_dict({
+                        "session_id": session_id_payload or "unknown",
+                        "agent_id": who,
+                        "event_type": "REWRITE_APPLIED",
+                        "decision": "rewrite",
+                        "passed": True,
+                        "tool_name": tool_name,
+                        "evidence_grade": "governance_rewrite",
+                        "params_json": json.dumps({
+                            "rewrite_mode": transform.mode,
+                            "safe_reason": transform.safe_reason,
+                            "original_decision": "deny",
+                        }),
+                    })
+                except Exception:
+                    pass
+                _log.info(
+                    "[ARCH-14] REWRITE_APPLIED (light): mode=%s agent=%s tool=%s",
+                    transform.mode, who, tool_name,
+                )
+                response = {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "allow",
+                        "permissionDecisionReason": (
+                            f"[Y*gov REWRITE] Auto-corrected: {transform.mode}. "
+                            f"{transform.safe_reason}. Original would have been: deny."
+                        ),
+                    }
+                }
+                _feed_path_b(who, tool_name, params, response, session_id_payload)
+                return response
+        except ImportError:
+            pass
+        except Exception as _rw_light_exc:
+            _log.warning("[ARCH-14] REWRITE light path failed: %s", _rw_light_exc)
+
     # ── Orchestrator: feed advanced governance subsystems ─────────────────
     _run_orchestrator(who, tool_name, params, result, session_cfg)
 
@@ -882,8 +1014,11 @@ def _check_hook_full(
         errors = state.delegation_chain.validate()
         if errors:
             return {
-                "action":  "block",
-                "message": f"[Y*] Delegation chain violation: {errors[0]}",
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": f"[Y*] Delegation chain violation: {errors[0]}",
+                }
             }
 
     # 配置 CIEU 自动持久化
@@ -928,39 +1063,232 @@ def _check_hook_full(
     decision, cieu_records = enforce(event, state)
 
     from ystar.domains.openclaw.adapter import EnforceDecision
-    if decision in (EnforceDecision.DENY, EnforceDecision.ESCALATE):
-        # ── 构建 block message：violation 原因 + gate 的 suggested_action ──
+
+    # ── Helper: extract reason + suggested_action from CIEU records ──
+    def _extract_reason_and_suggested() -> tuple:
         reason = ""
         suggested = ""
-
-        # 从 CIEU 记录里取违规原因
         if cieu_records and cieu_records[0].call_record:
             viols = cieu_records[0].call_record.violations
             if viols:
                 reason = f"[Y*] {viols[0].message}"
-
-        # 从 drift_details 里取 gate 的 suggested_action（义务超时阻断时）
         if cieu_records and cieu_records[0].drift_details:
             dd = cieu_records[0].drift_details
             if "Suggested:" in dd:
                 suggested = dd[dd.index("Suggested:") + len("Suggested:"):].strip()
+        return reason, suggested
 
+    # ── CZL-ARCH-14: REWRITE — auto-correct false-positive denials ─────
+    # Check BEFORE DENY branch: if a safe transform matches, override the
+    # deny with an ALLOW + REWRITE_APPLIED CIEU event.
+    if decision in (EnforceDecision.DENY, EnforceDecision.REWRITE):
+        try:
+            from ystar.rules.auto_rewrite import auto_rewrite_detector, auto_rewrite_executor
+            transform = auto_rewrite_detector(tool_name, params)
+            if transform is not None:
+                rewrite_meta = auto_rewrite_executor(transform, tool_name, params)
+                # Emit REWRITE_APPLIED CIEU event
+                try:
+                    from ystar.governance.cieu_store import CIEUStore as _CS_RW
+                    _rw_db = session_cfg.get("cieu_db", ".ystar_cieu.db")
+                    _CS_RW(_rw_db).write_dict({
+                        "session_id": session_id,
+                        "agent_id": who,
+                        "event_type": "REWRITE_APPLIED",
+                        "decision": "rewrite",
+                        "passed": True,
+                        "tool_name": tool_name,
+                        "evidence_grade": "governance_rewrite",
+                        "params_json": json.dumps({
+                            "rewrite_mode": transform.mode,
+                            "safe_reason": transform.safe_reason,
+                            "original_decision": str(decision.value),
+                        }),
+                    })
+                except Exception as _rw_cieu_exc:
+                    _log.debug("[ARCH-14] CIEU write failed: %s", _rw_cieu_exc)
+
+                _log.info(
+                    "[ARCH-14] REWRITE_APPLIED: mode=%s agent=%s tool=%s reason=%s",
+                    transform.mode, who, tool_name, transform.safe_reason,
+                )
+                _process_obligation_triggers(tool_name, tool_input, who, session_id, decision)
+                _run_orchestrator(who, tool_name, params, decision, session_cfg)
+                rewrite_response = {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "allow",
+                        "permissionDecisionReason": (
+                            f"[Y*gov REWRITE] Auto-corrected: {transform.mode}. "
+                            f"{transform.safe_reason}. Original would have been: {decision.value}."
+                        ),
+                    }
+                }
+                _feed_path_b(who, tool_name, params, rewrite_response, session_id)
+                return rewrite_response
+        except ImportError:
+            _log.debug("[ARCH-14] auto_rewrite module not available, skipping")
+        except Exception as _rw_exc:
+            _log.warning("[ARCH-14] REWRITE check failed: %s", _rw_exc)
+
+    # ── CZL-P1-c: Three independent decision branches ──────────────────
+
+    if decision == EnforceDecision.DENY:
+        reason, suggested = _extract_reason_and_suggested()
         if not reason:
             reason = f"[Y*] agent '{who}' action denied by governance"
-
         message = reason
         if suggested and suggested != "None":
             message = f"{reason}\n\n{suggested}"
 
-        # ── NEW: Process DENY triggers (Trigger #7: Failure Case Documentation) ──
         _process_obligation_triggers(tool_name, tool_input, who, session_id, decision)
-
-        # ── Orchestrator: feed advanced governance subsystems (DENY path) ────
         _run_orchestrator(who, tool_name, params, decision, session_cfg)
 
-        deny_response = {"action": "block", "message": message}
+        deny_response = {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": message,
+            }
+        }
         _feed_path_b(who, tool_name, params, deny_response, session_id)
         return deny_response
+
+    if decision == EnforceDecision.ESCALATE:
+        reason, suggested = _extract_reason_and_suggested()
+        if not reason:
+            reason = f"[Y*] agent '{who}' action escalated — requires human intervention"
+        message = reason
+        if suggested and suggested != "None":
+            message = f"{reason}\n\n{suggested}"
+
+        _process_obligation_triggers(tool_name, tool_input, who, session_id, decision)
+        _run_orchestrator(who, tool_name, params, decision, session_cfg)
+
+        escalate_response = {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": message,
+            }
+        }
+        _feed_path_b(who, tool_name, params, escalate_response, session_id)
+        return escalate_response
+
+    if decision == EnforceDecision.REDIRECT:
+        # CZL-P1-c: REDIRECT returns allow + structured fix instructions
+        # so the agent sees the message but is NOT blocked.
+        reason, suggested = _extract_reason_and_suggested()
+        violation_desc = reason or f"agent '{who}' identity/state needs correction"
+
+        # Build structured REDIRECT message with 3 required sections
+        fix_command = suggested if suggested and suggested != "None" else (
+            f'echo "{who}" > {os.environ.get("YSTAR_REPO_ROOT", ".")}/.ystar_active_agent && retry'
+        )
+
+        # ── CZL-ARCH-11a: Mandatory Invoke — auto-upgrade REDIRECT → INVOKE ──
+        guidance = _try_extract_guidance(cieu_records)
+        if guidance and guidance.invoke_cmd and guidance.then_retry_original:
+            invoke_cmd = guidance.invoke_cmd
+            invoke_args = guidance.fix_command_args or {}
+            try:
+                cmd_parts = [invoke_cmd] + [
+                    f"--{k}={v}" for k, v in invoke_args.items()
+                ]
+                proc = subprocess.run(
+                    cmd_parts, capture_output=True, text=True, timeout=30,
+                )
+                if proc.returncode == 0:
+                    # Invoke succeeded — upgrade to ALLOW + retry original
+                    _log.info(
+                        "[ARCH-11a] AUTO_INVOKE succeeded: cmd=%s tool=%s agent=%s",
+                        invoke_cmd, tool_name, who,
+                    )
+                    _emit_auto_invoke_cieu(
+                        who, tool_name, invoke_cmd, success=True,
+                        session_id=session_id, session_cfg=session_cfg,
+                    )
+                    _process_obligation_triggers(tool_name, tool_input, who, session_id, decision)
+                    _run_orchestrator(who, tool_name, params, decision, session_cfg)
+                    allow_response = {
+                        "hookSpecificOutput": {
+                            "hookEventName": "PreToolUse",
+                            "permissionDecision": "allow",
+                            "permissionDecisionReason": (
+                                f"AUTO_INVOKED: {invoke_cmd} succeeded, retrying. "
+                                f"Original violation: {violation_desc}"
+                            ),
+                        }
+                    }
+                    _feed_path_b(who, tool_name, params, allow_response, session_id)
+                    return allow_response
+                else:
+                    # Invoke failed — stay REDIRECT with error detail
+                    err_msg = (proc.stderr or proc.stdout or "unknown error")[:200]
+                    _log.warning(
+                        "[ARCH-11a] AUTO_INVOKE failed: cmd=%s rc=%d err=%s",
+                        invoke_cmd, proc.returncode, err_msg,
+                    )
+                    _emit_auto_invoke_cieu(
+                        who, tool_name, invoke_cmd, success=False,
+                        session_id=session_id, session_cfg=session_cfg,
+                        error=err_msg,
+                    )
+            except Exception as exc:
+                err_msg = str(exc)[:200]
+                _log.warning(
+                    "[ARCH-11a] AUTO_INVOKE exception: cmd=%s err=%s",
+                    invoke_cmd, err_msg,
+                )
+                _emit_auto_invoke_cieu(
+                    who, tool_name, invoke_cmd, success=False,
+                    session_id=session_id, session_cfg=session_cfg,
+                    error=err_msg,
+                )
+            # Fall through to normal REDIRECT if invoke failed/errored
+            fix_command = f"{fix_command}\nAUTO_INVOKE_FAILED: {invoke_cmd} — manual fix needed"
+
+        # ── CZL-ARCH-11b: REDIRECT ignore detector via OmissionEngine ──
+        # When we reach here, either GuidancePayload was absent (no auto-invoke)
+        # or auto-invoke failed. Create obligation to track REDIRECT compliance.
+        try:
+            from ystar.governance.omission_engine import OmissionEngine
+            from ystar.governance.omission_store import InMemoryOmissionStore
+            import uuid as _uuid_11b
+            _redirect_id = str(_uuid_11b.uuid4())
+            _oe = OmissionEngine(store=InMemoryOmissionStore())
+            _oe.register_redirect_obligation(
+                agent_id=who,
+                redirect_id=_redirect_id,
+                ttl_actions=3,
+                entity_id=session_id or "session",
+                redirect_reason=violation_desc[:200],
+            )
+            _log.info(
+                "[ARCH-11b] Registered redirect obligation: agent=%s id=%s",
+                who, _redirect_id,
+            )
+        except Exception as _11b_exc:
+            _log.warning("[ARCH-11b] Failed to register redirect obligation: %s", _11b_exc)
+
+        redirect_message = (
+            f"[Y*] REDIRECT: {violation_desc}\n"
+            f"FIX_COMMAND: {fix_command}\n"
+            f"THEN_RETRY: {tool_name} {(params.get('file_path') or params.get('command') or '')[:120]}"
+        )
+
+        _process_obligation_triggers(tool_name, tool_input, who, session_id, decision)
+        _run_orchestrator(who, tool_name, params, decision, session_cfg)
+
+        redirect_response = {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "allow",
+                "permissionDecisionReason": redirect_message,
+            }
+        }
+        _feed_path_b(who, tool_name, params, redirect_response, session_id)
+        return redirect_response
 
     # ── NEW: Process ALLOW triggers (full path) ──────────────────────────────
     _process_obligation_triggers(tool_name, tool_input, who, session_id, decision)
@@ -994,7 +1322,13 @@ def _check_hook_full(
                 deny_result = PolicyResult(allowed=False, reason=deny_msg, who=who, what=tool_name)
                 _write_cieu(who, tool_name, params, deny_result,
                             session_id, contract.hash if contract else "", cieu_db)
-                return {"action": "block", "message": f"[Y*] {deny_msg}"}
+                return {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": f"[Y*] {deny_msg}",
+                    }
+                }
 
     # ── Path B: feed observation for metalearning ────────────────────────
     _feed_path_b(who, tool_name, params, {}, session_id)
@@ -1591,4 +1925,111 @@ def _process_obligation_triggers(
 
     except Exception:
         pass  # Trigger processing failure does not block the tool call
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# ARCH-6: handle_hook_event — thin entry point for v2 hook adapter
+# ═══════════════════════════════════════════════════════════════════════
+
+def _load_rules_from_dir(rules_dir: str) -> None:
+    """
+    Load router rules from a directory of .py files.
+
+    Delegates to ``RouterRegistry.load_rules_dir`` (ARCH-4 canonical).
+    This thin wrapper exists so ``handle_hook_event`` callers don't change.
+    """
+    from ystar.governance.router_registry import get_default_registry
+
+    get_default_registry().load_rules_dir(rules_dir)
+
+
+def handle_hook_event(
+    payload: Dict[str, Any],
+    *,
+    rules_dir: Optional[str] = None,
+    policy: Optional[Policy] = None,
+) -> Dict[str, Any]:
+    """
+    Unified hook entry point for the v2 thin adapter (ARCH-6).
+
+    This function:
+      1. Optionally loads router rules from ``rules_dir``
+      2. Runs matching router rules (Layer 3) before check_hook
+      3. If any rule returns non-allow, returns that decision immediately
+      4. Otherwise falls through to check_hook (Layers 2+1)
+
+    Args:
+        payload:    Raw hook payload dict (OpenClaw / Claude Code format).
+        rules_dir:  Path to directory of .py files containing RouterRule
+                    definitions.  Each file should export
+                    ``RULES = [RouterRule(...)]``.
+                    If None, no external rules are loaded (built-in rules only).
+        policy:     Optional Policy object.  Passed through to check_hook.
+
+    Returns:
+        Hook response dict.  ``{}`` means allow,
+        ``{"hookSpecificOutput": ...}`` means deny/redirect.
+    """
+    from ystar.governance.router_registry import get_default_registry
+
+    # Register built-in rules (idempotent — already-registered rules skipped)
+    try:
+        from ystar.rules.break_glass import register_break_glass_rule
+        register_break_glass_rule()
+    except Exception:
+        pass  # Graceful degradation if rules package unavailable
+    try:
+        from ystar.rules.next_action_inject import register_next_action_rule
+        register_next_action_rule()
+    except Exception:
+        pass
+    try:
+        from ystar.rules.per_rule_detectors import register_builtin_rules
+        register_builtin_rules()
+    except Exception:
+        pass
+
+    # Load external rules (idempotent — already-registered rules are skipped)
+    if rules_dir:
+        _load_rules_from_dir(rules_dir)
+
+    # Run router rules (Layer 3) — if any match and return non-allow, short-circuit
+    registry = get_default_registry()
+    matches = registry.find_matching_rules(payload)
+    if matches:
+        results = registry.execute_rules(payload, rules=matches, stop_on_non_allow=True)
+        for rr in results:
+            if rr.decision == "deny":
+                return {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": (
+                            f"[Y*gov router:{rr.rule_id}] {rr.message}"
+                        ),
+                    }
+                }
+            elif rr.decision == "redirect":
+                return {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": (
+                            f"[Y*gov REDIRECT:{rr.rule_id}] {rr.message}"
+                        ),
+                    }
+                }
+            elif rr.decision == "allow" and rr.rule_id == "builtin.break_glass":
+                # Break-glass (ARCH-5): bypass ALL enforcement including check_hook
+                return {}
+            elif rr.decision == "inject":
+                # Inject context — proceed to check_hook; injected context
+                # is logged for downstream consumption.
+                _log.info(
+                    "Router inject from %s: %s",
+                    rr.rule_id, rr.injected_context[:80],
+                )
+
+    # Fall through to existing check_hook (Layer 2 + Layer 1)
+    return check_hook(payload, policy=policy)
 

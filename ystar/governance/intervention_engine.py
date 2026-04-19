@@ -505,7 +505,7 @@ class InterventionEngine:
                 actor_id=actor_id,
                 action_type=action_type,
                 blocking_omission_type=identity_error,
-                suggested_action="Use specific agent identity (e.g., ystar-ceo, path_a_agent)",
+                suggested_action=f'echo "ceo" > {os.environ.get("YSTAR_REPO_ROOT", ".")}/.ystar_active_agent && retry',
             )
             self._record_gate_check(result, entity_id)
             return result

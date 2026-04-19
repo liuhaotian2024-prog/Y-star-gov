@@ -41,19 +41,26 @@ _SESSION_CONFIG_CACHE: Optional[Dict[str, Any]] = None
 # ── Agent Type → Governance ID Mapping ──────────────────────────────────
 # Agent type → governance ID mapping
 # Claude Code agents use "Name-Role" format, governance uses short IDs
+# Note: Replace placeholder names with your organization's agent names
 _AGENT_TYPE_MAP = {
-    "Aiden-CEO": "ceo",
-    "Ethan-CTO": "cto",
-    "Sofia-CMO": "cmo",
-    "Marco-CFO": "cfo",
-    "Zara-CSO": "cso",
-    "Samantha-Secretary": "secretary",
-    "Leo-Kernel": "eng-kernel",
-    "Ryan-Platform": "eng-platform",
-    "Maya-Governance": "eng-governance",
-    "Jordan-Domains": "eng-domains",
-    "Jinjin-Research": "jinjin",
-    # Legacy format support
+    # C-suite agents (generic naming)
+    "Agent-CEO": "ceo",
+    "Agent-CTO": "cto",
+    "Agent-CMO": "cmo",
+    "Agent-CFO": "cfo",
+    "Agent-CSO": "cso",
+    "Agent-Secretary": "secretary",
+    # Engineering agents (generic naming)
+    "Agent-Kernel": "eng-kernel",
+    "Agent-Platform": "eng-platform",
+    "Agent-Governance": "eng-governance",
+    "Agent-Domains": "eng-domains",
+    "Agent-Research": "jinjin",
+    "Agent-Security": "eng-security",
+    "Agent-ML": "eng-ml",
+    "Agent-Performance": "eng-perf",
+    "Agent-Compliance": "eng-compliance",
+    # Legacy format support (role IDs)
     "ystar-ceo": "ceo",
     "ystar-cto": "cto",
     "ystar-cmo": "cmo",
@@ -63,19 +70,91 @@ _AGENT_TYPE_MAP = {
     "eng-platform": "eng-platform",
     "eng-governance": "eng-governance",
     "eng-domains": "eng-domains",
+    "eng-data": "eng-data",
+    "eng-security": "eng-security",
+    "eng-ml": "eng-ml",
+    "eng-perf": "eng-perf",
+    "eng-compliance": "eng-compliance",
+    # Organization-specific agent names (e.g., "Alice-CTO", "Bob-Kernel")
+    # should be injected via .ystar_session.json "agent_aliases" field,
+    # NOT hardcoded here. See _load_alias_map() for the runtime injection point.
 }
 
 
+def _load_alias_map() -> Dict[str, str]:
+    """
+    CZL-ARCH-1 (2026-04-18): Load agent aliases from .ystar_session.json.
+
+    Returns dict of custom_name -> canonical_id. Gracefully returns {} if
+    session file missing, unreadable, or lacks 'agent_aliases' field.
+    """
+    try:
+        repo_root = os.environ.get("YSTAR_REPO_ROOT", "")
+        if repo_root:
+            session_path = Path(repo_root) / ".ystar_session.json"
+        else:
+            session_path = Path(".ystar_session.json")
+        if not session_path.exists():
+            return {}
+        with open(session_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        aliases = cfg.get("agent_aliases", {})
+        if isinstance(aliases, dict):
+            return aliases
+        _log.warning(".ystar_session.json agent_aliases is not a dict, ignoring")
+        return {}
+    except Exception as e:
+        _log.debug("Failed to load agent_aliases: %s", e)
+        return {}
+
+
 def _map_agent_type(agent_type: str) -> str:
-    """Map Claude Code agent_type to Y*gov governance ID."""
+    """
+    Map Claude Code agent_type to Y*gov governance ID.
+
+    CZL-ARCH-1 (2026-04-18) resolution chain:
+    1. Exact match in _AGENT_TYPE_MAP
+    2. Session-config agent_aliases override
+    3. Case-insensitive match after normalizing separators
+    4. Fuzzy match via difflib.get_close_matches (cutoff 0.75)
+    5. Log warning + return as-is (caller decides final fallback)
+    """
+    if not agent_type:
+        return agent_type
+    # 1. Exact match (built-in map)
     if agent_type in _AGENT_TYPE_MAP:
         return _AGENT_TYPE_MAP[agent_type]
-    # Fallback: try lowercase, strip common prefixes
-    lower = agent_type.lower().replace("ystar-", "")
+    # 2. Session-config alias override
+    aliases = _load_alias_map()
+    if agent_type in aliases:
+        return aliases[agent_type]
+    # 3. Case-insensitive, normalize separators (space/underscore -> hyphen)
+    lower = agent_type.lower().replace("ystar-", "").replace(" ", "-").replace("_", "-")
     for key, val in _AGENT_TYPE_MAP.items():
-        if key.lower() == lower:
+        if key.lower().replace(" ", "-").replace("_", "-") == lower:
             return val
-    return agent_type  # Return as-is if no mapping found
+    for key, val in aliases.items():
+        if key.lower().replace(" ", "-").replace("_", "-") == lower:
+            return val
+    # 4. Fuzzy match (difflib) against combined key set
+    try:
+        import difflib
+        candidates = list(_AGENT_TYPE_MAP.keys()) + list(aliases.keys())
+        matches = difflib.get_close_matches(agent_type, candidates, n=1, cutoff=0.75)
+        if matches:
+            matched_key = matches[0]
+            resolved = _AGENT_TYPE_MAP.get(matched_key) or aliases.get(matched_key)
+            if resolved:
+                _log.warning(
+                    "Fuzzy-matched agent_type '%s' -> '%s' -> '%s'",
+                    agent_type, matched_key, resolved,
+                )
+                return resolved
+    except Exception as e:
+        _log.debug("Fuzzy match failed: %s", e)
+    # 5. No match — log warning + return as-is
+    _log.warning("Unknown agent_type '%s' — not in map/aliases/fuzzy, returning as-is", agent_type)
+    return agent_type
 
 
 def _detect_agent_id(hook_payload: Dict[str, Any]) -> str:
@@ -91,20 +170,31 @@ def _detect_agent_id(hook_payload: Dict[str, Any]) -> str:
     5. transcript_path 提取
     6. .ystar_session.json (single source of truth, reads agent_stack)
     7. DEPRECATED: .ystar_active_agent 文件（向后兼容，优先级降至最低）
-    8. 回退到 "agent"
+    8. 回退到 "guest" (CZL-ARCH-1, 2026-04-18 — read-only default, replaces "agent")
     """
-    # 1. payload
+    # 1. payload.agent_id — CZL-ARCH-1-followup (2026-04-18): map through
+    # _map_agent_type so literal pushed names ("Ryan-Platform", "Leo-Kernel",
+    # etc.) resolve to canonical governance IDs ("eng-platform", "eng-kernel")
+    # before being returned. Skip if mapping degenerates to generic "agent"
+    # so we continue to priority 2+ like the 1.5 filter.
     aid = hook_payload.get("agent_id", "")
     if aid and aid != "agent":
-        _log.debug("Agent ID from payload.agent_id: %s", aid)
-        return aid
+        mapped = _map_agent_type(aid)
+        if mapped and mapped != "agent":
+            _log.debug("Agent ID from payload.agent_id: %s (mapped from %s)", mapped, aid)
+            return mapped
+        _log.debug("payload.agent_id '%s' mapped to generic '%s' — continuing detection", aid, mapped)
 
     # 1.5 payload: agent_type (Claude Code injects this for subagents)
+    # CZL-P1-b Fix: If _map_agent_type returns "agent" (generic/unknown),
+    # do NOT early return — continue to priority 3+ for better detection.
     agent_type = hook_payload.get("agent_type", "")
     if agent_type:
         mapped = _map_agent_type(agent_type)
-        _log.debug("Agent ID from payload.agent_type: %s (mapped from %s)", mapped, agent_type)
-        return mapped
+        if mapped and mapped != "agent":
+            _log.debug("Agent ID from payload.agent_type: %s (mapped from %s)", mapped, agent_type)
+            return mapped
+        _log.debug("payload.agent_type '%s' mapped to generic '%s' — continuing detection", agent_type, mapped)
 
     # 2. env: YSTAR_AGENT_ID
     aid = os.environ.get("YSTAR_AGENT_ID", "")
@@ -146,29 +236,56 @@ def _detect_agent_id(hook_payload: Dict[str, Any]) -> str:
         _log.debug("transcript_path present but no agent name extracted: %s", transcript_path)
 
     # 6. session config (Layer 1: single source of truth per AMENDMENT-015)
+    # AMENDMENT-016: Resilient fallback — schema validation errors should not crash identity detection
     try:
         from ystar.session import current_agent
         agent_from_session = current_agent()
         if agent_from_session != "agent":
             _log.debug("Agent ID from session config: %s", agent_from_session)
             return agent_from_session
+    except ValueError as e:
+        # Schema validation errors are non-fatal — fall through to next priority
+        _log.warning("Session config schema validation failed (non-fatal): %s", str(e)[:100])
     except Exception as e:
         _log.debug("Failed to read agent from session config: %s", e)
 
     # 7. DEPRECATED: marker file (.ystar_active_agent)
     # Kept for backward compatibility during migration, but session config takes precedence
-    marker = Path(".ystar_active_agent")
-    if marker.exists():
-        try:
-            content = marker.read_text(encoding="utf-8").strip()
-            if content:
-                _log.warning("Agent ID from DEPRECATED marker file (use session config instead): %s", content)
-                return content
-        except Exception as e:
-            _log.warning("Failed to read agent marker file: %s", e)
+    # AMENDMENT-016: Check both repo root and scripts/ subdirectory, map agent types
+    # CZL-P1-b Fix: Use absolute paths via YSTAR_REPO_ROOT env when available.
+    # When not set, fall back to cwd-relative paths (preserves backward compat + test isolation).
+    _repo_root = os.environ.get("YSTAR_REPO_ROOT", "")
+    _marker_candidates: list = []
+    if _repo_root:
+        # Absolute path: production mode — no cwd dependency
+        _marker_candidates.append(Path(_repo_root) / ".ystar_active_agent")
+        _marker_candidates.append(Path(_repo_root) / "scripts" / ".ystar_active_agent")
+    else:
+        # Backward compat: cwd-relative (tests use monkeypatch.chdir for isolation)
+        _marker_candidates.append(Path(".ystar_active_agent"))
+        _marker_candidates.append(Path("scripts") / ".ystar_active_agent")
+    for marker_path in _marker_candidates:
+        if marker_path.exists():
+            try:
+                content = marker_path.read_text(encoding="utf-8").strip()
+                if content:
+                    # Map agent type (e.g., "Ethan-CTO" → "cto", "ystar-cto" → "cto")
+                    mapped = _map_agent_type(content)
+                    if mapped and mapped != "agent":
+                        _log.warning("Agent ID from DEPRECATED marker file %s (use session config instead): %s (mapped from %s)", marker_path, mapped, content)
+                        return mapped
+                    _log.debug("Marker file %s content '%s' mapped to generic '%s' — skipping", marker_path, content, mapped)
+            except Exception as e:
+                _log.warning("Failed to read agent marker file %s: %s", marker_path, e)
 
-    _log.debug("All agent ID detection methods failed, falling back to 'agent'")
-    return "agent"
+    # CZL-ARCH-1 (2026-04-18): Final fallback returns "guest" instead of "agent".
+    # Rationale: "agent" in the policy space means "unknown/default" which historically
+    # triggered blanket deny → recursive lock-death with no escape hatch. "guest" should
+    # be wired in the policy as read-only (Read/Grep/Glob allowed, Bash/Write/Edit/Agent
+    # denied), giving the system a non-destructive default identity that lets agents at
+    # least observe state and find their way out of identity ambiguity.
+    _log.warning("All agent ID detection methods failed, falling back to 'guest' (read-only)")
+    return "guest"
 
 
 def _load_session_config(search_dirs: Optional[list] = None) -> Optional[Dict[str, Any]]:
@@ -185,7 +302,16 @@ def _load_session_config(search_dirs: Optional[list] = None) -> Optional[Dict[st
         _log.debug("Session config loaded from in-memory cache")
         return _SESSION_CONFIG_CACHE
 
-    dirs = search_dirs or [os.getcwd(), str(Path.home())]
+    # CZL-P1-b Fix: Prefer YSTAR_REPO_ROOT env for absolute path resolution.
+    # Fall back to os.getcwd() for backward compat (tests, legacy setups).
+    _repo_root = os.environ.get("YSTAR_REPO_ROOT", "")
+    _default_dirs = []
+    if _repo_root:
+        _default_dirs.append(_repo_root)
+    else:
+        _default_dirs.append(os.getcwd())
+    _default_dirs.append(str(Path.home()))
+    dirs = search_dirs or _default_dirs
     for d in dirs:
         p = Path(d) / ".ystar_session.json"
         if p.exists():
