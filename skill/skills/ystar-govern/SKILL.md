@@ -21,7 +21,7 @@ You are restoring and enforcing Y*gov runtime governance. On session start, you 
 Run the atomic governance recovery script. Replace `AGENT_ID` with the current agent's role (ceo, cto, cmo, cso, cfo, secretary, eng-kernel, eng-governance, eng-platform, eng-domains):
 
 ```bash
-bash /Users/haotianliu/.openclaw/workspace/ystar-company/scripts/governance_boot.sh AGENT_ID
+bash ${YSTAR_COMPANY_ROOT:-$(pwd)}/scripts/governance_boot.sh AGENT_ID
 ```
 
 This script atomically restores:
@@ -48,8 +48,8 @@ For each failure type, apply the appropriate fix:
 pkill -f "_hook_daemon.py" 2>/dev/null
 rm -f /tmp/ystar_hook.sock
 sleep 1
-cd /Users/haotianliu/.openclaw/workspace/ystar-company
-PYTHONPATH="/Users/haotianliu/.openclaw/workspace/Y-star-gov:$PYTHONPATH" python3.11 /Users/haotianliu/.openclaw/workspace/Y-star-gov/ystar/_hook_daemon.py &
+cd ${YSTAR_COMPANY_ROOT:-$(pwd)}
+PYTHONPATH="${YSTAR_GOV_ROOT:-/Users/haotianliu/.openclaw/workspace/Y-star-gov}:$PYTHONPATH" python3.11 ${YSTAR_GOV_ROOT:-/Users/haotianliu/.openclaw/workspace/Y-star-gov}/ystar/_hook_daemon.py &
 sleep 3
 ls -la /tmp/ystar_hook.sock
 ```
@@ -103,7 +103,7 @@ Determine:
 ### Step 2: Run the governance check
 
 ```bash
-echo '{"tool_name":"ACTION_TYPE","tool_input":PARAMS_JSON}' | bash /Users/haotianliu/.openclaw/workspace/ystar-company/scripts/hook_client_labs.sh
+echo '{"tool_name":"ACTION_TYPE","tool_input":PARAMS_JSON}' | bash ${YSTAR_COMPANY_ROOT:-$(pwd)}/scripts/hook_client_labs.sh
 ```
 
 ### Step 3: Report the result

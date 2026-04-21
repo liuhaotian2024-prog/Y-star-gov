@@ -600,6 +600,65 @@ class GovernanceLoop:
         self._observations.append(obs)
         return obs
 
+    def observe_parent_session(
+        self,
+        entity_id: str,
+        metrics: Optional[Dict[str, Any]] = None,
+    ) -> GovernanceObservation:
+        """
+        Observe the parent session entity as a governance subject.
+
+        Creates a GovernanceObservation enriched with parent-specific metrics
+        (tool_uses density, drift rate, reply latency, stream timeouts).
+        This enables GovernanceLoop to detect parent session drift.
+
+        Args:
+            entity_id: The parent entity ID (format: "parent-{session_id}")
+            metrics: Optional dict with keys:
+                - tool_uses_30min: int
+                - drift_count_30min: int
+                - reply_latency_ratio: float (actual / baseline)
+                - stream_timeout_count: int
+
+        Returns:
+            GovernanceObservation with parent metrics in raw_kpis
+        """
+        metrics = metrics or {}
+        obs = GovernanceObservation(
+            period_label=f"parent_session_{entity_id}",
+            total_entities=1,
+            raw_kpis={
+                "parent_entity_id": entity_id,
+                "tool_uses_30min": metrics.get("tool_uses_30min", 0),
+                "drift_count_30min": metrics.get("drift_count_30min", 0),
+                "reply_latency_ratio": metrics.get("reply_latency_ratio", 1.0),
+                "stream_timeout_count": metrics.get("stream_timeout_count", 0),
+            },
+        )
+
+        # Assess health based on parent metrics
+        tool_uses = metrics.get("tool_uses_30min", 0)
+        drift_count = metrics.get("drift_count_30min", 0)
+        latency_ratio = metrics.get("reply_latency_ratio", 1.0)
+        stream_timeouts = metrics.get("stream_timeout_count", 0)
+
+        # Derive obligation fulfillment from metric thresholds
+        violations = 0
+        if tool_uses > 100:
+            violations += 1
+        if drift_count > 2:
+            violations += 1
+        if latency_ratio > 2.0:
+            violations += 1
+        if stream_timeouts > 2:
+            violations += 1
+
+        obs.obligation_fulfillment_rate = 1.0 - (violations / 4.0)
+        obs.hard_overdue_rate = violations / 4.0
+
+        self._observations.append(obs)
+        return obs
+
     def observe_from_residual_loop(self, rle_event: Dict) -> GovernanceSuggestion:
         """
         Observe from ResidualLoopEngine (Path A ↔ RLE bridge).

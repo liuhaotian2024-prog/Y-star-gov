@@ -169,11 +169,12 @@ def test_reads_real_company_db():
     """
     Integration test: Emit RT_MEASUREMENT to real production DB, verify Sentinel reads it.
 
-    This test uses production CIEU DB at /Users/haotianliu/.openclaw/workspace/ystar-company/.ystar_cieu.db
+    This test uses production CIEU DB from environment variable YSTAR_CIEU_DB_PATH
     and verifies Sentinel can poll events from `events` table with `metadata` column.
     """
     import sys
-    sys.path.insert(0, '/Users/haotianliu/.openclaw/workspace/ystar-company/scripts')
+    company_root = os.environ.get('YSTAR_COMPANY_ROOT', os.getcwd())
+    sys.path.insert(0, f'{company_root}/scripts')
     from _cieu_helpers import emit_rt_measurement
 
     # Emit test RT_MEASUREMENT to production DB

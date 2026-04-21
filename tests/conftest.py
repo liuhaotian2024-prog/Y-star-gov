@@ -8,6 +8,29 @@ import pytest
 import tempfile
 import time
 
+from ystar.workspace_config import invalidate_cache
+
+
+@pytest.fixture(autouse=True)
+def labs_workspace_env(tmp_path, monkeypatch):
+    """Set YSTAR_LABS_WORKSPACE to tmp_path for test isolation.
+
+    Ensures tests don't depend on real Labs path existing.
+    Creates minimal directory structure expected by workspace_config consumers.
+    """
+    fake_ws = tmp_path / "ystar-company"
+    fake_ws.mkdir()
+    (fake_ws / ".ystar_cieu.db").touch()
+    (fake_ws / ".ystar_session.json").write_text("{}")
+    (fake_ws / "governance").mkdir()
+    (fake_ws / "scripts").mkdir()
+    (fake_ws / "reports").mkdir()
+    (fake_ws / "reports" / "cto").mkdir()
+    monkeypatch.setenv("YSTAR_LABS_WORKSPACE", str(fake_ws))
+    invalidate_cache()
+    yield fake_ws
+    invalidate_cache()
+
 @pytest.fixture
 def tmp_db(tmp_path):
     return str(tmp_path / ".ystar_cieu.db")

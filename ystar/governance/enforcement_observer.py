@@ -267,7 +267,7 @@ def _apply_decision_tree(
     # Default fields
     priority = "P1"  # 3 criteria
     gap_type = "unknown"
-    recommended_engineer = "Ryan"  # default (hook engineer)
+    recommended_engineer = "eng-platform"  # default (hook engineer)
 
     if count >= 4:
         priority = "P0"
@@ -276,11 +276,11 @@ def _apply_decision_tree(
     if "C4_detectability" in criteria_met:
         # Rule has ForgetGuard entry but still fails → likely warn→deny promotion
         gap_type = "promotion_warn_to_deny"
-        recommended_engineer = "Maya"
+        recommended_engineer = "eng-governance"
     elif rt_score >= 2:
         # High Rt+1 score → missing runtime enforcement
         gap_type = "L3_runtime"
-        recommended_engineer = "Ryan"
+        recommended_engineer = "eng-platform"
     elif "C2_constitutional" in criteria_met and "C5_self_comply" in criteria_met:
         # Constitutional + self-comply gap → Board escalation
         priority = "BOARD_ESCALATE"

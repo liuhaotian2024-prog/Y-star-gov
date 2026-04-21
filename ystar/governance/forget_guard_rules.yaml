@@ -83,7 +83,7 @@ rules:
     pattern: "(?i)(sub-agent.*return|receipt.*Rt\\+1|完成.*5-tuple)"
     mode: deny
     message: "CZL Gate 2 violation: receipt claims Rt+1=0 but empirical verification failed (artifacts missing or tests failed). Call czl_protocol.validate_receipt() after sub-agent return."
-    rationale: "CZL Unified Communication Protocol v1.0 — Gate 2 enforcement rejects hallucinated success via empirical file checks. Receipt rt_value must match actual artifact existence + test pass counts. Prevents Ethan#CZL-1 class of zero-tool hallucination. Ref: ystar/kernel/czl_protocol.py validate_receipt(), Board 2026-04-16 Constitutional."
+    rationale: "CZL Unified Communication Protocol v1.0 — Gate 2 enforcement rejects hallucinated success via empirical file checks. Receipt rt_value must match actual artifact existence + test pass counts. Prevents CZL-1 class of zero-tool hallucination. Ref: ystar/kernel/czl_protocol.py validate_receipt(), Board 2026-04-16 Constitutional."
     dry_run_until: null
     created_at: "2026-04-16T02:00:00Z"
     validator: czl_protocol.validate_receipt
@@ -105,7 +105,7 @@ rules:
     message: "CEO/CTO deferred-dispatch promise without same-reply Agent call. Forbidden: '下波派 X', 'next round spawn Y', '后续调起 Z' as tail promises. FIX: (1) Spawn NOW if ready, (2) Create .claude/tasks/ card (no verbal promise), (3) WORLD_STATE.md backlog (no '下波' language). Constitutional: Unified Work Protocol Article 2.3 — '反 pattern: 推别的 / 推下一个 / 换到 / defer'."
     rationale: "Board 2026-04-16 P0 forensic (reports/cto/ceo_deferred_dispatch_root_cause_20260416.md) — CEO exhibits systematic promise hypocrisy (≥3 violations today, 100% orphan rate). Root cause: reply-tail attention dropout + Chinese passive voice + cognitive load overflow. Structural fix: deny future-tense dispatch promises, enforce same-reply execution or explicit backlog."
     dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h pending tier-routing migration completion
-    dry_run_rationale: "Ethan CZL-77 requires tier-routing context propagation for accurate session_recent_actions tracking. Until shipped, rule runs in warn mode (audit-only) to collect violation patterns without blocking CEO workflow. Auto-upgrade to deny mode after 48h (AI 1 day ≈ human 1 year observation cycle)."
+    dry_run_rationale: "CZL-77 requires tier-routing context propagation for accurate session_recent_actions tracking. Until shipped, rule runs in warn mode (audit-only) to collect violation patterns without blocking CEO workflow. Auto-upgrade to deny mode after 48h (AI 1 day ≈ human 1 year observation cycle)."
     created_at: "2026-04-16T10:00:00Z"
     helper_script: "ystar/governance/coordinator_audit.py::check_deferred_dispatch_orphan"
 

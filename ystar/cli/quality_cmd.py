@@ -444,7 +444,7 @@ def _cmd_policy_builder() -> None:
 
     if not html_path:
         print("policy-builder.html not found in ystar package.")
-        print("   Find it at: https://github.com/liuhaotian2024-prog/Y-star-gov")
+        print("   Find it at: https://github.com/ystar-bridge-labs/Y-star-gov")
         return
 
     PORT = 7921

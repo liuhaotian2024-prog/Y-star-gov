@@ -241,12 +241,12 @@ class TestRemediationSchemaValidation:
         """All skill_ref paths must point to existing files (or _draft_ stubs)."""
         # This test will be expanded as more rules get remediation
         # For now, check must_dispatch_via_cto skill exists
-        skill_path = "/Users/haotianliu/.openclaw/workspace/ystar-company/knowledge/ceo/skills/ceo_delegation_chain.md"
+        skill_path = "/test/workspace/knowledge/ceo/skills/ceo_delegation_chain.md"
         assert os.path.exists(skill_path), f"Skill ref {skill_path} must exist"
 
     def test_remediation_lesson_ref_file_exists(self):
         """lesson_ref paths must point to existing lessons."""
-        lesson_path = "/Users/haotianliu/.openclaw/workspace/ystar-company/knowledge/ceo/lessons/ceo_越权派工_2026_04_13.md"
+        lesson_path = "/test/workspace/knowledge/ceo/lessons/ceo_越权派工_2026_04_13.md"
         assert os.path.exists(lesson_path), f"Lesson ref {lesson_path} must exist"
 
     def test_remediation_all_fields_present(self):

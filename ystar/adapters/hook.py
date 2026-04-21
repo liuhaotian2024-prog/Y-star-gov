@@ -68,6 +68,47 @@ from ystar.adapters.cieu_writer import (
 )
 
 _log = logging.getLogger("ystar.hook")
+
+
+# ── Deny-phrases config loader (configurable blocklist, no hardcoded strings) ──
+_deny_phrases_cache: list = None  # type: ignore[assignment]
+
+
+def _load_deny_phrases() -> list:
+    """Load deny-phrases from workspace yaml config.
+
+    Returns empty list if:
+    - workspace_config unavailable (product standalone install)
+    - yaml file does not exist
+    - yaml parse fails
+
+    This ensures Y*gov product never blocks phrases unless explicitly configured
+    by the deploying workspace.
+    """
+    global _deny_phrases_cache
+    if _deny_phrases_cache is not None:
+        return _deny_phrases_cache
+
+    try:
+        from ystar.workspace_config import get_labs_workspace
+        ws = get_labs_workspace()
+        if ws is None:
+            _deny_phrases_cache = []
+            return _deny_phrases_cache
+        yaml_path = ws / "knowledge" / "shared" / "deny_phrases.yaml"
+        if not yaml_path.is_file():
+            yaml_path = ws / "governance" / "deny_phrases.yaml"
+        if not yaml_path.is_file():
+            _deny_phrases_cache = []
+            return _deny_phrases_cache
+        import yaml as _yaml
+        data = _yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        _deny_phrases_cache = data.get("phrases", []) if isinstance(data, dict) else []
+        return _deny_phrases_cache
+    except Exception:
+        _deny_phrases_cache = []
+        return _deny_phrases_cache
+
 if not _log.handlers:
     _h = logging.StreamHandler(sys.stderr)
     _h.setFormatter(logging.Formatter("[Y*hook] %(levelname)s %(message)s"))
@@ -110,13 +151,40 @@ def _extract_params(tool_name: str, tool_input: dict) -> dict:
     }
 
     # ── Agent tool: set .ystar_active_agent to subagent_type ──────────────
+    # CZL-MARKER-PER-SESSION-ISOLATION (2026-04-19): Write to per-session
+    # marker file when session ID is available, plus global for backward compat.
     if tool_name == "Agent":
         subagent_type = tool_input.get("subagent_type")
         if subagent_type:
             try:
-                active_agent_path = os.path.join(os.getcwd(), ".ystar_active_agent")
-                with open(active_agent_path, "w") as f:
-                    f.write(subagent_type)
+                _cwd = os.getcwd()
+                active_agent_path = os.path.join(_cwd, ".ystar_active_agent")
+                # Per-session marker (primary target)
+                _sid_for_agent = os.environ.get("CLAUDE_SESSION_ID", "").strip()
+                _per_session_path = None
+                if _sid_for_agent:
+                    _sanitized = "".join(c for c in _sid_for_agent if c.isalnum() or c in "-_")
+                    if _sanitized:
+                        _per_session_path = os.path.join(_cwd, f".ystar_active_agent.{_sanitized}")
+                if not _per_session_path:
+                    # PPID fallback
+                    try:
+                        _ppid = str(os.getppid())
+                        if _ppid and _ppid != "1":
+                            _per_session_path = os.path.join(_cwd, f".ystar_active_agent.ppid_{_ppid}")
+                    except Exception:
+                        pass
+                # Write per-session marker if available
+                if _per_session_path:
+                    with open(_per_session_path, "w") as f:
+                        f.write(subagent_type)
+                    active_agent_path = _per_session_path  # for CIEU event
+                # Always write global marker for backward compat
+                try:
+                    with open(os.path.join(_cwd, ".ystar_active_agent"), "w") as f:
+                        f.write(subagent_type)
+                except Exception:
+                    pass  # Non-fatal
                 # Emit CIEU event
                 from ystar.governance.cieu_store import CIEUStore
                 cieu_db = ".ystar_cieu.db"
@@ -130,9 +198,11 @@ def _extract_params(tool_name: str, tool_input: dict) -> dict:
                         "passed":        True,
                         "file_path":     active_agent_path,
                         "evidence_grade": "action",
-                        "params":        {"subagent_type": subagent_type},
+                        "params":        {"subagent_type": subagent_type,
+                                         "per_session": _per_session_path is not None},
                     })
-                    _log.info("AGENT_IDENTITY_SET: .ystar_active_agent → %s", subagent_type)
+                    _log.info("AGENT_IDENTITY_SET: .ystar_active_agent -> %s (per_session=%s)",
+                             subagent_type, _per_session_path is not None)
                 except Exception as e:
                     _log.error("Failed to write AGENT_IDENTITY_SET event: %s", e)
             except Exception as e:
@@ -489,6 +559,48 @@ def check_hook(
     cieu_db_boot = session_cfg_boot.get("cieu_db", ".ystar_cieu.db") if session_cfg_boot else ".ystar_cieu.db"
     _write_boot_record(who, session_id_payload or "unknown", cieu_db_boot)
 
+    # ── P0-0: 不可変路径检查（AGENTS.md / .claude/agents/*.md）──────
+    # CZL-KERNEL-OVERRIDE-PRE-FALLBACK: Run immutable check BEFORE policy-
+    # membership fallback so that override_roles (from session.json) is
+    # consulted on the original detected identity, not a rewritten alias.
+    # Without this ordering, roles like "secretary" get rewritten to "agent"
+    # by the fallback (because they lack an AGENTS.md policy block) and the
+    # override_roles=["secretary"] declaration becomes structurally unreachable.
+    params_early = _extract_params(tool_name, tool_input)
+    immutable_deny = _check_immutable_paths(tool_name, params_early, who)
+    if immutable_deny is not None:
+        cieu_db = ".ystar_cieu.db"
+        session_cfg_imm = _load_session_config_cached()
+        if session_cfg_imm:
+            cieu_db = session_cfg_imm.get("cieu_db", cieu_db)
+        contract = policy._rules.get(who)
+        _write_cieu(who, tool_name, params_early, immutable_deny,
+                    session_id_payload or "unknown",
+                    contract.hash if contract else "", cieu_db)
+        _log.warning("DENY immutable path: %s → %s", who, params_early.get("file_path", "?"))
+        return _result_to_response(immutable_deny)
+
+    # ── P0-0.25-PRE-FALLBACK: 受限写路径检查（原始 who，未 fallback 前）──
+    # CZL-KERNEL-OVERRIDE-PRE-FALLBACK-PHASE-2: Apply the same override-
+    # before-fallback logic to restricted_write_paths that Phase 1 applied
+    # to immutable_paths. Without this, secretary writing AGENTS.md deadlocks
+    # because secretary-not-in-policy → fallback→agent → restricted_deny.
+    # The restricted_write_paths config (e.g. {"AGENTS.md": ["secretary"]})
+    # must be checked with the ORIGINAL who identity before fallback rewrites
+    # it to "agent" or "cto".
+    restricted_deny_early = _check_restricted_write_paths(tool_name, params_early, who)
+    if restricted_deny_early is not None:
+        cieu_db = ".ystar_cieu.db"
+        session_cfg_rst_early = _load_session_config_cached()
+        if session_cfg_rst_early:
+            cieu_db = session_cfg_rst_early.get("cieu_db", cieu_db)
+        contract = policy._rules.get(who)
+        _write_cieu(who, tool_name, params_early, restricted_deny_early,
+                    session_id_payload or "unknown",
+                    contract.hash if contract else "", cieu_db)
+        _log.warning("DENY restricted write path (pre-fallback): %s → %s", who, params_early.get("file_path", "?"))
+        return _result_to_response(restricted_deny_early)
+
     # 若 agent_id 未在 Policy 里注册，按层级 alias fallback
     # CZL-ARCH-1-followup (2026-04-18): eng-* 子角色继承 cto 权限，
     # 避免因 AGENTS.md 未显式注册每个 engineer 而回退到 "agent" 盲拒。
@@ -505,34 +617,13 @@ def check_hook(
             if registered:
                 who = registered[0]
 
-    # ── P0-0: 不可变路径检查（AGENTS.md / .claude/agents/*.md）──────
-    params_early = _extract_params(tool_name, tool_input)
-    immutable_deny = _check_immutable_paths(tool_name, params_early, who)
-    if immutable_deny is not None:
-        cieu_db = ".ystar_cieu.db"
-        session_cfg_imm = _load_session_config_cached()
-        if session_cfg_imm:
-            cieu_db = session_cfg_imm.get("cieu_db", cieu_db)
-        contract = policy._rules.get(who)
-        _write_cieu(who, tool_name, params_early, immutable_deny,
-                    session_id_payload or "unknown",
-                    contract.hash if contract else "", cieu_db)
-        _log.warning("DENY immutable path: %s → %s", who, params_early.get("file_path", "?"))
-        return _result_to_response(immutable_deny)
-
-    # ── P0-0.25: 受限写路径检查（restricted_write_paths）──────────────
-    restricted_deny = _check_restricted_write_paths(tool_name, params_early, who)
-    if restricted_deny is not None:
-        cieu_db = ".ystar_cieu.db"
-        session_cfg_rst = _load_session_config_cached()
-        if session_cfg_rst:
-            cieu_db = session_cfg_rst.get("cieu_db", cieu_db)
-        contract = policy._rules.get(who)
-        _write_cieu(who, tool_name, params_early, restricted_deny,
-                    session_id_payload or "unknown",
-                    contract.hash if contract else "", cieu_db)
-        _log.warning("DENY restricted write path: %s → %s", who, params_early.get("file_path", "?"))
-        return _result_to_response(restricted_deny)
+    # NOTE (CZL-KERNEL-OVERRIDE-PRE-FALLBACK-PHASE-2): The restricted_write_paths
+    # check was REMOVED from this post-fallback position. It now runs exclusively
+    # at line 521 with the ORIGINAL who identity. Rationale: restricted_write_paths
+    # config declares which roles CAN write specific paths (e.g. AGENTS.md: ["secretary"]).
+    # Re-checking after fallback would incorrectly deny allowed roles whose identity
+    # was rewritten (secretary → agent). The path set is identical pre/post fallback,
+    # so there is no coverage gap from removing the post-fallback check.
 
     # ── P0-0.5: 工具限制检查（allowed/disallowed tools）──────────────
     tool_deny = _check_tool_restriction(who, tool_name)
@@ -708,7 +799,7 @@ def check_hook(
                         }
                     }
 
-    # ── LESSON_READ tracking (Maya 2026-04-15, 蒸馏 verification Layer 1) ──
+    # ── LESSON_READ tracking (eng-governance 2026-04-15, 蒸馏 verification Layer 1) ──
     # 匹配 knowledge/*/lessons/*.md, emit LESSON_READ CIEU event
     if tool_name == "Read":
         _file_path = params_early.get("file_path", "")
@@ -831,16 +922,7 @@ def check_hook(
     # spec: reports/ceo_avoidance_enforcement_20260414.md
     # 行: hook 层 enforce CEO 不许出 "推别的"/"换到"/"defer"/"重启" 等 phrase
     if result.allowed and who == "ceo":
-        AVOIDANCE_PHRASES = [
-            # Original 14 (CEO_AVOIDANCE_DRIFT, 2026-04-14):
-            "推别的", "推下一个", "换到", "或者先", "你决定", "让 Board 定",
-            "让 board 定", "defer", "等下次", "session 结束", "可以重启",
-            "/clear", "清 context", "/restart",
-            # Extended 2026-04-15 (IR 1.8 candidate CEO_TIME_CONCESSION_DRIFT):
-            "明早", "明天", "今天先", "今天到此", "先到这里", "先停",
-            "等会儿", "稍后", "过几小时", "下 session", "下个 session", "等到明",
-            "推到明天", "先休息", "明日",
-        ]
+        AVOIDANCE_PHRASES = _load_avoidance_phrases()
         scan_text = " ".join(
             str(v) for v in params.values() if isinstance(v, (str, int, float))
         )[:8000]
@@ -1296,19 +1378,10 @@ def _check_hook_full(
     # ── Orchestrator: feed advanced governance subsystems (ALLOW path) ────
     _run_orchestrator(who, tool_name, params, decision, session_cfg)
 
-    # ── CEO AVOIDANCE DRIFT enforcement (FULL PATH, Ethan 2026-04-15 stress test P0 fix) ──
+    # ── CEO AVOIDANCE DRIFT enforcement (FULL PATH, CTO 2026-04-15 stress test P0 fix) ──
     # Bug: commit 4997d6c only added AVOIDANCE to light path; full path early-returned never reaching it
     if who == "ceo":
-        AVOIDANCE_PHRASES = [
-            # Original 14 (CEO_AVOIDANCE_DRIFT, 2026-04-14):
-            "推别的", "推下一个", "换到", "或者先", "你决定", "让 Board 定",
-            "让 board 定", "defer", "等下次", "session 结束", "可以重启",
-            "/clear", "清 context", "/restart",
-            # Extended 2026-04-15 (IR 1.8 candidate CEO_TIME_CONCESSION_DRIFT):
-            "明早", "明天", "今天先", "今天到此", "先到这里", "先停",
-            "等会儿", "稍后", "过几小时", "下 session", "下个 session", "等到明",
-            "推到明天", "先休息", "明日",
-        ]
+        AVOIDANCE_PHRASES = _load_avoidance_phrases()
         scan_text = " ".join(
             str(v) for v in params.values() if isinstance(v, (str, int, float))
         )[:8000]
@@ -1972,6 +2045,33 @@ def handle_hook_event(
     """
     from ystar.governance.router_registry import get_default_registry
 
+    # ── CEO Constitutional Deny (ported from hook_wrapper v1) ────────────
+    # CEO must not write directly to Y-star-gov product source.
+    # This enforcement was previously only in hook_wrapper.py's v1 slow path;
+    # v2 thin adapter must replicate it before router rules or check_hook.
+    # LABS_ALIAS: CEO identity aliases loaded from session config
+    from ystar.adapters.identity_detector import _load_alias_map as _la
+    _ceo_aliases = tuple(k for k, v in _la().items() if v == "ceo")
+    _CEO_IDENTITIES = ("ceo",) + _ceo_aliases
+    _tool = payload.get("tool_name", "")
+    _agent = payload.get("agent_id", "")
+    if _tool in ("Write", "Edit", "NotebookEdit") and _agent in _CEO_IDENTITIES:
+        _fp = payload.get("tool_input", {}).get("file_path", "")
+        _ceo_deny_patterns = ["Y-star-gov/ystar/", "Y-star-gov\\ystar\\", "/src/ystar/"]
+        for _dp in _ceo_deny_patterns:
+            if _dp in _fp:
+                _log.warning("DENY CEO constitutional (v2): %s → %s", _agent, _fp)
+                return {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": (
+                            f"[Y*gov CONSTITUTIONAL] CEO禁止直接写代码。"
+                            f"文件 {_fp} 属于CTO管辖范围。请派工程师执行。"
+                        ),
+                    }
+                }
+
     # Register built-in rules (idempotent — already-registered rules skipped)
     try:
         from ystar.rules.break_glass import register_break_glass_rule
@@ -2033,3 +2133,4 @@ def handle_hook_event(
     # Fall through to existing check_hook (Layer 2 + Layer 1)
     return check_hook(payload, policy=policy)
 
+_load_avoidance_phrases = _load_deny_phrases

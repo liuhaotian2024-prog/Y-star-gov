@@ -304,6 +304,32 @@ RULE_CLOSURE = OmissionRule(
     escalation_policy    = _make_default_escalation(reminder_secs=200.0),
 )
 
+# Rule H: Dispatch claim must trigger CEO Agent spawn within TTL
+# CZL-DISPATCH-EXEC (2026-04-19, Ethan Wright CTO ruling)
+# When ENGINEER_CLAIM_TASK fires, CEO session must produce SUBAGENT_START
+# with matching atomic_id within 300s (soft) / 600s (hard).
+RULE_DISPATCH_CLAIM_MUST_SPAWN = OmissionRule(
+    rule_id              = "rule_h_dispatch_claim_must_spawn",
+    name                 = "Dispatch Claim Must Spawn",
+    description          = (
+        "When a subscriber claims a dispatch board card, "
+        "the CEO session must spawn an Agent sub-agent for that card "
+        "within the TTL. Failure means dead-water: claimed but not executing."
+    ),
+    trigger_event_types  = [GEventType.ENGINEER_CLAIM_TASK],
+    actor_selector       = _select_from_event_actor,
+    obligation_type      = OmissionType.DISPATCH_CLAIM_MUST_SPAWN.value,
+    required_event_types = [GEventType.SUBAGENT_START],
+    due_within_secs      = 300.0,   # 5 min soft TTL
+    hard_overdue_secs    = 600.0,   # 10 min hard TTL -> escalation
+    violation_code       = "dispatch_claim_no_spawn",
+    severity             = Severity.HIGH,
+    escalation_policy    = _make_default_escalation(
+        reminder_secs=120.0, escalate_secs=600.0
+    ),
+    deduplicate          = True,
+)
+
 # 内置规则集合（按优先级顺序）
 BUILTIN_RULES: List[OmissionRule] = [
     RULE_DELEGATION,
@@ -313,6 +339,7 @@ BUILTIN_RULES: List[OmissionRule] = [
     RULE_UPSTREAM_NOTIFICATION,
     RULE_ESCALATION,
     RULE_CLOSURE,
+    RULE_DISPATCH_CLAIM_MUST_SPAWN,
 ]
 
 

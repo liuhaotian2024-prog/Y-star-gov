@@ -119,11 +119,13 @@ class ComplianceScore:
 
 
 def get_cieu_db_path() -> Path:
-    """Locate CIEU database (Y-star-gov workspace)."""
+    """Locate CIEU database (environment-driven or current directory)."""
     # CIEU_LAYER_4: start execution - locate CIEU DB.
+    if "YSTAR_CIEU_DB_PATH" in os.environ:
+        return Path(os.environ["YSTAR_CIEU_DB_PATH"])
+
     candidates = [
-        Path("/Users/haotianliu/.openclaw/workspace/Y-star-gov/.ystar_cieu.db"),
-        Path("/Users/haotianliu/.openclaw/workspace/ystar-company/.ystar_cieu.db"),
+        Path(os.environ.get("YSTAR_COMPANY_ROOT", os.getcwd())) / ".ystar_cieu.db",
         Path.cwd() / ".ystar_cieu.db",
     ]
     for path in candidates:

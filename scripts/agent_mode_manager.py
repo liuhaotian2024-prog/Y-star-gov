@@ -25,8 +25,8 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
-WORKSPACE_ROOT = Path("/Users/haotianliu/.openclaw/workspace/ystar-company")
-YSTAR_GOV_ROOT = Path("/Users/haotianliu/.openclaw/workspace/Y-star-gov")
+WORKSPACE_ROOT = Path(os.environ.get("YSTAR_COMPANY_ROOT", os.getcwd()))
+YSTAR_GOV_ROOT = Path(os.environ.get("YSTAR_GOV_ROOT", Path(__file__).parent.parent))
 
 # Timing constants (seconds)
 BOARD_SILENCE_THRESHOLD = 15 * 60      # 15 min

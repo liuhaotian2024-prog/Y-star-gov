@@ -26,6 +26,7 @@ Usage::
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+import os
 import time
 import hashlib
 from pathlib import Path as _Path
@@ -386,7 +387,40 @@ class Policy:
 
         Performance: Static policy (Forbidden Paths/Commands) is cached by
         AGENTS.md content hash. Cache hit: <1ms. Cache miss: ~100-200ms.
+
+        OPA Bundle Cache (YSTAR_POLICY_CACHE=1): persists compiled Policy to
+        disk across process invocations. Eliminates 14s re-parse overhead
+        when hook_wrapper.py spawns a new process per tool call.
+        Industry precedent: OPA Bundle Persistence (CNCF, 20k+ GH stars).
         """
+        from pathlib import Path as _Path
+
+        # ── OPA-pattern disk cache (CZL-ARCH-PERF-1) ─────────────────
+        # When YSTAR_POLICY_CACHE=1, return pickled Policy from disk if
+        # AGENTS.md hasn't changed.  Saves ~14s per hook call by avoiding
+        # per-process re-parse of 3000+ line AGENTS.md.
+        if os.environ.get("YSTAR_POLICY_CACHE") == "1":
+            _resolved = path
+            if _resolved is None:
+                for _cand in [_Path("AGENTS.md"), _Path.cwd() / "AGENTS.md"]:
+                    if _cand.exists():
+                        _resolved = str(_cand)
+                        break
+            if _resolved and _Path(_resolved).exists():
+                from ystar.kernel._policy_bundle_cache import get_cached_policy
+                return get_cached_policy(
+                    _resolved,
+                    lambda p: cls._from_agents_md_multi_impl(p),
+                )
+
+        return cls._from_agents_md_multi_impl(path)
+
+    @classmethod
+    def _from_agents_md_multi_impl(
+        cls,
+        path: Optional[str] = None,
+    ) -> "Policy":
+        """Internal implementation of from_agents_md_multi (cache-free path)."""
         from pathlib import Path as _Path
 
         # Performance timing
@@ -506,7 +540,7 @@ class Policy:
 
 # ── Layer 1: Identity Source of Truth (AMENDMENT-015 Phase 4) ────────
 
-# Session schema required keys (Patch 2 from CIEU K9 Ryan rsync disaster 2026-04-14)
+# Session schema required keys (Patch 2 from CIEU K9 rsync disaster 2026-04-14)
 _SESSION_SCHEMA_REQUIRED = [
     "immutable_paths",
     "override_roles",

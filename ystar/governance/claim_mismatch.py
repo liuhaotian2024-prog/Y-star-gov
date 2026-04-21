@@ -2,8 +2,8 @@
 Claim vs Metadata Mismatch Detector
 E1 priority enforcement — Sub-agent receipt tool_uses claim validation.
 
-Board 2026-04-16 P0: Ryan C3 (claim 13, metadata 38, diff 25), Ryan C2 (claim 14, metadata 24, diff 10),
-Ryan B3 (claim 9, metadata 22, diff 13), Ethan#CZL-1 (claim 9, metadata 0).
+Board 2026-04-16 P0: incident C3 (claim 13, metadata 38, diff 25), incident C2 (claim 14, metadata 24, diff 10),
+incident B3 (claim 9, metadata 22, diff 13), incident CZL-1 (claim 9, metadata 0).
 
 Usage:
     result = detect_tool_uses_mismatch(receipt_text, metadata_tool_uses)
@@ -32,7 +32,7 @@ def detect_tool_uses_mismatch(
     Severity levels:
         - "hallucination": claimed > actual (agent inflated work)
         - "omission": claimed < actual (agent underreported work)
-        - "zero_tool_hallucination": claimed > 0 and actual = 0 (Ethan#CZL-1 class)
+        - "zero_tool_hallucination": claimed > 0 and actual = 0 (CZL-1 class)
     """
     # Regex patterns for tool_uses claim (English + Chinese)
     # Matches: "tool_uses: 13", "tool calls: 9", "工具调用：13", "tool-uses: 7"
@@ -61,7 +61,7 @@ def detect_tool_uses_mismatch(
 
     # Determine severity
     if claimed > 0 and metadata_tool_uses == 0:
-        severity = "zero_tool_hallucination"  # Ethan#CZL-1 class
+        severity = "zero_tool_hallucination"  # CZL-1 class
     elif claimed > metadata_tool_uses:
         severity = "hallucination"  # Agent inflated work
     else:

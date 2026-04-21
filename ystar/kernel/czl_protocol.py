@@ -5,7 +5,7 @@ ystar.kernel.czl_protocol — CZL Unified Communication Protocol v1.0
 Gate 1/2 validators + legacy task parser for CEO/CTO ↔ sub-agent dispatch.
 Extends rt_measurement.py RT_MEASUREMENT schema with communication envelope.
 
-Constitutional Board 2026-04-16, fixes Ethan#CZL-1 hallucination root cause.
+Constitutional Board 2026-04-16, fixes CTO#CZL-1 hallucination root cause.
 
 Design Philosophy:
     - Gate 1: Pre-validator blocks launch if dispatch lacks 5-tuple structure
@@ -18,7 +18,7 @@ Enforcement Integration:
     - ForgetGuard rules (W22.3) wrap these validators for automated blocking
 
 Schema Version: 1.0
-Author: Leo Chen (eng-kernel)
+Author: eng-kernel
 """
 from __future__ import annotations
 
@@ -56,12 +56,16 @@ class CZLMessageEnvelope(TypedDict):
 
 # --- Gate 1: Dispatch Pre-Validator ---
 
-def validate_dispatch(prompt: str) -> list[str]:
+def validate_dispatch(prompt: str, agent_id: str | None = None) -> list[str]:
     """
     Validate CEO/CTO dispatch prompt against CZL envelope requirements.
 
+    Extended with Stage 1 exemption (short acks / conversational) + STRICTNESS_MAP.
+    Adopted from governance/coordinator_audit.py is_dispatch_receipt taxonomy.
+
     Args:
         prompt: Full sub-agent dispatch prompt text
+        agent_id: Optional agent identifier to apply STRICTNESS_MAP (ceo/cto=strict, eng-*=lenient)
 
     Returns:
         List of missing/invalid sections (empty = valid, can launch)
@@ -76,13 +80,52 @@ def validate_dispatch(prompt: str) -> list[str]:
         - Missing recipient field
         - Missing task_id
 
+    Exemptions (return [] immediately):
+        - Short reply (<50 chars)
+        - Pure ack (好的, OK, got it, etc.)
+        - No action verbs AND no artifact references (conversational)
+
+    STRICTNESS_MAP (when agent_id provided):
+        - ceo/cto/Board: strict (all 5 labels required)
+        - eng-*: lenient (≥3 of 5 labels required)
+
     Example:
-        >>> issues = validate_dispatch(ceo_prompt)
+        >>> issues = validate_dispatch(ceo_prompt, agent_id="ceo")
         >>> if issues:
         ...     print(f"Cannot launch: {issues}")
         ... else:
         ...     spawn_subagent(ceo_prompt)
     """
+    # --- Stage 1: Exemption Short-Circuit (borrowed from coordinator_audit) ---
+
+    # §2.4: Short reply OR pure ack → no validation needed
+    if len(prompt.strip()) < 50:
+        return []  # Conversational ack, no 5-tuple required
+
+    # Pure conversational acks (Chinese + English)
+    CONVERSATIONAL_ACKS = {
+        "好的", "收到", "明白", "了解", "是的", "对", "懂", "OK",
+        "yes", "ok", "got it", "understood", "roger", "ack", "will do", "on it"
+    }
+    stripped = prompt.strip().rstrip("。!！.?？")
+    if stripped.lower() in {a.lower() for a in CONVERSATIONAL_ACKS}:
+        return []  # Pure ack, no 5-tuple required
+
+    # §1 semantic check: if no action verbs AND no artifact references → conversational
+    import re
+    action_pattern = re.compile(
+        r"(派|调起|执行|启动|spawn|dispatch|routing|calling|activating|NOW|landed|shipped|commit)",
+        re.IGNORECASE
+    )
+    if not action_pattern.search(prompt):
+        # No dispatch/receipt language detected → conversational, skip validation
+        return []
+
+    # --- Stage 2: 5-Tuple Validation (apply STRICTNESS_MAP if agent_id provided) ---
+
+    # Determine strictness level
+    strictness = _get_strictness_for_agent(agent_id) if agent_id else "strict"
+
     issues = []
 
     # Check for 5-tuple structure markers
@@ -113,6 +156,19 @@ def validate_dispatch(prompt: str) -> list[str]:
     if "**Rt+1" not in prompt and "rt_value" not in prompt:
         issues.append("Missing Rt+1 target (gap threshold)")
 
+    # --- Lenient Mode: ≥3 of 5 labels sufficient (for sub-agents) ---
+    if strictness == "lenient":
+        labels_found = sum([
+            bool("**Y*" in prompt or "**Y\\*" in prompt),
+            bool("**Xt" in prompt or "**X_t" in prompt),
+            bool("**U" in prompt),
+            bool("**Yt+1" in prompt or "**Y_t+1" in prompt),
+            bool("**Rt+1" in prompt or "rt_value" in prompt),
+        ])
+        if labels_found >= 3:
+            # ≥3 labels present → lenient pass, clear missing-label issues
+            issues = [i for i in issues if not i.startswith("Missing")]
+
     # Check for recipient and task_id (can be implicit in context, warn only)
     if "recipient" not in prompt.lower() and "eng-" not in prompt:
         issues.append("Warning: No explicit recipient (which engineer?)")
@@ -121,6 +177,38 @@ def validate_dispatch(prompt: str) -> list[str]:
         issues.append("Warning: No explicit task_id")
 
     return issues
+
+
+def _get_strictness_for_agent(agent_id: str | None) -> str:
+    """
+    Map agent_id to strictness level per STRICTNESS_MAP (borrowed from coordinator_audit).
+
+    Returns: "strict" | "lenient" | "permissive"
+    """
+    if not agent_id:
+        return "strict"  # Default to strict if agent_id unknown
+
+    STRICTNESS_MAP = {
+        "ceo": "strict",
+        "Board": "strict",
+        "cto": "strict",
+        "eng-governance": "lenient",
+        "eng-platform": "lenient",
+        "eng-kernel": "lenient",
+        "eng-domains": "lenient",
+        "eng-data": "lenient",
+        "eng-security": "lenient",
+        "eng-ml": "lenient",
+        "eng-perf": "lenient",
+        "eng-compliance": "lenient",
+        "default": "lenient"
+    }
+
+    # Check for eng-* prefix
+    if agent_id.startswith("eng-"):
+        return "lenient"
+
+    return STRICTNESS_MAP.get(agent_id, STRICTNESS_MAP["default"])
 
 
 # --- Gate 2: Receipt Post-Validator (EMPIRICAL VERIFICATION) ---
@@ -157,7 +245,7 @@ def validate_receipt(
             - +0.5 if claimed rt_value differs from empirical gap
         6. is_valid = (actual_rt_plus_1 == 0.0)
 
-    Example (Ethan#CZL-1 hallucination would be caught):
+    Example (CTO#CZL-1 hallucination would be caught):
         >>> is_valid, gap = validate_receipt(
         ...     receipt=ethan_reply,
         ...     artifacts_expected=[Path("governance/czl_unified_communication_protocol_v1.md")],

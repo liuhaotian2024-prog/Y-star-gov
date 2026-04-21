@@ -103,6 +103,28 @@ class OmissionType(str, Enum):
     SECURITY_INCIDENT_RESPONSE_REQUIRED = "security_incident_response_required"
     DIRECTIVE_DECOMPOSITION_REQUIRED = "directive_decomposition_required"
 
+    # ARCH-11b: REDIRECT ignore detection
+    MUST_EXECUTE_REDIRECT         = "must_execute_redirect"
+
+    # ARCH-11c: Action promise enforcement ("say != do" detection)
+    MUST_FULFILL_ACTION_PROMISE   = "must_fulfill_action_promise"
+
+    # Layer 4: Post-ship completeness obligation (Board 2026-04-19)
+    POST_SHIP_COMPLETENESS        = "post_ship_completeness"
+
+    # Level 2: Manifest self-audit — "无的无" (Board 2026-04-19)
+    MANIFEST_GAP_DETECTED         = "manifest_gap_detected"
+
+    # Level 3: Downstream obligation derivation — "无的生成性" (Board 2026-04-19)
+    DERIVED_OBLIGATION            = "derived_obligation"
+
+    # Level 4: Knowledge-Action Gap — "知行合一" (Board 2026-04-19, Wang Yangming)
+    # Knowing X without doing X = omission failure
+    KNOWLEDGE_ACTION_GAP          = "knowledge_action_gap"
+
+    # CZL-DISPATCH-EXEC: CEO must spawn Agent for claimed dispatch card
+    DISPATCH_CLAIM_MUST_SPAWN     = "dispatch_claim_must_spawn"
+
     # Test-only obligation types (used in test suite)
     TEST_OBLIGATION               = "test_obligation"
     OBLIGATION1                   = "obligation1"
@@ -497,3 +519,7 @@ class GEventType:
     TASK_REJECTED      = "task_rejected"        # target_agent rejects (with reason)
     TASK_COMPLETED     = "task_completed"       # target_agent completes and reports
     DISPATCH_EXPIRED   = "dispatch_expired"     # acknowledgement timeout
+
+    # CZL-DISPATCH-EXEC: dispatch board claim-to-spawn lifecycle
+    ENGINEER_CLAIM_TASK = "ENGINEER_CLAIM_TASK"  # subscriber claims card from whiteboard
+    SUBAGENT_START      = "SUBAGENT_START"       # CEO spawns Agent for claimed card

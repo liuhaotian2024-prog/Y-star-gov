@@ -83,7 +83,7 @@ def test_emit_rt_measurement_schema_version(temp_cieu_db, monkeypatch):
 
         # Parse captured params_json
         params = json.loads(captured["params_json"])
-        assert params["schema_version"] == "1.0", "schema_version must be 1.0"
+        assert params["schema_version"] == "1.1", "schema_version must be 1.1"
 
     finally:
         rt_mod.emit_cieu = original_emit
@@ -206,6 +206,63 @@ def test_stub_events_file_exists():
         for field in required_fields:
             assert field in event, f"Sample {idx} missing field: {field}"
         assert event["schema_version"] == "1.0", f"Sample {idx} has wrong schema_version"
+
+
+def test_emit_rt_measurement_framework_applied_present(temp_cieu_db, monkeypatch):
+    """Assert framework_applied field appears in params_json when provided."""
+    monkeypatch.setenv("YSTAR_CIEU_DB", temp_cieu_db)
+
+    captured = {}
+
+    def mock_emit(event_type, **kwargs):
+        captured["params_json"] = kwargs.get("params_json", "{}")
+        return True
+
+    import ystar.kernel.rt_measurement as rt_mod
+    rt_mod.emit_cieu = mock_emit
+
+    emit_rt_measurement(
+        task_id="test_framework_001",
+        y_star="Framework tracking works",
+        x_t="No framework tracking",
+        u=["Add framework_applied param"],
+        y_t_plus_1="framework_applied in schema",
+        rt_value=0.0,
+        role_tags={"producer": "cto", "executor": "eng-kernel", "governed": "eng-kernel"},
+        framework_applied=["OODA", "PDCA"],
+    )
+
+    params = json.loads(captured["params_json"])
+    assert "framework_applied" in params, "framework_applied must be in params_json"
+    assert params["framework_applied"] == ["OODA", "PDCA"], "framework_applied must match input"
+
+
+def test_emit_rt_measurement_framework_applied_defaults_empty(temp_cieu_db, monkeypatch):
+    """Assert framework_applied defaults to [] when omitted (backward compat)."""
+    monkeypatch.setenv("YSTAR_CIEU_DB", temp_cieu_db)
+
+    captured = {}
+
+    def mock_emit(event_type, **kwargs):
+        captured["params_json"] = kwargs.get("params_json", "{}")
+        return True
+
+    import ystar.kernel.rt_measurement as rt_mod
+    rt_mod.emit_cieu = mock_emit
+
+    emit_rt_measurement(
+        task_id="test_framework_002",
+        y_star="Backward compat works",
+        x_t="No framework_applied param",
+        u=["Call without framework_applied"],
+        y_t_plus_1="Defaults to []",
+        rt_value=0.0,
+        role_tags={"producer": "test", "executor": "test", "governed": "test"},
+    )
+
+    params = json.loads(captured["params_json"])
+    assert "framework_applied" in params, "framework_applied must be in params_json"
+    assert params["framework_applied"] == [], "framework_applied must default to []"
 
 
 def test_emit_rt_measurement_callable_from_external():

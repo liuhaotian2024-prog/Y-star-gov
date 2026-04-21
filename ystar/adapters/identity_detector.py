@@ -254,27 +254,60 @@ def _detect_agent_id(hook_payload: Dict[str, Any]) -> str:
     # AMENDMENT-016: Check both repo root and scripts/ subdirectory, map agent types
     # CZL-P1-b Fix: Use absolute paths via YSTAR_REPO_ROOT env when available.
     # When not set, fall back to cwd-relative paths (preserves backward compat + test isolation).
+    #
+    # CZL-MARKER-PER-SESSION-ISOLATION (2026-04-19): Check per-session marker
+    # files FIRST (.ystar_active_agent.<session_id>), then fall back to global.
+    # This prevents N concurrent sub-agents from seeing each other's identity.
     _repo_root = os.environ.get("YSTAR_REPO_ROOT", "")
     _marker_candidates: list = []
+
+    # Per-session markers (highest priority within marker-file detection)
+    _session_id_for_marker = os.environ.get("CLAUDE_SESSION_ID", "").strip()
+    if _session_id_for_marker:
+        _sanitized_sid = "".join(c for c in _session_id_for_marker if c.isalnum() or c in "-_")
+        if _sanitized_sid:
+            if _repo_root:
+                _marker_candidates.append(Path(_repo_root) / f".ystar_active_agent.{_sanitized_sid}")
+                _marker_candidates.append(Path(_repo_root) / "scripts" / f".ystar_active_agent.{_sanitized_sid}")
+            else:
+                _marker_candidates.append(Path(f".ystar_active_agent.{_sanitized_sid}"))
+                _marker_candidates.append(Path("scripts") / f".ystar_active_agent.{_sanitized_sid}")
+
+    # PPID-based per-session markers
+    _ppid_for_marker = os.environ.get("PPID", "")
+    if not _ppid_for_marker:
+        try:
+            _ppid_for_marker = str(os.getppid())
+        except Exception:
+            _ppid_for_marker = ""
+    if _ppid_for_marker and _ppid_for_marker != "1":
+        _ppid_suffix = f"ppid_{_ppid_for_marker}"
+        if _repo_root:
+            _marker_candidates.append(Path(_repo_root) / f".ystar_active_agent.{_ppid_suffix}")
+            _marker_candidates.append(Path(_repo_root) / "scripts" / f".ystar_active_agent.{_ppid_suffix}")
+        else:
+            _marker_candidates.append(Path(f".ystar_active_agent.{_ppid_suffix}"))
+            _marker_candidates.append(Path("scripts") / f".ystar_active_agent.{_ppid_suffix}")
+
+    # Global markers (backward compat, lowest priority)
     if _repo_root:
-        # Absolute path: production mode — no cwd dependency
         _marker_candidates.append(Path(_repo_root) / ".ystar_active_agent")
         _marker_candidates.append(Path(_repo_root) / "scripts" / ".ystar_active_agent")
     else:
-        # Backward compat: cwd-relative (tests use monkeypatch.chdir for isolation)
         _marker_candidates.append(Path(".ystar_active_agent"))
         _marker_candidates.append(Path("scripts") / ".ystar_active_agent")
+
     for marker_path in _marker_candidates:
         if marker_path.exists():
             try:
                 content = marker_path.read_text(encoding="utf-8").strip()
                 if content:
-                    # Map agent type (e.g., alias-based names → canonical IDs via session config)
+                    # Map agent type (e.g., alias-based names -> canonical IDs via session config)
                     mapped = _map_agent_type(content)
                     if mapped and mapped != "agent":
                         _log.warning("Agent ID from DEPRECATED marker file %s (use session config instead): %s (mapped from %s)", marker_path, mapped, content)
                         return mapped
-                    _log.debug("Marker file %s content '%s' mapped to generic '%s' — skipping", marker_path, content, mapped)
+                    _log.debug("Marker file %s content '%s' mapped to generic '%s' -- skipping", marker_path, content, mapped)
             except Exception as e:
                 _log.warning("Failed to read agent marker file %s: %s", marker_path, e)
 

@@ -4,7 +4,7 @@ Y*gov Stop/UserPromptSubmit Hook — K9-RT Warning Injector
 
 Lifecycle: Triggered on UserPromptSubmit event (when user sends next prompt).
 Behavior:
-  1. Read `.ystar_warning_queue.json` (written by Maya's k9_rt_sentinel.py)
+  1. Read `.ystar_warning_queue.json` (written by k9_rt_sentinel.py)
   2. Inject warnings as <system-reminder> XML blocks into session context
   3. Archive processed warnings to `.ystar_warning_queue_archive.json`
   4. Clear queue file (truncate to empty)
@@ -20,10 +20,10 @@ Integration Point:
     inject_warnings_to_session()
 
 Schema Contract:
-  Input (queue): Maya's warning schema (see k9_rt_fuse_dispatch_plan_20260416.md Appendix B)
+  Input (queue): warning schema (see k9_rt_fuse_dispatch_plan_20260416.md Appendix B)
   Output: <system-reminder> XML blocks appended to session context
 
-Platform Engineer: Ryan Park (eng-platform)
+Platform Engineer: eng-platform
 Version: 1.1 (added CZL Gate 1/2 correction injection)
 """
 from __future__ import annotations
@@ -69,7 +69,7 @@ def _get_observe_log() -> Path:
     return Path.cwd() / "scripts" / "hook_observe.log"
 
 
-# ── Warning Schema (Maya's contract) ──────────────────────────────────────
+# ── Warning Schema (k9_rt_sentinel contract) ─────────────────────────────
 
 # Expected fields per warning entry:
 #   {
@@ -517,7 +517,7 @@ def auto_validate_subagent_receipt(
 
 
 def _extract_artifact_paths_from_prose(receipt_text: str) -> list[Path]:
-    """
+    r"""
     Extract artifact file paths from sub-agent receipt prose.
 
     Regex patterns:
@@ -525,6 +525,10 @@ def _extract_artifact_paths_from_prose(receipt_text: str) -> list[Path]:
         - "created <path>"
         - "landed <path>"
         - "shipped <path>"
+        - "Artifacts:\n- <path>" or "Files: <path>"
+        - Backtick-wrapped paths: `<path>`
+        - "Created at <path>" or "Modified to <path>"
+        - Absolute paths: /Users/... or C:\Users\... (CZL-80 Q3 fix)
         - Followed by file extension: .py, .md, .yaml, .json, .txt, .sh
 
     Returns:
@@ -536,12 +540,35 @@ def _extract_artifact_paths_from_prose(receipt_text: str) -> list[Path]:
         ... )
         >>> # Returns [Path("ystar/adapters/hooks/stop_hook.py"), Path("tests/test_hook.py")]
     """
-    # Pattern: action verb + path with known extension
-    pattern = r"(?:wrote|created|landed|shipped|edited|modified)\s+([a-zA-Z0-9_/.+-]+\.(?:py|md|yaml|json|txt|sh|toml|cfg|ini|rst))"
-    matches = re.findall(pattern, receipt_text, re.IGNORECASE)
+    all_matches = []
+
+    # Common file extensions to recognize
+    ext_pattern = r"(?:py|md|yaml|yml|json|txt|sh|toml|cfg|ini|rst|log|xml|html|css|js|ts|tsx|jsx)"
+
+    # Pattern 1: action verb + path with known extension
+    pattern1 = rf"(?:wrote|created|landed|shipped|edited|modified)\s+([a-zA-Z0-9_/.+-]+\.{ext_pattern})"
+    all_matches.extend(re.findall(pattern1, receipt_text, re.IGNORECASE))
+
+    # Pattern 2: bullet-point paths (captures each bullet line independently)
+    pattern2 = rf"^\s*[-*]\s+([a-zA-Z0-9_/.+-]+\.{ext_pattern})"
+    all_matches.extend(re.findall(pattern2, receipt_text, re.MULTILINE))
+
+    # Pattern 3: backtick-wrapped paths
+    pattern3 = rf"`([a-zA-Z0-9_/.+-]+\.{ext_pattern})`"
+    all_matches.extend(re.findall(pattern3, receipt_text))
+
+    # Pattern 4: "Created at" / "Modified to" / "Wrote to" with path
+    pattern4 = rf"(?:created|modified|wrote)\s+(?:at|to)\s+([a-zA-Z0-9_/.+-]+\.{ext_pattern})"
+    all_matches.extend(re.findall(pattern4, receipt_text, re.IGNORECASE))
+
+    # Pattern 5: Absolute paths (Unix /path/to/file.ext or Windows C:/path/to/file.ext)
+    # CZL-80 Q3 fix: Sub-agent receipts often use absolute paths from tool outputs
+    # CZL-80 Q4 precision fix: Negative lookbehind prevents substring capture (e.g. "/kernel/rt.py" from "ystar/kernel/rt.py")
+    pattern5 = rf"(?<![/\w])(?:/[\w/.+-]+|[A-Z]:[/\\][\w/\\. +-]+)\.{ext_pattern}\b"
+    all_matches.extend(re.findall(pattern5, receipt_text))
 
     # De-duplicate and convert to Path objects
-    unique_paths = list(set(matches))
+    unique_paths = list(set(all_matches))
     return [Path(p) for p in unique_paths]
 
 
@@ -624,7 +651,185 @@ def _emit_rt_measurement_from_receipt(five_tuple: dict, actual_rt: float) -> Non
         _log.warning(f"RT_MEASUREMENT auto-emit failed: {e}")
 
 
+# ── CZL-153: Auto-Verify Receipt Artifacts (eng-kernel) ──────────────────
+
+def verify_receipt_artifacts(receipt_text: str) -> dict:
+    """
+    CZL-153 P0: Auto-verify artifacts claimed in sub-agent receipts.
+
+    Extracts file paths from receipt prose, checks each with os.path.exists(),
+    emits RECEIPT_ARTIFACT_MISSING event for any missing artifacts.
+
+    Args:
+        receipt_text: Sub-agent receipt text (full message or notification block)
+
+    Returns:
+        dict with keys:
+            paths_claimed: list[str] (all paths extracted from receipt)
+            paths_verified: list[str] (paths that exist)
+            paths_missing: list[str] (paths that DON'T exist)
+            verification_passed: bool (True if all claimed paths exist)
+
+    CIEU Events Emitted:
+        - RECEIPT_ARTIFACT_MISSING (per missing path, includes path + receipt excerpt)
+
+    Example usage:
+        >>> result = verify_receipt_artifacts(subagent_receipt)
+        >>> if not result["verification_passed"]:
+        ...     log.warning(f"Missing: {result['paths_missing']}")
+
+    Design:
+        - Uses existing _extract_artifact_paths_from_prose() regex engine
+        - os.path.exists() on each extracted path
+        - Emits one CIEU event PER missing path (not batch) for audit granularity
+        - Graceful skip if no paths extracted (not all receipts claim artifacts)
+    """
+    # Extract paths using existing regex engine
+    claimed_paths = _extract_artifact_paths_from_prose(receipt_text)
+
+    # Handle no-paths case gracefully (not all receipts claim file artifacts)
+    if not claimed_paths:
+        return {
+            "paths_claimed": [],
+            "paths_verified": [],
+            "paths_missing": [],
+            "verification_passed": True,  # No claims = no violations
+        }
+
+    # Check each path with os.path.exists()
+    paths_verified = []
+    paths_missing = []
+
+    for path in claimed_paths:
+        if path.exists():
+            paths_verified.append(str(path))
+        else:
+            paths_missing.append(str(path))
+
+            # Emit one CIEU event per missing path (granular audit trail)
+            # Extract 100-char receipt excerpt around path mention for context
+            path_str = str(path)
+            try:
+                idx = receipt_text.index(path_str)
+                excerpt_start = max(0, idx - 50)
+                excerpt_end = min(len(receipt_text), idx + len(path_str) + 50)
+                receipt_excerpt = receipt_text[excerpt_start:excerpt_end]
+            except ValueError:
+                # Path not found in receipt (edge case: absolute vs relative)
+                receipt_excerpt = f"(path {path_str} not found in receipt text)"
+
+            _emit_cieu_event("RECEIPT_ARTIFACT_MISSING", {
+                "path": path_str,
+                "receipt_excerpt": receipt_excerpt,
+                "receipt_length": len(receipt_text),
+            })
+
+    # Return verification summary
+    return {
+        "paths_claimed": [str(p) for p in claimed_paths],
+        "paths_verified": paths_verified,
+        "paths_missing": paths_missing,
+        "verification_passed": len(paths_missing) == 0,
+    }
+
+
 # ── Coordinator Audit Injector (Meta-level Gate) ─────────────────────────
+
+def scan_action_promises(reply_text: str, tool_use_count: int = 0, agent_id: str = "ceo") -> dict:
+    """
+    ARCH-11c: Detect "say != do" — action promises in reply without tool_uses.
+
+    Scans reply text for promise phrases ("NOW doing X", "dispatching Y",
+    "I am spawning Z", etc). If promise count > tool_use count, creates an
+    OmissionEngine obligation via register_action_promise_obligation().
+
+    Args:
+        reply_text:      Agent's reply text to scan
+        tool_use_count:  Number of tool_uses in the same turn
+        agent_id:        Agent whose reply is being scanned
+
+    Returns:
+        dict with keys:
+            promises_detected: list[str] (matched promise phrases)
+            promise_count:     int
+            tool_use_count:    int
+            deficit:           int (promises - tool_uses, 0 if no deficit)
+            obligation_created: bool
+            warning:           str | None (system-reminder XML if deficit > 0)
+    """
+    import re as _re
+    import uuid as _uuid
+
+    ACTION_PROMISE_PATTERNS = [
+        _re.compile(r'NOW\s+(做|执行|dispatching|spawning|running|fixing)', _re.IGNORECASE),
+        _re.compile(r'我立刻'),
+        _re.compile(r'I am (doing|dispatching|spawning|running|executing|fixing)', _re.IGNORECASE),
+        _re.compile(r'正在(执行|派|做|跑|修)'),
+        _re.compile(r'dispatching\s+\w+', _re.IGNORECASE),
+        _re.compile(r'spawning\s+\w+', _re.IGNORECASE),
+        _re.compile(r'(立即|马上)(执行|开始|做|派)', _re.IGNORECASE),
+    ]
+
+    matched = []
+    for pattern in ACTION_PROMISE_PATTERNS:
+        m = pattern.search(reply_text)
+        if m:
+            matched.append(m.group(0))
+
+    deficit = max(0, len(matched) - tool_use_count)
+
+    result = {
+        "promises_detected": matched,
+        "promise_count": len(matched),
+        "tool_use_count": tool_use_count,
+        "deficit": deficit,
+        "obligation_created": False,
+        "warning": None,
+    }
+
+    if deficit <= 0 or not matched:
+        return result
+
+    # Register obligation via OmissionEngine
+    reply_id = str(_uuid.uuid4())
+    try:
+        from ystar.governance.omission_engine import OmissionEngine
+        from ystar.governance.omission_store import InMemoryOmissionStore
+
+        engine = OmissionEngine(store=InMemoryOmissionStore())
+        engine.register_action_promise_obligation(
+            agent_id=agent_id,
+            reply_id=reply_id,
+            promise_phrases=matched,
+            tool_use_count=tool_use_count,
+            ttl_replies=1,
+        )
+        result["obligation_created"] = True
+    except Exception as e:
+        _log.warning(f"[ARCH-11c] OmissionEngine registration failed: {e}")
+
+    # Build warning
+    result["warning"] = (
+        f"<system-reminder>ARCH-11c ACTION_PROMISE_WITHOUT_TOOL_USE: "
+        f"Reply contains {len(matched)} action promise(s) "
+        f"[{', '.join(matched)}] but only {tool_use_count} tool_use(s). "
+        f"OmissionEngine obligation created (reply_id={reply_id}). "
+        f"Next reply without matching tool_uses will be blocked. "
+        f"Execute promised actions or retract claims.</system-reminder>"
+    )
+
+    # Emit CIEU event
+    _emit_cieu_event("ACTION_PROMISE_WITHOUT_TOOL_USE", {
+        "promise_agent_id": agent_id,
+        "promises": matched,
+        "promise_count": len(matched),
+        "tool_use_count": tool_use_count,
+        "deficit": deficit,
+        "reply_id": reply_id,
+    })
+
+    return result
+
 
 def inject_coordinator_audit_warning(
     reply_text: str,

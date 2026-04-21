@@ -1326,12 +1326,87 @@ def _check_must_dispatch_via_cto(
 
     if tool_name == "Agent":
         target_agent = params.get("subagent_type") or params.get("agent", "")
-        # LABS_ALIAS: name-based prefixes loaded from session config at runtime
+        # CZL-DISPATCH-WHITELIST-FIX (Board 2026-04-19 architectural correction):
+        # Resolve target through alias map to CANONICAL value, then check if
+        # canonical starts with "eng-". This is whitelist form — CEO→CTO and
+        # CEO→Secretary are canonically legal paths (cto/secretary canonicals
+        # are NOT engineering), previous prefix-blacklist caught them wrongly.
         from ystar.adapters.identity_detector import _load_alias_map
         _alias_map = _load_alias_map()
-        _name_prefixes = tuple(f"{k.split('-')[0]}-" for k in _alias_map if "-" in k)
-        _eng_prefixes = ("eng-",) + _name_prefixes
-        if target_agent.startswith(_eng_prefixes):
+        target_canonical = _alias_map.get(target_agent, target_agent)
+        if target_canonical.startswith("eng-"):
+            # GRANT CHAIN CHECK (AMENDMENT-015 Layer 2):
+            # If CTO has pre-issued a single-use grant for this CEO->engineer
+            # dispatch, allow it and consume the grant (burn after use).
+            try:
+                from ystar.governance.grant_chain import check_grant, consume_grant, find_recently_consumed
+                grant = check_grant(
+                    grantor="cto",
+                    grantee=who.lower(),
+                    target_agent=target_canonical,
+                )
+                if grant is not None:
+                    consume_grant(grant.grant_id)
+                    _log.info(
+                        f"must_dispatch_via_cto ALLOWED via grant chain: "
+                        f"{who}->{target_agent} grant={grant.grant_id} "
+                        f"atomic={grant.atomic_id}"
+                    )
+                    try:
+                        _record_behavior_rule_cieu(
+                            who=who,
+                            rule_name="must_dispatch_via_cto",
+                            event_type="GRANT_CHAIN_ALLOW",
+                            decision="ALLOW",
+                            passed=True,
+                            reason=f"Grant chain: {grant.grant_id}",
+                            params={
+                                "target_agent": target_agent,
+                                "grant_id": grant.grant_id,
+                                "atomic_id": grant.atomic_id,
+                            }
+                        )
+                    except Exception:
+                        pass  # CIEU record is best-effort
+                    return None  # ALLOW — grant consumed
+                else:
+                    # BUG FIX (CTO 2026-04-19): Idempotent retry handling.
+                    # Claude Code may fire PreToolUse hook multiple times for
+                    # a single Agent call. If grant was recently consumed
+                    # (within 5 min window), treat as valid retry — allow.
+                    retry_grant = find_recently_consumed(
+                        grantor="cto",
+                        grantee=who.lower(),
+                        target_agent=target_canonical,
+                    )
+                    if retry_grant is not None:
+                        _log.info(
+                            f"must_dispatch_via_cto ALLOWED via recently-consumed grant (retry): "
+                            f"{who}->{target_agent} grant={retry_grant.grant_id} "
+                            f"atomic={retry_grant.atomic_id}"
+                        )
+                        try:
+                            _record_behavior_rule_cieu(
+                                who=who,
+                                rule_name="must_dispatch_via_cto",
+                                event_type="GRANT_CHAIN_RETRY_ALLOW",
+                                decision="ALLOW",
+                                passed=True,
+                                reason=f"Recently consumed grant (retry): {retry_grant.grant_id}",
+                                params={
+                                    "target_agent": target_agent,
+                                    "grant_id": retry_grant.grant_id,
+                                    "atomic_id": retry_grant.atomic_id,
+                                }
+                            )
+                        except Exception:
+                            pass
+                        return None  # ALLOW — idempotent retry
+            except ImportError:
+                _log.debug("grant_chain module not available, skipping grant check")
+            except Exception as e:
+                _log.warning(f"grant_chain check failed (non-fatal): {e}")
+
             reason = (
                 f"Behavior rule violation: agent '{who}' must dispatch "
                 f"engineering tasks via CTO, cannot directly spawn '{target_agent}'. "

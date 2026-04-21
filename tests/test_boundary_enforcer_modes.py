@@ -41,7 +41,7 @@ def temp_mode_file(tmp_path):
 
         def path_side_effect(*args, **kwargs):
             # Intercept the specific mode file path
-            if len(args) == 1 and args[0] == "/Users/haotianliu/.openclaw/workspace/ystar-company/.ystar_ceo_mode.json":
+            if len(args) == 1 and args[0] == "/test/workspace/.ystar_ceo_mode.json":
                 return mode_file
             # Otherwise use original Path
             return original_path(*args, **kwargs)
@@ -60,7 +60,7 @@ class TestStandardMode:
 
         # Mock _ensure_write_paths_loaded
         with patch("ystar.adapters.boundary_enforcer._ensure_write_paths_loaded"):
-            with patch("ystar.adapters.boundary_enforcer._AGENT_WRITE_PATHS", {"ceo": ["/Users/haotianliu/.openclaw/workspace/ystar-company/"]}):
+            with patch("ystar.adapters.boundary_enforcer._AGENT_WRITE_PATHS", {"ceo": ["/test/workspace/"]}):
                 result = _check_write_boundary(
                     who="ceo",
                     tool_name="Write",
@@ -99,7 +99,7 @@ class TestAutonomousMode:
         }))
 
         with patch("ystar.adapters.boundary_enforcer._ensure_write_paths_loaded"):
-            with patch("ystar.adapters.boundary_enforcer._AGENT_WRITE_PATHS", {"ceo": ["/Users/haotianliu/.openclaw/workspace/ystar-company/"]}):
+            with patch("ystar.adapters.boundary_enforcer._AGENT_WRITE_PATHS", {"ceo": ["/test/workspace/"]}):
                 result = _check_write_boundary(
                     who="ceo",
                     tool_name="Write",
@@ -117,7 +117,7 @@ class TestAutonomousMode:
         }))
 
         with patch("ystar.adapters.boundary_enforcer._ensure_write_paths_loaded"):
-            with patch("ystar.adapters.boundary_enforcer._AGENT_WRITE_PATHS", {"ceo": ["/Users/haotianliu/.openclaw/workspace/ystar-company/"]}):
+            with patch("ystar.adapters.boundary_enforcer._AGENT_WRITE_PATHS", {"ceo": ["/test/workspace/"]}):
                 result = _check_write_boundary(
                     who="ceo",
                     tool_name="Edit",
@@ -135,11 +135,11 @@ class TestAutonomousMode:
         }))
 
         with patch("ystar.adapters.boundary_enforcer._ensure_write_paths_loaded"):
-            with patch("ystar.adapters.boundary_enforcer._AGENT_WRITE_PATHS", {"ceo": ["/Users/haotianliu/.openclaw/workspace/ystar-company/"]}):
+            with patch("ystar.adapters.boundary_enforcer._AGENT_WRITE_PATHS", {"ceo": ["/test/workspace/"]}):
                 result = _check_write_boundary(
                     who="ceo",
                     tool_name="Write",
-                    params={"file_path": "/Users/haotianliu/.openclaw/workspace/ystar-company/scripts/new_util.py"}
+                    params={"file_path": "/test/workspace/scripts/new_util.py"}
                 )
 
         assert result is None  # allowed
@@ -203,11 +203,11 @@ class TestBreakGlassMode:
         }))
 
         with patch("ystar.adapters.boundary_enforcer._ensure_write_paths_loaded"):
-            with patch("ystar.adapters.boundary_enforcer._AGENT_WRITE_PATHS", {"ceo": ["/Users/haotianliu/.openclaw/workspace/ystar-company/"]}):
+            with patch("ystar.adapters.boundary_enforcer._AGENT_WRITE_PATHS", {"ceo": ["/test/workspace/"]}):
                 result = _check_write_boundary(
                     who="ceo",
                     tool_name="Edit",
-                    params={"file_path": "/Users/haotianliu/.openclaw/workspace/ystar-company/.claude/agents/cto.md"}
+                    params={"file_path": "/test/workspace/.claude/agents/cto.md"}
                 )
 
         assert result is None  # allowed
@@ -222,7 +222,7 @@ class TestBreakGlassMode:
         }))
 
         with patch("ystar.adapters.boundary_enforcer._ensure_write_paths_loaded"):
-            with patch("ystar.adapters.boundary_enforcer._AGENT_WRITE_PATHS", {"ceo": ["/Users/haotianliu/.openclaw/workspace/ystar-company/"]}):
+            with patch("ystar.adapters.boundary_enforcer._AGENT_WRITE_PATHS", {"ceo": ["/test/workspace/"]}):
                 result = _check_write_boundary(
                     who="ceo",
                     tool_name="Write",

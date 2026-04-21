@@ -253,3 +253,52 @@ def test_auto_validate_emits_rt_measurement():
             assert "Created" in call_kwargs["u"][0]
             assert "File exists with 1 line" in call_kwargs["y_t_plus_1"]
             assert call_kwargs["rt_value"] == 0.0  # actual_rt from validation
+
+
+# ── Test 9: Extended artifact path extraction patterns ──────────────────────
+
+def test_extract_artifact_paths_artifacts_header():
+    """Extract paths from 'Artifacts:\n- path' receipt format."""
+    receipt = """
+    Task completed.
+
+    Artifacts:
+    - /Users/haotianliu/.openclaw/workspace/Y-star-gov/ystar/adapters/hooks/stop_hook.py
+    - /tmp/test_output.md
+    """
+
+    paths = _extract_artifact_paths_from_prose(receipt)
+    path_strs = [str(p) for p in paths]
+
+    assert "ystar/adapters/hooks/stop_hook.py" in path_strs or "/Users/haotianliu/.openclaw/workspace/Y-star-gov/ystar/adapters/hooks/stop_hook.py" in path_strs
+    assert "test_output.md" in path_strs or "/tmp/test_output.md" in path_strs
+    assert len(paths) >= 2
+
+
+def test_extract_artifact_paths_backticks():
+    """Extract paths from backtick-wrapped file paths."""
+    receipt = """
+    Modified `ystar/kernel/rt_measurement.py` and tested with `tests/test_rt.py`.
+    """
+
+    paths = _extract_artifact_paths_from_prose(receipt)
+    path_strs = [str(p) for p in paths]
+
+    assert "ystar/kernel/rt_measurement.py" in path_strs
+    assert "tests/test_rt.py" in path_strs
+    assert len(paths) == 2
+
+
+def test_extract_artifact_paths_created_at():
+    """Extract paths from 'Created at /path' format."""
+    receipt = """
+    File created at /Users/haotianliu/Desktop/Y-star-gov/ystar/adapters/hooks/new_hook.py
+    Modified to tests/adapters/test_new_hook.py
+    """
+
+    paths = _extract_artifact_paths_from_prose(receipt)
+    path_strs = [str(p) for p in paths]
+
+    assert "ystar/adapters/hooks/new_hook.py" in path_strs or "/Users/haotianliu/Desktop/Y-star-gov/ystar/adapters/hooks/new_hook.py" in path_strs
+    assert "tests/adapters/test_new_hook.py" in path_strs
+    assert len(paths) >= 2

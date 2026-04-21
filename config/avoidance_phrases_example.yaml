@@ -1,0 +1,5 @@
+# Labs-specific avoidance phrases configuration
+# This file is loaded by hook.py when workspace_config points to a Labs workspace.
+# Product standalone installations: this file absent = no phrases blocked.
+phrases: []
+status_note: "Example config. Populate with org-specific avoidance phrases."

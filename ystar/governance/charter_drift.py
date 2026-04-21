@@ -5,18 +5,23 @@ ystar/governance/charter_drift.py
 Charter drift detection helper for ForgetGuard mid-session compliance.
 
 SCOPE: Detect when charter files (AGENTS.md, CLAUDE.md, governance/*.md, .claude/agents/*.md)
-       are modified after session_start_ts, indicating silent constitutional drift risk.
+       are modified via SHA256 content hash comparison (replaces mtime-based detection).
 
 INTEGRATION: ForgetGuard rule `charter_drift_mid_session` (warn) calls this helper,
              emits CIEU `CHARTER_DRIFT_DETECTED` per drifted file.
 
 INVOCATION: Scheduled via governance loop or hook daemon background scan.
-            Session start timestamp sourced from .ystar_session.json or governance_boot.sh.
+            Baseline hashes stored in .charter_baseline_hashes.json at session start.
 
-Author: Maya Patel (eng-governance)
+RATIONALE: mtime-only detection causes false positives (touch/filesystem ops without content change).
+           SHA256 content hash comparison eliminates false positives (CZL-85, Issue #27).
+
+Author: eng-governance
 Date: 2026-04-16
 """
 import os
+import json
+import hashlib
 from pathlib import Path
 from typing import List, Dict, Optional
 import time
@@ -28,7 +33,7 @@ def detect_charter_drift(
     workspace_root: Optional[Path] = None
 ) -> List[Dict[str, any]]:
     """
-    Detect charter files modified after session start.
+    Detect charter files modified via SHA256 content hash comparison.
 
     Args:
         reference_paths: List of file/glob patterns to monitor. Defaults to:
@@ -36,8 +41,7 @@ def detect_charter_drift(
             - CLAUDE.md
             - governance/*.md
             - .claude/agents/*.md
-        session_start_ts: Unix timestamp (seconds). Files modified after this timestamp
-                          are flagged as drifted. Default 0.0 (all files drift).
+        session_start_ts: Deprecated (kept for backward compat). Not used in hash-based detection.
         workspace_root: Base directory for resolving relative paths. Defaults to
                         parent of ystar/ package (ystar-company repo).
 
@@ -45,17 +49,17 @@ def detect_charter_drift(
         List of drift events, each dict containing:
             {
                 "path": str,                    # Relative path to drifted file
-                "previous_mtime": float,        # File mtime (Unix timestamp)
-                "current_mtime": float,         # Alias for previous_mtime (same value)
-                "session_start_ts": float,      # Session start baseline
-                "drift_seconds": float,         # current_mtime - session_start_ts
+                "previous_hash": str,           # SHA256 baseline hash (hex)
+                "current_hash": str,            # SHA256 current hash (hex)
+                "session_start_ts": float,      # Session start baseline (deprecated)
+                "hash_changed": bool,           # True if content changed
                 "diff_summary": str             # Git diff --stat or "git unavailable"
             }
 
     Example:
-        >>> drifted = detect_charter_drift(reference_paths=["AGENTS.md"], session_start_ts=time.time()-300)
+        >>> drifted = detect_charter_drift(reference_paths=["AGENTS.md"])
         >>> print(drifted)
-        [{"path": "AGENTS.md", "previous_mtime": 1744932000.0, ...}]
+        [{"path": "AGENTS.md", "previous_hash": "abc123...", "current_hash": "def456...", ...}]
     """
     if workspace_root is None:
         # Infer workspace root: ystar/governance/charter_drift.py -> ../../.. (ystar-company)
@@ -72,7 +76,12 @@ def detect_charter_drift(
             ".claude/agents/*.md"
         ]
 
+    # Load baseline hashes (or create if missing)
+    baseline_file = workspace_root / ".charter_baseline_hashes.json"
+    baselines = _load_baseline_hashes(baseline_file)
+
     drift_events = []
+    updated_baselines = {}
 
     for pattern in reference_paths:
         # Resolve glob patterns
@@ -88,23 +97,90 @@ def detect_charter_drift(
                 continue  # Skip directories
 
             try:
-                mtime = file_path.stat().st_mtime
+                current_hash = _compute_file_hash(file_path)
             except OSError:
                 continue  # File unreadable or deleted, skip gracefully
 
-            if mtime > session_start_ts:
-                # File drifted after session start
+            rel_path = str(file_path.relative_to(workspace_root))
+            baseline_hash = baselines.get(rel_path)
+
+            if baseline_hash is None:
+                # First scan: record baseline hash, skip drift check
+                updated_baselines[rel_path] = current_hash
+                continue
+
+            if current_hash != baseline_hash:
+                # Content changed: true drift
                 diff_summary = _get_diff_summary(file_path, workspace_root)
                 drift_events.append({
-                    "path": str(file_path.relative_to(workspace_root)),
-                    "previous_mtime": mtime,
-                    "current_mtime": mtime,
-                    "session_start_ts": session_start_ts,
-                    "drift_seconds": mtime - session_start_ts,
+                    "path": rel_path,
+                    "previous_hash": baseline_hash,
+                    "current_hash": current_hash,
+                    "session_start_ts": session_start_ts,  # Deprecated field
+                    "hash_changed": True,
                     "diff_summary": diff_summary
                 })
+                updated_baselines[rel_path] = current_hash  # Update baseline
+            else:
+                # No content change: no drift
+                updated_baselines[rel_path] = baseline_hash  # Preserve baseline
+
+    # Save updated baselines (merge with existing)
+    _save_baseline_hashes(baseline_file, {**baselines, **updated_baselines})
 
     return drift_events
+
+
+def _compute_file_hash(file_path: Path) -> str:
+    """
+    Compute SHA256 hash of file content.
+
+    Args:
+        file_path: Absolute path to the file.
+
+    Returns:
+        SHA256 hash (hex string).
+    """
+    sha256 = hashlib.sha256()
+    with open(file_path, 'rb') as f:
+        # Read in chunks to handle large files efficiently
+        for chunk in iter(lambda: f.read(65536), b''):
+            sha256.update(chunk)
+    return sha256.hexdigest()
+
+
+def _load_baseline_hashes(baseline_file: Path) -> Dict[str, str]:
+    """
+    Load baseline hashes from JSON file.
+
+    Args:
+        baseline_file: Path to .charter_baseline_hashes.json.
+
+    Returns:
+        Dict mapping relative file paths to SHA256 hashes.
+    """
+    if not baseline_file.exists():
+        return {}
+    try:
+        with open(baseline_file, 'r') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_baseline_hashes(baseline_file: Path, baselines: Dict[str, str]) -> None:
+    """
+    Save baseline hashes to JSON file.
+
+    Args:
+        baseline_file: Path to .charter_baseline_hashes.json.
+        baselines: Dict mapping relative file paths to SHA256 hashes.
+    """
+    try:
+        with open(baseline_file, 'w') as f:
+            json.dump(baselines, f, indent=2, sort_keys=True)
+    except OSError:
+        pass  # Graceful failure if file cannot be written
 
 
 def _get_diff_summary(file_path: Path, workspace_root: Path) -> str:
@@ -138,14 +214,13 @@ def _get_diff_summary(file_path: Path, workspace_root: Path) -> str:
 
 
 if __name__ == "__main__":
-    # CLI test: detect drift from 5 minutes ago
+    # CLI test: detect drift via SHA256 content hash
     import sys
-    baseline_ts = time.time() - 300  # 5 minutes ago
-    drifted = detect_charter_drift(session_start_ts=baseline_ts)
+    drifted = detect_charter_drift()
     if drifted:
         print(f"Detected {len(drifted)} drifted charter file(s):")
         for event in drifted:
-            print(f"  {event['path']} (+{event['drift_seconds']:.1f}s)")
+            print(f"  {event['path']} (hash: {event['previous_hash'][:8]}... -> {event['current_hash'][:8]}...)")
             print(f"    {event['diff_summary']}")
     else:
         print("No charter drift detected.")

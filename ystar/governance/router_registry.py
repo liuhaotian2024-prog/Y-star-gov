@@ -495,11 +495,32 @@ class RouterRegistry:
 _default_registry: Optional[RouterRegistry] = None
 
 
+def _governance_rules_dir() -> str:
+    """Return the path to the governance/rules/ directory (package-relative)."""
+    return os.path.join(os.path.dirname(__file__), "rules")
+
+
+def load_governance_rules(registry: Optional[RouterRegistry] = None) -> int:
+    """
+    Load governance-layer router rules from ystar/governance/rules/.
+
+    If *registry* is None, loads into the default singleton registry.
+    Returns the number of rules successfully registered.
+
+    This function is idempotent: already-registered rule IDs are skipped.
+    """
+    reg = registry if registry is not None else get_default_registry()
+    rules_dir = _governance_rules_dir()
+    return reg.load_rules_dir(rules_dir)
+
+
 def get_default_registry() -> RouterRegistry:
     """Get or create the default singleton RouterRegistry."""
     global _default_registry
     if _default_registry is None:
         _default_registry = RouterRegistry()
+        # Auto-load governance rules on first creation
+        _default_registry.load_rules_dir(_governance_rules_dir())
     return _default_registry
 
 
@@ -515,5 +536,6 @@ __all__ = [
     "RouterRule",
     "RouterRegistry",
     "get_default_registry",
+    "load_governance_rules",
     "reset_default_registry",
 ]

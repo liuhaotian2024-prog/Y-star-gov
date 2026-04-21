@@ -28,6 +28,7 @@ from ystar.adapters.hooks.stop_hook import (
     _read_queue,
     _archive_warnings,
     _clear_queue,
+    verify_receipt_artifacts,
 )
 
 
@@ -245,3 +246,113 @@ def test_read_queue_array_format_unchanged(temp_queue_dir):
     # ASSERTION 16: Array format still parsed
     assert len(warnings) == 1
     assert warnings[0]["task_id"] == "task-x"
+
+
+# ── CZL-153: Auto-Verify Receipt Artifacts Tests ─────────────────────────────
+
+def test_verify_receipt_artifacts_real_path_pass(temp_queue_dir):
+    """
+    CZL-153 T1: Receipt claims real file path → verification passes.
+    """
+    # Create real test file
+    test_file = temp_queue_dir / "test_artifact.py"
+    test_file.write_text("# test", encoding="utf-8")
+
+    # Receipt claiming this path
+    receipt = f"I wrote {test_file} with new function."
+
+    result = verify_receipt_artifacts(receipt)
+
+    # ASSERTION 17: Verification passes for real path
+    assert result["verification_passed"] is True
+    assert str(test_file) in result["paths_verified"]
+    assert len(result["paths_missing"]) == 0
+
+
+def test_verify_receipt_artifacts_fake_path_emits_event(temp_queue_dir):
+    """
+    CZL-153 T2: Receipt claims non-existent path → emits RECEIPT_ARTIFACT_MISSING.
+    """
+    # Receipt claiming fake path
+    fake_path = temp_queue_dir / "nonexistent_file.md"
+    receipt = f"I created {fake_path} with documentation."
+
+    # Mock CIEU emit to capture event
+    from unittest.mock import patch
+    with patch("ystar.adapters.hooks.stop_hook._emit_cieu_event") as mock_emit:
+        result = verify_receipt_artifacts(receipt)
+
+        # ASSERTION 18: Verification fails for missing path
+        assert result["verification_passed"] is False
+        assert str(fake_path) in result["paths_missing"]
+        assert len(result["paths_verified"]) == 0
+
+        # ASSERTION 19: CIEU event emitted
+        mock_emit.assert_called_once()
+        event_type, metadata = mock_emit.call_args[0]
+        assert event_type == "RECEIPT_ARTIFACT_MISSING"
+        assert metadata["path"] == str(fake_path)
+        assert "receipt_excerpt" in metadata
+
+
+def test_verify_receipt_artifacts_no_paths_graceful_skip():
+    """
+    CZL-153 T3: Receipt with no file paths → gracefully skips (passes).
+    """
+    receipt = "Task completed successfully. All tests passing."
+
+    result = verify_receipt_artifacts(receipt)
+
+    # ASSERTION 20: No paths = graceful pass
+    assert result["verification_passed"] is True
+    assert len(result["paths_claimed"]) == 0
+    assert len(result["paths_missing"]) == 0
+
+
+def test_verify_receipt_artifacts_mixed_paths(temp_queue_dir):
+    """
+    CZL-153 T4: Receipt with both real and fake paths → reports both.
+    """
+    # Create one real file
+    real_file = temp_queue_dir / "real.py"
+    real_file.write_text("# real", encoding="utf-8")
+
+    # Fake path
+    fake_file = temp_queue_dir / "fake.md"
+
+    # Receipt claiming both
+    receipt = f"I wrote {real_file} and {fake_file} for documentation."
+
+    from unittest.mock import patch
+    with patch("ystar.adapters.hooks.stop_hook._emit_cieu_event") as mock_emit:
+        result = verify_receipt_artifacts(receipt)
+
+        # ASSERTION 21: Mixed results
+        assert result["verification_passed"] is False
+        assert str(real_file) in result["paths_verified"]
+        assert str(fake_file) in result["paths_missing"]
+
+        # ASSERTION 22: Only fake path triggers event
+        mock_emit.assert_called_once()
+        event_type, metadata = mock_emit.call_args[0]
+        assert metadata["path"] == str(fake_file)
+
+
+def test_verify_receipt_artifacts_excerpt_includes_context(temp_queue_dir):
+    """
+    CZL-153 T5: CIEU event includes receipt excerpt around missing path.
+    """
+    fake_path = temp_queue_dir / "missing.yaml"
+    receipt = f"Step 1 complete. Step 2: wrote {fake_path} config. Step 3 pending."
+
+    from unittest.mock import patch
+    with patch("ystar.adapters.hooks.stop_hook._emit_cieu_event") as mock_emit:
+        verify_receipt_artifacts(receipt)
+
+        # ASSERTION 23: Excerpt contains surrounding context
+        event_type, metadata = mock_emit.call_args[0]
+        excerpt = metadata["receipt_excerpt"]
+        # Excerpt should include path + some context (may be long due to temp paths)
+        assert str(fake_path) in excerpt
+        # Should have context before or after (not just bare path)
+        assert len(excerpt) > len(str(fake_path))

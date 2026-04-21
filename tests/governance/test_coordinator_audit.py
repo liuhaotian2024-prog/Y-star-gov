@@ -4,7 +4,11 @@ Board 2026-04-16 P0 meta-fix — CEO/CTO closure claim validation.
 """
 
 import pytest
-from ystar.governance.coordinator_audit import check_summary_rt_drift
+from ystar.governance.coordinator_audit import (
+    check_summary_rt_drift,
+    check_wave_scope_declared,
+    check_reply_5tuple_compliance,
+)
 
 
 def test_no_closure_claim_skips():
@@ -114,3 +118,91 @@ def test_completed_status_ignored():
         ]
     )
     assert result is None
+
+
+# === Board 2026-04-16 hypocrisy fix: coordinator reply 5-tuple structure ===
+
+class TestReply5TupleCompliance:
+    """Test coordinator reply 5-tuple structure enforcement."""
+
+    def test_short_reply_skips_check(self):
+        """Replies ≤200 chars exempt from 5-tuple requirement."""
+        short_reply = "老大，收到。正在跑 pytest。"
+        result = check_reply_5tuple_compliance(short_reply)
+        assert result is None, "Short reply should skip 5-tuple check"
+
+    def test_long_reply_all_5_sections_present(self):
+        """Reply >200 chars with all 5 sections passes."""
+        compliant_reply = """
+**Y\***: All tests pass + rule active.
+
+**Xt**: coordinator_audit.py exists; forget_guard_rules.yaml has 18 rules.
+
+**U**: (1) Read coordinator_audit.py (2) Read forget_guard_rules.yaml (3) Add check_reply_5tuple_compliance helper (4) Add YAML rule.
+
+**Yt+1**: Helper + rule + test PASS + receipt pastes.
+
+**Rt+1** = 1 if helper missing + 1 if rule missing + 1 if test fails. Target 0.
+        """
+        result = check_reply_5tuple_compliance(compliant_reply)
+        assert result is None, "Compliant reply should pass"
+
+    def test_long_reply_missing_sections_fires(self):
+        """Reply >200 chars missing any of 5 sections triggers violation."""
+        # Missing Xt and U sections
+        partial_reply = """
+老大，这是一个很长的回复，超过200字符。
+
+**Y\***: 所有测试通过 + 规则生效。
+
+**Yt+1**: Helper + rule + test PASS + receipt pastes.
+
+**Rt+1** = 1 if helper missing + 1 if rule missing + 1 if test fails. Target 0.
+
+这个回复缺少 Xt 和 U 部分，应该触发违规检测。ForgetGuard 会拦截这种纯散文回复。
+        """
+        result = check_reply_5tuple_compliance(partial_reply)
+        assert result is not None, "Missing sections should trigger violation"
+        assert result["violation"] is True
+        assert "Xt" in result["missing_sections"]
+        assert "U" in result["missing_sections"]
+        assert result["char_count"] > 200
+
+    def test_pure_prose_reply_fires_all_missing(self):
+        """Pure prose reply >200 chars fires with all 5 sections missing."""
+        prose_reply = """
+老大，今晚的工作进展顺利。已经完成了以下任务：
+
+1. Ryan 完成了 F2 emit-side canonical validation pattern [L4 SHIPPED]
+2. Leo 完成了 charter_drift 检测器 [L3 TESTED]
+3. Jordan 完成了 claim_mismatch 扩展 [L3 TESTED]
+
+下一步计划：
+- Maya 实装 coordinator_reply_missing_5tuple rule
+- 完成 E1 + I1 全 wave 测试覆盖
+
+所有 sub-agent receipts 已验证 Rt+1=0。Wave 完整收敛。
+        """
+        result = check_reply_5tuple_compliance(prose_reply)
+        assert result is not None, "Prose reply should trigger violation"
+        assert result["violation"] is True
+        assert len(result["missing_sections"]) == 5  # All missing
+        assert set(result["missing_sections"]) == {"Y*", "Xt", "U", "Yt+1", "Rt+1"}
+
+
+class TestWaveScopeDeclared:
+    """Test wave/batch closure scope declaration enforcement."""
+
+    def test_wave_closure_without_taskid_list(self):
+        """Wave + closure language without TaskID list → violation."""
+        reply = "本批已全部 shipped，进入下一 wave。"
+        result = check_wave_scope_declared(reply)
+        assert result is not None
+        assert result["violation"] is True
+        assert result["wave_term"] in ["本批", "wave"]
+
+    def test_wave_closure_with_taskid_list(self):
+        """Wave + closure language WITH TaskID list → no violation."""
+        reply = "Wave shipped: #123, #124, #125 all verified."
+        result = check_wave_scope_declared(reply)
+        assert result is None, "Explicit TaskID list should pass"

@@ -4,7 +4,7 @@ K9-RT Sentinel Engine
 CIEU stream subscriber detecting Rt+1 closure gaps and 3D role violations
 
 Emits warnings to `.ystar_warning_queue.json` (append-only JSON lines).
-Consumed by Ryan's hook injector (out of scope for this module).
+Consumed by the platform hook injector (out of scope for this module).
 
 Pilot Rule (hardcoded MVP):
 - Trigger warning if:
@@ -24,8 +24,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-# Configurable DB path: default to ystar-company production DB
-DEFAULT_CIEU_DB = "/Users/haotianliu/.openclaw/workspace/ystar-company/.ystar_cieu.db"
+# Configurable DB path: use environment variable or relative to current working directory
+DEFAULT_CIEU_DB = str(Path(os.getcwd()) / ".ystar_cieu.db")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CIEU_DB_PATH = Path(os.environ.get("YSTAR_CIEU_DB_PATH", DEFAULT_CIEU_DB))
 WARNING_QUEUE_PATH = REPO_ROOT / ".ystar_warning_queue.json"

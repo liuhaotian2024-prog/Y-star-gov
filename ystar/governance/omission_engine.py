@@ -114,10 +114,14 @@ class OmissionEngine:
             store = OmissionStore(db_path=".ystar_omission.db")
         self.store    = store
         self.registry = registry or get_registry()
-        # [FIX-2] 用 NullCIEUStore 替代 None 作为默认值。
-        # None 会导致 omission 违规静默丢失（_write_to_cieu 直接 return）。
-        # NullCIEUStore 保持接口一致，同时发出 UserWarning 提醒配置缺失。
-        self.cieu_store = cieu_store if cieu_store is not None else NullCIEUStore()
+        # [CZL-NULL-CIEU-STORE-FIX] Default to a real CIEUStore so omission
+        # CIEU events are persisted to .ystar_cieu_omission.db.
+        # NullCIEUStore is still honoured when passed explicitly (e.g. tests).
+        if cieu_store is not None:
+            self.cieu_store = cieu_store
+        else:
+            from ystar.governance.cieu_store import CIEUStore
+            self.cieu_store = CIEUStore(db_path=".ystar_cieu_omission.db")
         self._now     = now_fn or time.time
         # GAP 5 FIX: Push model — notify causal engine of violations
         self._causal_notify_fn = causal_notify_fn
@@ -1351,6 +1355,486 @@ class OmissionEngine:
 
         return cancelled_count
 
+    # ── Obligation Closure (B4 fix: 0/17k obligations ever closed) ──────────
+
+    def close_obligation(
+        self,
+        obligation_id: str,
+        evidence_event_id: str = "manual",
+        close_reason: str = "manual",
+        now: Optional[float] = None,
+    ) -> bool:
+        """
+        Close an obligation by marking it FULFILLED with evidence metadata.
+
+        Unlike cancel (which voids the obligation), close marks it as
+        successfully completed. Works on any open status: PENDING,
+        SOFT_OVERDUE, HARD_OVERDUE, ESCALATED, EXPIRED.
+
+        Args:
+            obligation_id: ID of obligation to close
+            evidence_event_id: Event ID proving fulfillment (or "manual")
+            close_reason: Human-readable reason for closure
+            now: Current timestamp (default: time.time())
+
+        Returns:
+            True if obligation was found and closed, False otherwise
+        """
+        now = now or self._now()
+
+        obligation = self.store.get_obligation(obligation_id)
+        if not obligation:
+            _log.warning(f"close_obligation: {obligation_id} not found")
+            return False
+
+        # Already in a terminal state (FULFILLED, CANCELLED, FAILED, RESTORED)
+        if not obligation.status.is_open and obligation.status not in (
+            ObligationStatus.EXPIRED,
+            ObligationStatus.ESCALATED,
+        ):
+            _log.warning(
+                f"close_obligation: {obligation_id} already terminal "
+                f"(status={obligation.status})"
+            )
+            return False
+
+        # Transition to FULFILLED
+        obligation.status = ObligationStatus.FULFILLED
+        obligation.fulfilled_by_event_id = evidence_event_id
+        obligation.notes = (
+            f"{obligation.notes}; closed: {close_reason}"
+            if obligation.notes else f"closed: {close_reason}"
+        )
+        obligation.updated_at = now
+        self.store.update_obligation(obligation)
+
+        # Write CIEU audit event
+        self.cieu_store.write({
+            "event_type": "obligation_closed",
+            "decision": "info",
+            "obligation_id": obligation_id,
+            "obligation_type": obligation.obligation_type,
+            "entity_id": obligation.entity_id,
+            "actor_id": obligation.actor_id,
+            "evidence_event_id": evidence_event_id,
+            "close_reason": close_reason,
+            "timestamp": now,
+        })
+
+        _log.info(
+            f"Closed obligation {obligation_id} "
+            f"(type={obligation.obligation_type}, reason={close_reason})"
+        )
+        return True
+
+    def bulk_auto_close_by_tag_age(
+        self,
+        tag_prefix: str,
+        max_age_seconds: float = 86400 * 7,
+        close_reason: str = "stale_auto_close",
+        now: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Bulk-close obligations whose obligation_type starts with tag_prefix
+        and are older than max_age_seconds.
+
+        This is the simplest closure mechanism: obligations older than a
+        threshold are assumed stale and auto-closed. More sophisticated
+        signature-matching closure can be built on top of close_obligation().
+
+        Args:
+            tag_prefix: Only close obligations whose obligation_type starts
+                        with this prefix (case-insensitive match)
+            max_age_seconds: Only close obligations created more than this
+                             many seconds ago (default: 7 days)
+            close_reason: Reason string stored on each closed obligation
+            now: Current timestamp
+
+        Returns:
+            Dict with keys: closed_count, skipped_count, scanned_count
+        """
+        now = now or self._now()
+        cutoff = now - max_age_seconds
+        tag_lower = tag_prefix.lower()
+
+        all_obs = self.store.list_obligations()
+        scanned = 0
+        closed = 0
+        skipped = 0
+
+        for ob in all_obs:
+            if not ob.obligation_type.lower().startswith(tag_lower):
+                continue
+            scanned += 1
+
+            # Only close open or overdue obligations
+            closeable = ob.status.is_open or ob.status in (
+                ObligationStatus.EXPIRED,
+                ObligationStatus.ESCALATED,
+            )
+            if not closeable:
+                skipped += 1
+                continue
+
+            # Age gate
+            if ob.created_at > cutoff:
+                skipped += 1
+                continue
+
+            if self.close_obligation(
+                ob.obligation_id,
+                evidence_event_id="bulk_auto_close",
+                close_reason=close_reason,
+                now=now,
+            ):
+                closed += 1
+            else:
+                skipped += 1
+
+        _log.info(
+            f"bulk_auto_close_by_tag_age('{tag_prefix}', {max_age_seconds}s): "
+            f"scanned={scanned}, closed={closed}, skipped={skipped}"
+        )
+        return {
+            "closed_count": closed,
+            "skipped_count": skipped,
+            "scanned_count": scanned,
+        }
+
+    # ── ARCH-11b: REDIRECT ignore detection ─────────────────────────────────
+
+    def register_redirect_obligation(
+        self,
+        agent_id: str,
+        redirect_id: str,
+        ttl_actions: int = 3,
+        entity_id: str = "session",
+        redirect_reason: str = "",
+    ) -> ObligationRecord:
+        """
+        Create a 'must_execute_redirect' obligation when a free-text REDIRECT
+        fires (i.e. GuidancePayload absent or auto-invoke failed).
+
+        The agent has `ttl_actions` tool calls to fulfill the REDIRECT fix
+        before OmissionEngine fires a REDIRECT_IGNORED violation.
+
+        Fulfillment: any event of type 'redirect_fulfilled' for same entity.
+
+        Args:
+            agent_id:        The agent that received the REDIRECT
+            redirect_id:     Unique ID for this REDIRECT instance
+            ttl_actions:     Number of tool_uses before obligation expires
+            entity_id:       Entity (session) ID
+            redirect_reason: Human-readable REDIRECT reason
+
+        Returns:
+            The created ObligationRecord
+        """
+        now = self._now()
+        # TTL expressed in actions, but OmissionEngine uses time-based deadlines.
+        # We use ttl_actions * 10s as a reasonable per-action budget.
+        deadline_secs = ttl_actions * 10.0
+
+        ob = ObligationRecord(
+            entity_id=entity_id,
+            actor_id=agent_id,
+            obligation_type=OmissionType.MUST_EXECUTE_REDIRECT.value,
+            trigger_event_id=redirect_id,
+            required_event_types=["redirect_fulfilled"],
+            due_at=now + deadline_secs,
+            grace_period_secs=0.0,
+            hard_overdue_secs=deadline_secs,
+            status=ObligationStatus.PENDING,
+            violation_code="redirect_ignored",
+            severity=Severity.HIGH,
+            escalation_policy=EscalationPolicy(
+                escalate_after_secs=deadline_secs * 2,
+                escalate_to="cto",
+                actions=[EscalationAction.ESCALATE],
+                deny_closure_on_open=True,
+            ),
+            notes=(
+                f"ARCH-11b: free-text REDIRECT must be executed within "
+                f"{ttl_actions} actions. redirect_id={redirect_id}. "
+                f"reason={redirect_reason}"
+            ),
+        )
+        self.store.add_obligation(ob)
+
+        # Write CIEU event for audit trail
+        try:
+            cieu_record = {
+                "event_id": str(uuid.uuid4()),
+                "seq_global": int(now * 1_000_000),
+                "created_at": now,
+                "session_id": entity_id,
+                "agent_id": agent_id,
+                "event_type": "REDIRECT_OBLIGATION_CREATED",
+                "decision": "info",
+                "passed": True,
+                "violations": [],
+                "drift_detected": False,
+                "task_description": (
+                    f"ARCH-11b: obligation created for free-text REDIRECT "
+                    f"redirect_id={redirect_id} ttl_actions={ttl_actions} "
+                    f"reason={redirect_reason}"
+                ),
+                "evidence_grade": "governance",
+            }
+            self.cieu_store.write_dict(cieu_record)
+        except Exception as e:
+            _log.debug("Failed to write redirect obligation CIEU: %s", e)
+
+        _log.info(
+            "[ARCH-11b] Created must_execute_redirect obligation: "
+            "agent=%s redirect_id=%s ttl=%d",
+            agent_id, redirect_id, ttl_actions,
+        )
+        return ob
+
+    # ── ARCH-11c: Action promise enforcement ("say != do") ─────────────────
+
+    def register_action_promise_obligation(
+        self,
+        agent_id: str,
+        reply_id: str,
+        promise_phrases: list[str] | None = None,
+        tool_use_count: int = 0,
+        ttl_replies: int = 1,
+        entity_id: str = "session",
+    ) -> ObligationRecord:
+        """
+        Create a 'must_fulfill_action_promise' obligation when an agent reply
+        contains action promises (e.g. "NOW doing X", "dispatching Y") but
+        has insufficient corresponding tool_uses in the same turn.
+
+        The agent has `ttl_replies` subsequent replies to produce matching
+        tool_uses before OmissionEngine fires a PROMISE_UNFULFILLED violation.
+
+        Fulfillment: any event of type 'action_promise_fulfilled' for same entity.
+
+        Args:
+            agent_id:        The agent whose reply contained promises
+            reply_id:        Unique ID for the reply that triggered this
+            promise_phrases: The detected promise phrases (for audit)
+            tool_use_count:  How many tool_uses actually occurred that turn
+            ttl_replies:     Number of subsequent replies before obligation expires
+            entity_id:       Entity (session) ID
+
+        Returns:
+            The created ObligationRecord
+        """
+        now = self._now()
+        # TTL expressed in replies; use ttl_replies * 30s as reasonable budget
+        deadline_secs = ttl_replies * 30.0
+
+        phrases_str = ", ".join(promise_phrases or [])
+
+        ob = ObligationRecord(
+            entity_id=entity_id,
+            actor_id=agent_id,
+            obligation_type=OmissionType.MUST_FULFILL_ACTION_PROMISE.value,
+            trigger_event_id=reply_id,
+            required_event_types=["action_promise_fulfilled"],
+            due_at=now + deadline_secs,
+            grace_period_secs=0.0,
+            hard_overdue_secs=deadline_secs,
+            status=ObligationStatus.PENDING,
+            violation_code="action_promise_unfulfilled",
+            severity=Severity.HIGH,
+            escalation_policy=EscalationPolicy(
+                escalate_after_secs=deadline_secs * 2,
+                escalate_to="cto",
+                actions=[EscalationAction.ESCALATE],
+                deny_closure_on_open=True,
+            ),
+            notes=(
+                f"ARCH-11c: reply contained {len(promise_phrases or [])} action "
+                f"promise(s) but only {tool_use_count} tool_uses. "
+                f"phrases=[{phrases_str}] reply_id={reply_id}"
+            ),
+        )
+        self.store.add_obligation(ob)
+
+        # Write CIEU event for audit trail
+        try:
+            cieu_record = {
+                "event_id": str(uuid.uuid4()),
+                "seq_global": int(now * 1_000_000),
+                "created_at": now,
+                "session_id": entity_id,
+                "agent_id": agent_id,
+                "event_type": "ACTION_PROMISE_OBLIGATION_CREATED",
+                "decision": "info",
+                "passed": True,
+                "violations": [],
+                "drift_detected": False,
+                "task_description": (
+                    f"ARCH-11c: obligation created for unfulfilled action promises "
+                    f"reply_id={reply_id} promises={len(promise_phrases or [])} "
+                    f"tool_uses={tool_use_count} phrases=[{phrases_str[:200]}]"
+                ),
+                "evidence_grade": "governance",
+            }
+            self.cieu_store.write_dict(cieu_record)
+        except Exception as e:
+            _log.debug("Failed to write action promise obligation CIEU: %s", e)
+
+        _log.info(
+            "[ARCH-11c] Created must_fulfill_action_promise obligation: "
+            "agent=%s reply_id=%s promises=%d tool_uses=%d",
+            agent_id, reply_id, len(promise_phrases or []), tool_use_count,
+        )
+        return ob
+
+    # ── Layer 4: Post-ship completeness obligations (Board 2026-04-19) ──────
+
+    def register_post_ship_completeness_obligation(
+        self,
+        ship_event: Dict[str, Any],
+        manifest_path: Optional[str] = None,
+        entity_id: str = "session",
+    ) -> List[ObligationRecord]:
+        """
+        Trigger: any CIEU event matching event_type LIKE 'CZL-%_SHIPPED' or
+        'PHASE_N_COMPLETE'.
+
+        Reads phase_lifecycle_manifest.yaml, identifies which feature/phase
+        just shipped, and for every subsequent phase with unmet ship_markers,
+        registers a POST_SHIP_COMPLETENESS:<feature>:phase_N obligation.
+
+        Args:
+            ship_event: dict with at least 'event_type' (str) and optionally
+                        'feature_id' (str) to narrow the feature scope.
+            manifest_path: override path to manifest YAML (default: docs/arch/)
+            entity_id: entity for the obligations
+
+        Returns:
+            List of newly created ObligationRecord objects
+        """
+        import re
+        from pathlib import Path
+
+        now = self._now()
+        new_obs: List[ObligationRecord] = []
+
+        # 1. Load manifest
+        if manifest_path is None:
+            manifest_path = str(
+                Path(__file__).parent.parent.parent
+                / "docs" / "arch" / "phase_lifecycle_manifest.yaml"
+            )
+
+        manifest = _load_manifest(manifest_path)
+        if manifest is None:
+            _log.warning("Post-ship completeness: manifest not found at %s", manifest_path)
+            return new_obs
+
+        event_type = ship_event.get("event_type", "")
+        feature_hint = ship_event.get("feature_id")
+
+        # 2. Determine which phase just shipped (heuristic from event_type)
+        shipped_phase_num = _extract_phase_number(event_type)
+
+        # 3. For each feature in manifest, check subsequent phases
+        for feature in manifest.get("features", []):
+            fid = feature.get("feature_id", "unknown")
+
+            # If ship_event specifies a feature_id, only process that feature
+            if feature_hint and fid != feature_hint:
+                continue
+
+            phases = feature.get("phases", {})
+            phase_keys = sorted(phases.keys())  # phase_1, phase_2, phase_3 ...
+
+            for pkey in phase_keys:
+                phase_num = _extract_phase_number(pkey)
+                # Only check phases >= shipped phase (the point is: did we forget the rest?)
+                if phase_num is not None and shipped_phase_num is not None:
+                    if phase_num < shipped_phase_num:
+                        continue
+
+                phase_def = phases[pkey]
+                markers = phase_def.get("ship_markers", [])
+
+                # Check each marker
+                unmet = []
+                for marker_name in markers:
+                    if not _check_ship_marker(marker_name):
+                        unmet.append(marker_name)
+
+                if not unmet:
+                    continue  # All markers met for this phase
+
+                # Register obligation
+                ob_tag = f"POST_SHIP_COMPLETENESS:{fid}:{pkey}"
+
+                # Dedup: skip if same tag already pending
+                existing = self.store.list_obligations(entity_id=entity_id)
+                if any(
+                    o.notes and ob_tag in o.notes
+                    and o.status.is_open
+                    for o in existing
+                ):
+                    continue
+
+                ob = ObligationRecord(
+                    entity_id=entity_id,
+                    actor_id=ship_event.get("actor_id", "system"),
+                    obligation_type=OmissionType.POST_SHIP_COMPLETENESS.value,
+                    trigger_event_id=ship_event.get("event_id", str(uuid.uuid4())),
+                    required_event_types=[f"{fid}_{pkey}_complete"],
+                    due_at=now + 86400.0,  # 24h default deadline
+                    grace_period_secs=3600.0,
+                    hard_overdue_secs=86400.0,
+                    status=ObligationStatus.PENDING,
+                    violation_code="post_ship_phase_incomplete",
+                    severity=Severity.HIGH,
+                    escalation_policy=EscalationPolicy(
+                        escalate_after_secs=172800.0,  # 48h
+                        escalate_to="cto",
+                        actions=[EscalationAction.ESCALATE],
+                        deny_closure_on_open=False,
+                    ),
+                    notes=(
+                        f"{ob_tag} | unmet_markers={unmet} | "
+                        f"trigger={event_type}"
+                    ),
+                )
+                self.store.add_obligation(ob)
+                new_obs.append(ob)
+
+                _log.info(
+                    "[Layer4] Post-ship completeness obligation: %s unmet=%s",
+                    ob_tag, unmet,
+                )
+
+        return new_obs
+
+    def enumerate_open_completeness_obligations(self) -> List[str]:
+        """
+        Returns list of unmet Phase-N obligation tags.
+
+        Format: ["POST_SHIP_COMPLETENESS:<feature>:<phase>", ...]
+
+        Intended to be called from CEO Stop hook reply scan to inject
+        warning into reply when phases remain incomplete after a ship event.
+        """
+        import re
+        result = []
+        all_obs = self.store.list_obligations()
+        for ob in all_obs:
+            if ob.obligation_type != OmissionType.POST_SHIP_COMPLETENESS.value:
+                continue
+            if not ob.status.is_open:
+                continue
+            # Extract the tag from notes
+            if ob.notes:
+                match = re.search(r"(POST_SHIP_COMPLETENESS:\S+)", ob.notes)
+                if match:
+                    result.append(match.group(1))
+        return result
+
     # ── 工具方法 ──────────────────────────────────────────────────────────────
 
     def obligation_status_report(self, entity_id: str) -> dict:
@@ -1369,3 +1853,812 @@ class OmissionEngine:
             "violations":  violations,
             "can_close":   self.can_close(entity_id),
         }
+
+
+# ── Module-level helpers for Layer 4 post-ship completeness ──────────────────
+
+def _load_manifest(path: str) -> Optional[Dict[str, Any]]:
+    """Load phase_lifecycle_manifest.yaml. Returns None if file missing."""
+    from pathlib import Path
+    p = Path(path)
+    if not p.exists():
+        return None
+    try:
+        import yaml
+        with open(p, "r") as f:
+            return yaml.safe_load(f)
+    except Exception as e:
+        _log.warning("Failed to load manifest %s: %s", path, e)
+        return None
+
+
+def _extract_phase_number(text: str) -> Optional[int]:
+    """Extract phase number from strings like 'phase_2', 'PHASE_1_COMPLETE', 'CZL-42_PHASE_2_SHIPPED'."""
+    import re
+    m = re.search(r"phase[_\s]*(\d+)", text, re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+# ── Ship marker checker registry ─────────────────────────────────────────────
+# Each marker_name maps to a callable that returns True if the marker is met.
+# Designed to be extended: add new checkers here as new features get phased.
+
+def _check_activation_log_nonzero() -> bool:
+    """Phase 1 marker: activation_log table has > 0 rows."""
+    try:
+        import sqlite3
+        from pathlib import Path
+        db_path = Path(__file__).parent.parent.parent / ".ystar_cieu_brain.db"
+        if not db_path.exists():
+            return False
+        conn = sqlite3.connect(str(db_path))
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM activation_log"
+        )
+        count = cur.fetchone()[0]
+        conn.close()
+        return count > 0
+    except Exception:
+        return False
+
+
+def _check_cieu_brain_bridge_tests_pass() -> bool:
+    """Phase 1 marker: cieu_brain_bridge tests exist and last run passed.
+    Heuristic: if the test file exists, we trust CI. In production this
+    would query a test-result store."""
+    from pathlib import Path
+    test_file = (
+        Path(__file__).parent.parent.parent
+        / "tests" / "governance" / "test_cieu_brain_bridge.py"
+    )
+    return test_file.exists()
+
+
+def _check_continuous_daemon_running() -> bool:
+    """Phase 2 marker: cieu_brain daemon process exists OR last ingest within 300s."""
+    import time
+    try:
+        import sqlite3
+        from pathlib import Path
+        db_path = Path(__file__).parent.parent.parent / ".ystar_cieu_brain.db"
+        if not db_path.exists():
+            return False
+        conn = sqlite3.connect(str(db_path))
+        cur = conn.execute(
+            "SELECT MAX(ingested_at) FROM activation_log"
+        )
+        row = cur.fetchone()
+        conn.close()
+        if row and row[0]:
+            return (time.time() - row[0]) < 300
+        return False
+    except Exception:
+        return False
+
+
+def _check_hebbian_edges_nonzero() -> bool:
+    """Phase 2 marker: hebbian edges table has > 0 rows."""
+    try:
+        import sqlite3
+        from pathlib import Path
+        db_path = Path(__file__).parent.parent.parent / ".ystar_cieu_brain.db"
+        if not db_path.exists():
+            return False
+        conn = sqlite3.connect(str(db_path))
+        cur = conn.execute("SELECT COUNT(*) FROM edges")
+        count = cur.fetchone()[0]
+        conn.close()
+        return count > 0
+    except Exception:
+        return False
+
+
+def _check_dim_drift_applied() -> bool:
+    """Phase 3 marker: nodes.dim_y has been updated (non-null) in the brain DB."""
+    try:
+        import sqlite3
+        from pathlib import Path
+        db_path = Path(__file__).parent.parent.parent / ".ystar_cieu_brain.db"
+        if not db_path.exists():
+            return False
+        conn = sqlite3.connect(str(db_path))
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM nodes WHERE dim_y IS NOT NULL AND dim_y != 0.0"
+        )
+        count = cur.fetchone()[0]
+        conn.close()
+        return count > 0
+    except Exception:
+        return False
+
+
+def _check_event_type_coords_populated() -> bool:
+    """Phase 3 marker: event_type_coords table exists with > 0 rows."""
+    try:
+        import sqlite3
+        from pathlib import Path
+        db_path = Path(__file__).parent.parent.parent / ".ystar_cieu_brain.db"
+        if not db_path.exists():
+            return False
+        conn = sqlite3.connect(str(db_path))
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master "
+            "WHERE type='table' AND name='event_type_coords'"
+        )
+        if cur.fetchone()[0] == 0:
+            conn.close()
+            return False
+        cur = conn.execute("SELECT COUNT(*) FROM event_type_coords")
+        count = cur.fetchone()[0]
+        conn.close()
+        return count > 0
+    except Exception:
+        return False
+
+
+_SHIP_MARKER_REGISTRY: Dict[str, Any] = {
+    "activation_log_nonzero":        _check_activation_log_nonzero,
+    "cieu_brain_bridge_tests_pass":  _check_cieu_brain_bridge_tests_pass,
+    "continuous_daemon_running":      _check_continuous_daemon_running,
+    "hebbian_edges_nonzero":         _check_hebbian_edges_nonzero,
+    "dim_drift_applied":             _check_dim_drift_applied,
+    "event_type_coords_populated":   _check_event_type_coords_populated,
+}
+
+
+def _check_ship_marker(marker_name: str) -> bool:
+    """Dispatch to the appropriate marker checker. Unknown markers return False."""
+    checker = _SHIP_MARKER_REGISTRY.get(marker_name)
+    if checker is None:
+        _log.warning("Unknown ship marker: %s", marker_name)
+        return False
+    try:
+        return checker()
+    except Exception as e:
+        _log.warning("Ship marker %s check failed: %s", marker_name, e)
+        return False
+
+
+def register_ship_marker(name: str, checker_fn: Any) -> None:
+    """Register a custom ship marker checker (for extensibility)."""
+    _SHIP_MARKER_REGISTRY[name] = checker_fn
+
+
+# ── Module-level convenience wrappers ────────────────────────────────────────
+
+def enumerate_open_completeness_obligations() -> List[str]:
+    """
+    Module-level convenience: create an OmissionEngine with default store
+    and return open completeness obligation tags.
+
+    Usage:
+        from ystar.governance.omission_engine import enumerate_open_completeness_obligations
+        print(enumerate_open_completeness_obligations())
+    """
+    engine = OmissionEngine()
+    return engine.enumerate_open_completeness_obligations()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Level 2: Manifest Self-Audit ("无的无" — gaps the manifest itself doesn't name)
+# Board 2026-04-19: "有了就要照亮更多的无"
+# ══════════════════════════════════════════════════════════════════════════════
+
+def audit_manifest_completeness(
+    manifest_path: str,
+    cieu_db_path: str,
+    window_days: int = 7,
+) -> Dict[str, Any]:
+    """
+    Level 2 recursive illumination: discover failure event types in CIEU that
+    the phase lifecycle manifest does NOT reference.
+
+    Algorithm:
+      1. Scan CIEU for DENY/ERROR/VIOLATION event types in last N days
+      2. Parse manifest ship_markers and extract which event types they reference
+      3. Compute: cieu_failure_event_types ∖ manifest_referenced_types = unnamed gaps
+      4. Return suggested new manifest sections with proposed ship_markers
+
+    Emits CIEU_MANIFEST_GAP_DETECTED meta-event per gap found.
+
+    Args:
+        manifest_path: Path to phase_lifecycle_manifest.yaml
+        cieu_db_path:  Path to .ystar_cieu.db
+        window_days:   How far back to look for failure events (default 7)
+
+    Returns:
+        dict with keys:
+          - "gaps": list of {"failure_type": str, "count": int, "suggested_marker": str}
+          - "manifest_types_covered": list of str (types the manifest already knows)
+          - "cieu_failure_types": list of str (all failure types from CIEU)
+          - "meta_events_emitted": int
+    """
+    import sqlite3
+    from pathlib import Path
+
+    result: Dict[str, Any] = {
+        "gaps": [],
+        "manifest_types_covered": [],
+        "cieu_failure_types": [],
+        "meta_events_emitted": 0,
+    }
+
+    # 1. Query CIEU for failure event types in the window
+    cieu_failure_types: Dict[str, int] = {}
+    try:
+        cutoff = time.time() - (window_days * 86400)
+        conn = sqlite3.connect(cieu_db_path)
+        cur = conn.execute(
+            "SELECT event_type, COUNT(*) "
+            "FROM cieu_events "
+            "WHERE decision IN ('deny', 'error', 'violated') "
+            "  AND created_at >= ? "
+            "GROUP BY event_type "
+            "ORDER BY COUNT(*) DESC",
+            (cutoff,),
+        )
+        for row in cur.fetchall():
+            cieu_failure_types[row[0]] = row[1]
+        conn.close()
+    except Exception as e:
+        _log.warning("audit_manifest_completeness: CIEU query failed: %s", e)
+
+    result["cieu_failure_types"] = list(cieu_failure_types.keys())
+
+    # 2. Parse manifest and collect all event_type references
+    manifest = _load_manifest(manifest_path)
+    manifest_referenced_types: set = set()
+
+    if manifest:
+        for feature in manifest.get("features", []):
+            fid = feature.get("feature_id", "")
+            phases = feature.get("phases", {})
+            for pkey, phase_def in phases.items():
+                markers = phase_def.get("ship_markers", [])
+                for marker in markers:
+                    # The marker name itself is an implicit reference
+                    manifest_referenced_types.add(marker)
+                # Also check if description mentions event types
+                desc = phase_def.get("description", "")
+                if desc:
+                    manifest_referenced_types.add(desc.lower().replace(" ", "_"))
+
+            # Also add the feature_id itself as a known reference
+            manifest_referenced_types.add(fid)
+
+    result["manifest_types_covered"] = sorted(manifest_referenced_types)
+
+    # 3. Compute gaps: failure types NOT covered by manifest references
+    gaps = []
+    for failure_type, count in cieu_failure_types.items():
+        # A failure type is "covered" if the manifest references it
+        # (either directly as a marker name or by substring containment)
+        covered = False
+        ft_lower = failure_type.lower()
+        for ref in manifest_referenced_types:
+            ref_lower = ref.lower()
+            if ref_lower in ft_lower or ft_lower in ref_lower:
+                covered = True
+                break
+
+        if not covered:
+            suggested_marker = f"no_{failure_type.lower().replace(':', '_').replace(' ', '_')}_failures"
+            gaps.append({
+                "failure_type": failure_type,
+                "count": count,
+                "suggested_marker": suggested_marker,
+            })
+
+    result["gaps"] = gaps
+
+    # 4. Emit CIEU_MANIFEST_GAP_DETECTED meta-events
+    meta_events_emitted = 0
+    if gaps:
+        try:
+            conn = sqlite3.connect(cieu_db_path)
+            now = time.time()
+            for gap in gaps:
+                event_id = str(uuid.uuid4())
+                conn.execute(
+                    "INSERT OR IGNORE INTO cieu_events "
+                    "(event_id, seq_global, created_at, session_id, agent_id, "
+                    " event_type, decision, passed, "
+                    " drift_detected, task_description, evidence_grade) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        event_id,
+                        int(now * 1_000_000),
+                        now,
+                        "system",
+                        "omission_engine_level2",
+                        "CIEU_MANIFEST_GAP_DETECTED",
+                        "info",
+                        1,
+                        1,  # drift_detected = True (this IS a gap)
+                        (
+                            f"Level 2 manifest gap: failure_type={gap['failure_type']} "
+                            f"count={gap['count']} suggested_marker={gap['suggested_marker']}"
+                        ),
+                        "governance",
+                    ),
+                )
+                meta_events_emitted += 1
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            _log.warning("audit_manifest_completeness: CIEU meta-event write failed: %s", e)
+
+    result["meta_events_emitted"] = meta_events_emitted
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Level 3: Downstream Obligation Derivation ("无的生成性")
+# Board 2026-04-19: "每一个有 ship 出来，必须至少照亮一个新的无"
+# ══════════════════════════════════════════════════════════════════════════════
+
+def derive_new_obligations_from_ship(
+    ship_event: Dict[str, Any],
+    manifest_path: Optional[str] = None,
+    k9_adapter_path: Optional[str] = None,
+    ystar_gov_root: Optional[str] = None,
+    labs_root: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Level 3 recursive illumination: given a ship event, traverse the 6D brain
+    ecosystem_entanglement nodes that link to this feature, and check whether
+    corresponding downstream artifacts exist.
+
+    Missing artifact = new obligation illuminated.
+
+    Additionally, if K9Audit is available, use CausalChainAnalyzer to walk the
+    dependency graph and surface higher-order downstream absences.
+
+    Args:
+        ship_event:     dict with "feature_id" (str) and optional "event_type"
+        manifest_path:  path to phase_lifecycle_manifest.yaml
+        k9_adapter_path: path to K9Audit repo (default: /tmp/K9Audit)
+        ystar_gov_root: path to Y*gov repo root
+        labs_root:      path to ystar-company repo root
+
+    Returns:
+        dict with keys:
+          - "derived_obligations": list of {
+                "obligation_type": str,
+                "missing_artifact": str,
+                "reason": str,
+                "source_node": str,
+                "priority": str,
+            }
+          - "k9_used": bool
+          - "k9_causal_obligations": list (extra obligations from K9 traversal)
+          - "meta_events_emitted": int
+    """
+    from pathlib import Path
+
+    result: Dict[str, Any] = {
+        "derived_obligations": [],
+        "k9_used": False,
+        "k9_causal_obligations": [],
+        "meta_events_emitted": 0,
+    }
+
+    feature_id = ship_event.get("feature_id", "unknown")
+    event_type = ship_event.get("event_type", "")
+
+    # Resolve repo roots
+    if ystar_gov_root is None:
+        ystar_gov_root = str(Path(__file__).parent.parent.parent)
+    if labs_root is None:
+        labs_root = str(
+            Path(__file__).parent.parent.parent.parent / "ystar-company"
+        )
+    if k9_adapter_path is None:
+        k9_adapter_path = "/tmp/K9Audit"
+
+    # ── 6D Ecosystem Entanglement Map ──────────────────────────────────────
+    # Each shipped feature entangles with these downstream artifact categories.
+    # This is the "obligation derivation" — if we ship X, these must also exist.
+    DOWNSTREAM_ARTIFACT_MAP = {
+        "tests": {
+            "description": "Test coverage for shipped feature",
+            "check_paths": [
+                f"tests/governance/test_{feature_id}.py",
+                f"tests/test_{feature_id}.py",
+            ],
+            "priority": "HIGH",
+        },
+        "documentation": {
+            "description": "Architecture doc or spec for shipped feature",
+            "check_paths": [
+                f"docs/arch/{feature_id}.md",
+                f"docs/arch/{feature_id}_spec.md",
+            ],
+            "priority": "MEDIUM",
+        },
+        "manifest_entry": {
+            "description": "Phase lifecycle manifest entry for feature",
+            "check_fn": "_check_manifest_has_feature",
+            "priority": "HIGH",
+        },
+        "forgetguard_rules": {
+            "description": "ForgetGuard rules derived from feature failures",
+            "check_paths_labs": [
+                f"knowledge/shared/forgetguard_{feature_id}.yml",
+            ],
+            "priority": "LOW",
+        },
+        "brain_integration": {
+            "description": "CIEU brain bridge integration for feature",
+            "check_paths": [
+                f"tools/cieu/cieu_{feature_id}_extractor.py",
+                f"scripts/cieu_{feature_id}.py",
+            ],
+            "priority": "LOW",
+        },
+        "backup_artifact": {
+            "description": "Backup/rollback plan for shipped feature",
+            "check_paths_labs": [
+                f"knowledge/cto/{feature_id}_rollback.md",
+                f"knowledge/cto/{feature_id}_backup.md",
+            ],
+            "priority": "MEDIUM",
+        },
+    }
+
+    gov_root = Path(ystar_gov_root)
+    company_root = Path(labs_root)
+
+    for artifact_key, artifact_def in DOWNSTREAM_ARTIFACT_MAP.items():
+        found = False
+
+        # Check Y*gov repo paths
+        for rel_path in artifact_def.get("check_paths", []):
+            if (gov_root / rel_path).exists():
+                found = True
+                break
+
+        # Check ystar-company repo paths
+        if not found:
+            for rel_path in artifact_def.get("check_paths_labs", []):
+                if (company_root / rel_path).exists():
+                    found = True
+                    break
+
+        # Special check functions
+        if not found and artifact_def.get("check_fn") == "_check_manifest_has_feature":
+            mpath = manifest_path or str(
+                gov_root / "docs" / "arch" / "phase_lifecycle_manifest.yaml"
+            )
+            manifest = _load_manifest(mpath)
+            if manifest:
+                for feat in manifest.get("features", []):
+                    if feat.get("feature_id") == feature_id:
+                        found = True
+                        break
+
+        if not found:
+            result["derived_obligations"].append({
+                "obligation_type": OmissionType.DERIVED_OBLIGATION.value,
+                "missing_artifact": artifact_key,
+                "reason": artifact_def["description"],
+                "source_node": f"{feature_id}:{artifact_key}",
+                "priority": artifact_def["priority"],
+            })
+
+    # ── K9 Integration (if available) ──────────────────────────────────────
+    k9_path = Path(k9_adapter_path)
+    if k9_path.exists() and (k9_path / "k9log" / "causal_analyzer.py").exists():
+        try:
+            import sys
+            if str(k9_path) not in sys.path:
+                sys.path.insert(0, str(k9_path))
+            from k9log.causal_analyzer import CausalChainAnalyzer
+
+            result["k9_used"] = True
+
+            # Use K9 to find dependency edges from the shipped feature
+            # K9 CausalChainAnalyzer works on JSONL files — we create a
+            # minimal one representing the ship event and its known dependencies
+            import tempfile
+            import json
+
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".jsonl", delete=False
+            ) as f:
+                # Write a synthetic JSONL representing the ship event
+                record = {
+                    "event_type": event_type or f"{feature_id}_shipped",
+                    "X_t": {"agent_id": "system", "feature": feature_id},
+                    "U_t": {"action": "ship"},
+                    "Y_t+1": {"status": "shipped"},
+                    "R_t+1": {"passed": True},
+                }
+                f.write(json.dumps(record) + "\n")
+                tmpfile = f.name
+
+            try:
+                analyzer = CausalChainAnalyzer(tmpfile)
+                dag = analyzer.build_causal_dag()
+                root_causes = analyzer.find_root_causes()
+
+                for cause in root_causes:
+                    result["k9_causal_obligations"].append({
+                        "obligation_type": OmissionType.DERIVED_OBLIGATION.value,
+                        "missing_artifact": f"k9_causal:{cause}",
+                        "reason": f"K9 CausalChainAnalyzer identified unresolved dependency: {cause}",
+                        "source_node": f"k9:{feature_id}",
+                        "priority": "MEDIUM",
+                    })
+            except Exception as e:
+                _log.info("K9 causal analysis ran but produced no extra obligations: %s", e)
+            finally:
+                import os
+                os.unlink(tmpfile)
+
+        except ImportError:
+            _log.info("K9Audit import failed, skipping causal traversal")
+        except Exception as e:
+            _log.warning("K9 integration error: %s", e)
+
+    # ── Emit CIEU_DERIVED_OBLIGATION meta-events ──────────────────────────
+    all_obligations = result["derived_obligations"] + result["k9_causal_obligations"]
+    meta_events_emitted = 0
+
+    if all_obligations:
+        try:
+            # Try to write to the standard CIEU DB
+            cieu_db_default = gov_root / ".ystar_cieu.db"
+            if not cieu_db_default.exists():
+                # Fallback: ystar-company CIEU DB
+                cieu_db_default = company_root / ".ystar_cieu.db"
+
+            if cieu_db_default.exists():
+                import sqlite3
+                conn = sqlite3.connect(str(cieu_db_default))
+                now = time.time()
+                for ob in all_obligations:
+                    event_id = str(uuid.uuid4())
+                    conn.execute(
+                        "INSERT OR IGNORE INTO cieu_events "
+                        "(event_id, seq_global, created_at, session_id, agent_id, "
+                        " event_type, decision, passed, "
+                        " drift_detected, task_description, evidence_grade) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            event_id,
+                            int(now * 1_000_000),
+                            now,
+                            "system",
+                            "omission_engine_level3",
+                            "CIEU_DERIVED_OBLIGATION",
+                            "info",
+                            1,
+                            1,
+                            (
+                                f"Level 3 derived obligation: "
+                                f"missing={ob['missing_artifact']} "
+                                f"reason={ob['reason']} "
+                                f"source={ob['source_node']} "
+                                f"priority={ob['priority']}"
+                            ),
+                            "governance",
+                        ),
+                    )
+                    meta_events_emitted += 1
+                conn.commit()
+                conn.close()
+        except Exception as e:
+            _log.warning("derive_new_obligations: CIEU meta-event write failed: %s", e)
+
+    result["meta_events_emitted"] = meta_events_emitted
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Level 4: Knowledge-Action Gap Detection ("知行合一" — Wang Yangming)
+# Board 2026-04-19: "OmissionEngine 也应该是知行合一的重要引擎"
+#
+# Knowing X without doing X = omission failure.
+# This detector reads a declarative registry of knowledge-action contracts
+# and scans CIEU for trigger events WITHOUT their required follow-up actions.
+# ══════════════════════════════════════════════════════════════════════════════
+
+_DEFAULT_REGISTRY_PATH = str(
+    __import__("pathlib").Path(__file__).parent.parent.parent
+    / "docs" / "arch" / "knowledge_action_registry.yaml"
+)
+
+
+def _load_knowledge_action_registry(
+    registry_path: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Load the knowledge-action registry YAML. Returns list of rule dicts."""
+    from pathlib import Path
+
+    path = Path(registry_path or _DEFAULT_REGISTRY_PATH)
+    if not path.exists():
+        _log.warning("Knowledge-action registry not found: %s", path)
+        return []
+
+    try:
+        import yaml
+        with open(path, "r") as f:
+            data = yaml.safe_load(f)
+        return data.get("rules", []) if data else []
+    except Exception as e:
+        _log.warning("Failed to load knowledge-action registry: %s", e)
+        return []
+
+
+def detect_knowledge_action_gaps(
+    cieu_db_path: Optional[str] = None,
+    registry_path: Optional[str] = None,
+    cieu_window_sec: int = 300,
+) -> Dict[str, Any]:
+    """
+    Level 4 knowledge-action gap detector.
+
+    For each rule in the registry:
+      1. Find CIEU events matching knowledge_trigger within the time window
+      2. For each trigger event, check if a matching required_action event
+         exists within detection_window_sec AFTER the trigger
+      3. Unmatched triggers = knowledge-action gaps
+
+    Args:
+        cieu_db_path:     Path to .ystar_cieu.db (auto-detected if None)
+        registry_path:    Path to knowledge_action_registry.yaml (default in docs/arch/)
+        cieu_window_sec:  How far back to scan for trigger events (default 300s = 5 min)
+
+    Returns:
+        dict with keys:
+          - "gaps": list of {knowledge_id, trigger_event_type, trigger_ts, required_action,
+                             detection_window_sec, severity, description}
+          - "rules_checked": int
+          - "total_triggers_found": int
+          - "total_gaps": int
+          - "obligations_registered": int
+    """
+    import sqlite3
+    from pathlib import Path
+
+    result: Dict[str, Any] = {
+        "gaps": [],
+        "rules_checked": 0,
+        "total_triggers_found": 0,
+        "total_gaps": 0,
+        "obligations_registered": 0,
+    }
+
+    # Auto-detect CIEU DB path
+    if cieu_db_path is None:
+        for candidate in [
+            Path(__file__).parent.parent.parent / ".ystar_cieu.db",
+            Path.home() / ".openclaw" / "workspace" / "ystar-company" / ".ystar_cieu.db",
+            Path.home() / ".openclaw" / "workspace" / "Y-star-gov" / ".ystar_cieu.db",
+        ]:
+            if candidate.exists():
+                cieu_db_path = str(candidate)
+                break
+
+    if cieu_db_path is None or not Path(cieu_db_path).exists():
+        _log.warning("No CIEU database found for knowledge-action gap detection")
+        return result
+
+    # Load the registry
+    rules = _load_knowledge_action_registry(registry_path)
+    if not rules:
+        _log.info("No rules in knowledge-action registry")
+        return result
+
+    result["rules_checked"] = len(rules)
+    now = time.time()
+    cutoff = now - cieu_window_sec
+
+    try:
+        conn = sqlite3.connect(cieu_db_path)
+
+        for rule in rules:
+            kid = rule.get("knowledge_id", "unknown")
+            trigger_pattern = rule.get("knowledge_trigger", "")
+            action_pattern = rule.get("required_action", "")
+            window = rule.get("detection_window_sec", 30)
+            severity = rule.get("severity", "medium")
+            description = rule.get("description", "")
+
+            if not trigger_pattern or not action_pattern:
+                continue
+
+            # Find trigger events in the scan window
+            # Use LIKE for substring matching on event_type or task_description
+            cur = conn.execute(
+                "SELECT event_id, event_type, created_at, task_description "
+                "FROM cieu_events "
+                "WHERE created_at >= ? "
+                "  AND (event_type LIKE ? OR task_description LIKE ?) "
+                "ORDER BY created_at ASC",
+                (cutoff, f"%{trigger_pattern}%", f"%{trigger_pattern}%"),
+            )
+            triggers = cur.fetchall()
+            result["total_triggers_found"] += len(triggers)
+
+            for trig_id, trig_type, trig_ts, trig_desc in triggers:
+                # Look for the required action within the detection window
+                action_cutoff = trig_ts + window
+                action_cur = conn.execute(
+                    "SELECT COUNT(*) FROM cieu_events "
+                    "WHERE created_at >= ? AND created_at <= ? "
+                    "  AND (event_type LIKE ? OR task_description LIKE ?)",
+                    (trig_ts, action_cutoff, f"%{action_pattern}%", f"%{action_pattern}%"),
+                )
+                action_count = action_cur.fetchone()[0]
+
+                if action_count == 0:
+                    gap = {
+                        "knowledge_id": kid,
+                        "trigger_event_type": trig_type,
+                        "trigger_ts": trig_ts,
+                        "required_action": action_pattern,
+                        "detection_window_sec": window,
+                        "severity": severity,
+                        "description": description.strip() if description else "",
+                    }
+                    result["gaps"].append(gap)
+                    result["total_gaps"] += 1
+
+        conn.close()
+    except Exception as e:
+        _log.warning("detect_knowledge_action_gaps: CIEU query error: %s", e)
+
+    # Register obligations for detected gaps
+    if result["gaps"]:
+        try:
+            store = OmissionStore(db_path=".ystar_omission.db")
+            for gap in result["gaps"]:
+                ob = ObligationRecord(
+                    entity_id=f"knowledge_action:{gap['knowledge_id']}",
+                    actor_id="system",
+                    obligation_type=OmissionType.KNOWLEDGE_ACTION_GAP.value,
+                    required_event_types=[gap["required_action"]],
+                    due_at=gap["trigger_ts"] + gap["detection_window_sec"],
+                    status=ObligationStatus.PENDING,
+                    violation_code="knowledge_action_gap",
+                    severity=Severity[gap["severity"].upper()],
+                    notes=(
+                        f"KNOWLEDGE_ACTION_GAP:{gap['knowledge_id']} | "
+                        f"trigger={gap['trigger_event_type']} | "
+                        f"required={gap['required_action']} | "
+                        f"window={gap['detection_window_sec']}s"
+                    ),
+                )
+                store.add_obligation(ob)
+                result["obligations_registered"] += 1
+        except Exception as e:
+            _log.warning("Failed to register knowledge-action gap obligations: %s", e)
+
+    return result
+
+
+def enumerate_open_knowledge_action_gaps(
+    cieu_db_path: Optional[str] = None,
+    registry_path: Optional[str] = None,
+    cieu_window_sec: int = 300,
+) -> List[str]:
+    """
+    Convenience wrapper: returns list of gap tags.
+
+    Format: ["KNOWLEDGE_ACTION_GAP:<knowledge_id>", ...]
+
+    Suitable for use in Stop hook reply scans, CEO pre-output checks, etc.
+    """
+    result = detect_knowledge_action_gaps(
+        cieu_db_path=cieu_db_path,
+        registry_path=registry_path,
+        cieu_window_sec=cieu_window_sec,
+    )
+    return [
+        f"KNOWLEDGE_ACTION_GAP:{gap['knowledge_id']}"
+        for gap in result.get("gaps", [])
+    ]

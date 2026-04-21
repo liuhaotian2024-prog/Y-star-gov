@@ -14,6 +14,13 @@ COVERAGE:
 4. session_start_ts in future (no drift)
 5. Missing reference path (graceful skip)
 
+SMOKE TEST SAFETY (CZL-87 Fix):
+- NEVER use echo >> AGENTS.md or any constitutional doc as smoke target
+- ALWAYS use temp_workspace fixture (writes to /tmp/)
+- Constitutional docs (AGENTS.md, CLAUDE.md, governance/*.md, .claude/agents/*.md)
+  are append-only audit trail — mutating them pollutes governance state
+- For content-mutation smoke tests, use /tmp/test_charter_drift_$$.md or similar
+
 Author: Maya Patel (eng-governance)
 Date: 2026-04-16
 """
@@ -75,10 +82,18 @@ class TestCharterDriftDetection:
         """Detect single charter file modified after session start."""
         session_start_ts = time.time()
 
-        # Modify AGENTS.md after session start
+        # First scan: establish baseline
+        detect_charter_drift(
+            reference_paths=["AGENTS.md"],
+            session_start_ts=session_start_ts,
+            workspace_root=temp_workspace
+        )
+
+        # Modify AGENTS.md after baseline
         time.sleep(0.1)
         (temp_workspace / "AGENTS.md").write_text("# AGENTS charter v2.0 — MODIFIED\n")
 
+        # Second scan: detect drift
         drifted = detect_charter_drift(
             reference_paths=["AGENTS.md"],
             session_start_ts=session_start_ts,
@@ -90,20 +105,27 @@ class TestCharterDriftDetection:
         drift_event = drifted[0]
         assert drift_event["path"] == "AGENTS.md"
         assert drift_event["session_start_ts"] == session_start_ts
-        assert drift_event["drift_seconds"] > 0, "drift_seconds should be positive"
-        assert drift_event["current_mtime"] > session_start_ts
+        assert drift_event["hash_changed"] is True
         assert "diff_summary" in drift_event
 
     def test_multiple_files_drifted(self, temp_workspace):
         """Detect multiple charter files drifted (N events)."""
         session_start_ts = time.time()
 
-        # Modify multiple files after session start
+        # First scan: establish baseline
+        detect_charter_drift(
+            reference_paths=["AGENTS.md", "CLAUDE.md", "governance/*.md"],
+            session_start_ts=session_start_ts,
+            workspace_root=temp_workspace
+        )
+
+        # Modify multiple files after baseline
         time.sleep(0.1)
         (temp_workspace / "AGENTS.md").write_text("# AGENTS v2.0\n")
         (temp_workspace / "CLAUDE.md").write_text("# CLAUDE v2.0\n")
         (temp_workspace / "governance" / "WORKING_STYLE.md").write_text("# WORKING_STYLE v2.0\n")
 
+        # Second scan: detect drift
         drifted = detect_charter_drift(
             reference_paths=["AGENTS.md", "CLAUDE.md", "governance/*.md"],
             session_start_ts=session_start_ts,
@@ -152,13 +174,19 @@ class TestCharterDriftDetection:
         """Test default reference_paths coverage (AGENTS.md, CLAUDE.md, governance/*.md, .claude/agents/*.md)."""
         session_start_ts = time.time()
 
+        # First scan: establish baseline (use default reference_paths)
+        detect_charter_drift(
+            session_start_ts=session_start_ts,
+            workspace_root=temp_workspace
+        )
+
         # Modify files in all default scope categories
         time.sleep(0.1)
         (temp_workspace / "AGENTS.md").write_text("# AGENTS v2.0\n")
         (temp_workspace / "governance" / "WORKING_STYLE.md").write_text("# WORKING_STYLE v2.0\n")
         (temp_workspace / ".claude" / "agents" / "ceo.md").write_text("# CEO v2.0\n")
 
-        # Call without reference_paths (use default)
+        # Second scan: detect drift (use default reference_paths)
         drifted = detect_charter_drift(
             session_start_ts=session_start_ts,
             workspace_root=temp_workspace
@@ -172,12 +200,21 @@ class TestCharterDriftDetection:
         assert ".claude/agents/ceo.md" in drifted_paths
 
     def test_drift_event_structure(self, temp_workspace):
-        """Validate drift event dictionary structure."""
+        """Validate drift event dictionary structure (hash-based)."""
         session_start_ts = time.time()
 
+        # First scan: establish baseline
+        detect_charter_drift(
+            reference_paths=["AGENTS.md"],
+            session_start_ts=session_start_ts,
+            workspace_root=temp_workspace
+        )
+
+        # Modify file
         time.sleep(0.1)
         (temp_workspace / "AGENTS.md").write_text("# AGENTS v2.0\n")
 
+        # Second scan: detect drift
         drifted = detect_charter_drift(
             reference_paths=["AGENTS.md"],
             session_start_ts=session_start_ts,
@@ -187,26 +224,99 @@ class TestCharterDriftDetection:
         assert len(drifted) == 1
         event = drifted[0]
 
-        # Required fields
+        # Required fields (hash-based)
         required_fields = {
-            "path", "previous_mtime", "current_mtime",
-            "session_start_ts", "drift_seconds", "diff_summary"
+            "path", "previous_hash", "current_hash",
+            "session_start_ts", "hash_changed", "diff_summary"
         }
         assert set(event.keys()) == required_fields, \
             f"Event missing required fields. Expected {required_fields}, got {set(event.keys())}"
 
         # Type checks
         assert isinstance(event["path"], str)
-        assert isinstance(event["previous_mtime"], float)
-        assert isinstance(event["current_mtime"], float)
+        assert isinstance(event["previous_hash"], str)
+        assert isinstance(event["current_hash"], str)
         assert isinstance(event["session_start_ts"], float)
-        assert isinstance(event["drift_seconds"], float)
+        assert isinstance(event["hash_changed"], bool)
         assert isinstance(event["diff_summary"], str)
 
         # Value sanity
-        assert event["drift_seconds"] > 0
-        assert event["current_mtime"] == event["previous_mtime"]  # Aliases
-        assert event["current_mtime"] > event["session_start_ts"]
+        assert event["hash_changed"] is True
+        assert event["previous_hash"] != event["current_hash"]
+        assert len(event["previous_hash"]) == 64  # SHA256 hex length
+        assert len(event["current_hash"]) == 64
+
+    def test_mtime_change_no_content_change_no_drift(self, temp_workspace):
+        """SHA256 hash-based: mtime change without content change should NOT trigger drift (CZL-85)."""
+        # First scan: establish baseline
+        detect_charter_drift(
+            reference_paths=["AGENTS.md"],
+            workspace_root=temp_workspace
+        )
+
+        # Touch file (change mtime but not content)
+        agents_file = temp_workspace / "AGENTS.md"
+        original_content = agents_file.read_text()
+        time.sleep(0.1)
+        agents_file.write_text(original_content)  # Write identical content (changes mtime)
+
+        # Second scan: should NOT detect drift (content hash unchanged)
+        drifted = detect_charter_drift(
+            reference_paths=["AGENTS.md"],
+            workspace_root=temp_workspace
+        )
+
+        assert drifted == [], \
+            f"Expected no drift for mtime-only change (content unchanged), got: {drifted}"
+
+    def test_content_change_triggers_drift(self, temp_workspace):
+        """SHA256 hash-based: content change should trigger drift (CZL-85)."""
+        # First scan: establish baseline
+        detect_charter_drift(
+            reference_paths=["AGENTS.md"],
+            workspace_root=temp_workspace
+        )
+
+        # Modify content
+        time.sleep(0.1)
+        (temp_workspace / "AGENTS.md").write_text("# AGENTS charter v2.0 — CONTENT CHANGED\n")
+
+        # Second scan: should detect drift (content hash changed)
+        drifted = detect_charter_drift(
+            reference_paths=["AGENTS.md"],
+            workspace_root=temp_workspace
+        )
+
+        assert len(drifted) == 1, f"Expected 1 drift event for content change, got {len(drifted)}"
+        event = drifted[0]
+        assert event["path"] == "AGENTS.md"
+        assert event["hash_changed"] is True
+        assert event["previous_hash"] != event["current_hash"]
+
+    def test_baseline_missing_graceful_create_no_drift(self, temp_workspace):
+        """SHA256 hash-based: missing baseline should gracefully create and skip first scan (CZL-85)."""
+        # Delete baseline file if exists
+        baseline_file = temp_workspace / ".charter_baseline_hashes.json"
+        if baseline_file.exists():
+            baseline_file.unlink()
+
+        # First scan: should create baseline, no drift events
+        drifted = detect_charter_drift(
+            reference_paths=["AGENTS.md"],
+            workspace_root=temp_workspace
+        )
+
+        assert drifted == [], \
+            f"Expected no drift on first scan (baseline creation), got: {drifted}"
+        assert baseline_file.exists(), \
+            "Expected baseline file to be created"
+
+        # Verify baseline file contains AGENTS.md hash
+        import json
+        with open(baseline_file, 'r') as f:
+            baselines = json.load(f)
+        assert "AGENTS.md" in baselines, \
+            f"Expected AGENTS.md in baseline, got: {baselines.keys()}"
 
 
 if __name__ == "__main__":

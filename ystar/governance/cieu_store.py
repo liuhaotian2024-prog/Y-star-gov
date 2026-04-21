@@ -42,6 +42,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
+from ystar.governance.cieu_decision_normalizer import normalize as _normalize_decision
+from ystar.governance.cieu_decision_normalizer import provenance_for_agent as _provenance_for_agent
+
 _log = logging.getLogger(__name__)
 
 _DEFAULT_DB = Path(".ystar_cieu.db")
@@ -49,6 +52,78 @@ _DEFAULT_DB = Path(".ystar_cieu.db")
 # Size caps for raw snapshots — large payloads are truncated, never silently dropped.
 _PARAMS_JSON_MAX_BYTES = 8_192   # 8 KB
 _RESULT_JSON_MAX_BYTES = 4_096   # 4 KB
+
+# ── BRAIN_* CIEU Event Type Registry ──────────────────────────────────
+# Registered per CZL-BRAIN-CIEU-EVENTS-DREAM (2026-04-19).
+# Each event type documents its expected payload shape for downstream consumers.
+
+BRAIN_AUTO_INGEST_START = "BRAIN_AUTO_INGEST_START"
+# Payload: {"mode": "boot|close", "session_id": str, "target_dirs": list[str]}
+
+BRAIN_AUTO_INGEST_COMPLETE = "BRAIN_AUTO_INGEST_COMPLETE"
+# Payload: {"mode": "boot|close", "ingested": int, "skipped": int,
+#           "errors": int, "total_scanned": int, "session_id": str,
+#           "duration_ms": int}
+
+BRAIN_AUTO_INGEST_FAILED = "BRAIN_AUTO_INGEST_FAILED"
+# Payload: {"error": str, "mode": "boot|close", "files_attempted": int,
+#           "session_id": str}
+
+BRAIN_QUERY_SUCCESS = "BRAIN_QUERY_SUCCESS"
+# Payload: {"query": str, "top_k": int, "node_ids": list[str],
+#           "latency_ms": float, "session_id": str}
+
+BRAIN_QUERY_FAILED = "BRAIN_QUERY_FAILED"
+# Payload: {"query": str, "error": str, "session_id": str}
+
+BRAIN_WRITEBACK_QUEUED = "BRAIN_WRITEBACK_QUEUED"
+# Payload: {"activated_nodes": list[dict], "session_id": str,
+#           "queue_depth": int}
+
+BRAIN_DREAM_CYCLE_START = "BRAIN_DREAM_CYCLE_START"
+# Payload: {"scope": "session-close|idle", "activation_window": int,
+#           "session_id": str}
+
+BRAIN_DREAM_CYCLE_COMPLETE = "BRAIN_DREAM_CYCLE_COMPLETE"
+# Payload: {"scope": str, "proposals_total": int,
+#           "new_edges": int, "new_nodes": int, "archives": int,
+#           "entanglements": int, "duration_ms": int, "session_id": str}
+
+# Fine-grained dream proposal events (emitted per proposal)
+BRAIN_NODE_PROPOSED = "BRAIN_NODE_PROPOSED"
+# Payload: {"node_id": str, "reason": str, "pattern": "D", "session_id": str}
+
+BRAIN_EDGE_PROPOSED = "BRAIN_EDGE_PROPOSED"
+# Payload: {"source_id": str, "target_id": str, "co_activations": int,
+#           "pattern": "A", "session_id": str}
+
+BRAIN_ARCHIVE_PROPOSED = "BRAIN_ARCHIVE_PROPOSED"
+# Payload: {"node_id": str, "access_count": int, "last_accessed_days_ago": int,
+#           "pattern": "C", "session_id": str}
+
+BRAIN_ENTANGLEMENT_PROPOSED = "BRAIN_ENTANGLEMENT_PROPOSED"
+# Payload: {"cluster_node_ids": list[str], "co_activation_count": int,
+#           "pattern": "B", "session_id": str}
+
+# Convenience list for iteration / validation
+BRAIN_EVENT_TYPES = [
+    BRAIN_AUTO_INGEST_START,
+    BRAIN_AUTO_INGEST_COMPLETE,
+    BRAIN_AUTO_INGEST_FAILED,
+    BRAIN_QUERY_SUCCESS,
+    BRAIN_QUERY_FAILED,
+    BRAIN_WRITEBACK_QUEUED,
+    BRAIN_DREAM_CYCLE_START,
+    BRAIN_DREAM_CYCLE_COMPLETE,
+]
+
+# Additional dream-specific fine-grained events
+BRAIN_DREAM_PROPOSAL_TYPES = [
+    BRAIN_NODE_PROPOSED,
+    BRAIN_EDGE_PROPOSED,
+    BRAIN_ARCHIVE_PROPOSED,
+    BRAIN_ENTANGLEMENT_PROPOSED,
+]
 
 # ── SQLite スキーマ ────────────────────────────────────────────────────
 _SCHEMA = """
@@ -153,11 +228,13 @@ CREATE TABLE IF NOT EXISTS sealed_sessions (
 
 # 新列列表：用于对已有 DB 做无损迁移（ALTER TABLE ADD COLUMN 幂等）
 _NEW_COLUMNS = [
-    ("params_json",     "TEXT"),
-    ("result_json",     "TEXT"),
-    ("human_initiator", "TEXT"),
-    ("lineage_path",    "TEXT"),
-    ("evidence_grade",  "TEXT DEFAULT 'decision'"),
+    ("params_json",         "TEXT"),
+    ("result_json",         "TEXT"),
+    ("human_initiator",     "TEXT"),
+    ("lineage_path",        "TEXT"),
+    ("evidence_grade",      "TEXT DEFAULT 'decision'"),
+    ("decision_canonical",  "TEXT"),
+    ("provenance",          "TEXT"),
 ]
 
 
@@ -328,6 +405,11 @@ class CIEUStore:
         ) if lineage_raw else None
         # [P2-3] 证据分级
         evidence_grade = d.get("evidence_grade", "decision")
+        # [CZL-BRAIN-BIPARTITE P1] Canonical decision + provenance at write time
+        raw_decision = d.get("decision", "unknown")
+        decision_canonical = _normalize_decision(raw_decision)
+        agent_id_val = d.get("agent_id", "")
+        provenance = _provenance_for_agent(agent_id_val)
 
         with self._conn() as conn:
             conn.execute("""
@@ -339,20 +421,22 @@ class CIEUStore:
                      file_path, command, url, skill_name, skill_source,
                      task_description, contract_hash, chain_depth,
                      params_json, result_json, human_initiator, lineage_path,
-                     evidence_grade)
+                     evidence_grade,
+                     decision_canonical, provenance)
                 VALUES
                     (?, ?, ?,   ?, ?, ?,   ?, ?,   ?, ?, ?, ?,
                      ?, ?, ?, ?, ?,   ?, ?, ?,
                      ?, ?, ?, ?,
-                     ?)
+                     ?,
+                     ?, ?)
             """, (
                 d.get("event_id") or str(uuid.uuid4()),
                 d.get("seq_global") or int(time.time() * 1_000_000),
                 d.get("created_at") or d.get("timestamp") or time.time(),
                 d.get("session_id", ""),
-                d.get("agent_id", ""),
+                agent_id_val,
                 d.get("event_type", ""),
-                d.get("decision", "unknown"),
+                raw_decision,
                 1 if d.get("passed", True) else 0,
                 violations_json,
                 1 if d.get("drift_detected") else 0,
@@ -371,6 +455,8 @@ class CIEUStore:
                 human_init,
                 lineage_json,
                 evidence_grade,
+                decision_canonical,
+                provenance,
             ))
 
     def ingest_from_session(
@@ -793,6 +879,44 @@ class CIEUStore:
     def count(self) -> int:
         with self._conn() as conn:
             return conn.execute("SELECT COUNT(*) FROM cieu_events").fetchone()[0]
+
+    # ── BRAIN_* Event Convenience Emitter ─────────────────────────────
+
+    def emit_brain_event(
+        self,
+        event_type: str,
+        payload: dict,
+        session_id: str = "",
+        agent_id: str = "brain",
+    ) -> bool:
+        """
+        Emit a BRAIN_* CIEU event with structured payload.
+
+        Validates event_type against BRAIN_EVENT_TYPES + BRAIN_DREAM_PROPOSAL_TYPES.
+        Stores payload in params_json for full traceability.
+
+        Returns True if written, False if duplicate or invalid type.
+        """
+        all_brain_types = BRAIN_EVENT_TYPES + BRAIN_DREAM_PROPOSAL_TYPES
+        if event_type not in all_brain_types:
+            _log.warning(
+                "Unknown BRAIN event type: %s (known: %s)",
+                event_type, [t for t in all_brain_types],
+            )
+            return False
+
+        record = {
+            "event_id": str(uuid.uuid4()),
+            "event_type": event_type,
+            "session_id": session_id or payload.get("session_id", ""),
+            "agent_id": agent_id,
+            "decision": "info",
+            "passed": True,
+            "params": payload,
+            "evidence_grade": "ops",
+            "task_description": f"Brain event: {event_type}",
+        }
+        return self.write_dict(record)
 
     # ── [P2-3] CIEU Evidence Grading ──────────────────────────────────────
 

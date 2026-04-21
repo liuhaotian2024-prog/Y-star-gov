@@ -92,6 +92,36 @@ class EnforceDecision(str, Enum):
     ALLOW    = "allow"
     DENY     = "deny"
     ESCALATE = "escalate"   # 需要人工介入（如 SAE 超阈值、危险命令）
+    REDIRECT = "redirect"   # CZL-P1-c: 返回修复指令 + 允许重试（不阻断）
+    # CZL-P2-a: enforce-as-router 扩展
+    INVOKE    = "invoke"     # enforce 自动调 feature 脚本
+    INJECT    = "inject"     # enforce 在 allow 消息里附加上下文（memory/skill/SOP）
+    AUTO_POST = "auto_post"  # enforce 自动 post 到 whiteboard
+    REWRITE   = "rewrite"   # CZL-ARCH-14: transform payload to compliant version
+
+
+@dataclass
+class GuidancePayload:
+    """
+    Structured guidance returned by enforcement decisions (REDIRECT / INVOKE / REWRITE).
+
+    Replaces free-text fix instructions with a machine-readable payload so that
+    the hook layer or agent can deterministically execute the remediation.
+
+    Fields:
+        invoke_cmd:          Shell/tool command to execute as the fix (e.g. "ystar doctor").
+        fix_command_args:    Dict of arguments for the fix command (structured, not free-text).
+        then_retry_original: Whether the original action should be retried after the fix.
+        rule_ref:            Dot-path reference to the rule that triggered this guidance
+                             (e.g. "labs.path_alias_normalizer").
+        docs_ref:            URL or file path to documentation explaining the rule.
+    """
+
+    invoke_cmd: Optional[str] = None
+    fix_command_args: Dict[str, Any] = field(default_factory=dict)
+    then_retry_original: bool = False
+    rule_ref: Optional[str] = None
+    docs_ref: Optional[str] = None
 
 
 @dataclass
@@ -977,6 +1007,30 @@ def enforce(
                         pass
                 cieu_records.append(rec)
                 return EnforceDecision.DENY, cieu_records
+
+        # CZL-P1-c: Map GateDecision.REDIRECT to EnforceDecision.REDIRECT
+        if _gate.decision == GateDecision.REDIRECT:
+            _gate_detail = (
+                f"intervention_gate: actor '{event.agent_id}' redirected — "
+                f"non-critical action while obligation '{_gate.blocking_omission_type}' "
+                f"is overdue (+{_gate.overdue_secs:.0f}s). "
+                f"Suggested: {_gate.suggested_action}"
+            )
+            rec = OpenClawCIEU(
+                call_record = CallRecord(
+                    seq=seq, func_name=event.event_type.value,
+                    params=extract_params(event), result={},
+                    violations=[], intent_contract=IntentContract(name="intervention_gate"),
+                ),
+                event         = event,
+                decision      = EnforceDecision.REDIRECT,
+                drift_detected= True,
+                drift_details = _gate_detail,
+            )
+            _cieu_log.append(rec)
+            _auto_write_cieu(rec)
+            cieu_records.append(rec)
+            return EnforceDecision.REDIRECT, cieu_records
 
     # ── 特殊路径：HANDOFF 触发委托链单调性验证 ──────────────────────
     if event.event_type == EventType.HANDOFF:
