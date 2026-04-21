@@ -1,0 +1,80 @@
+# Knowledge-Action Registry — "知行合一" (Wang Yangming)
+# Board 2026-04-19: "OmissionEngine 也应该是知行合一的重要引擎"
+#
+# Each rule defines: a piece of knowledge the agent possesses,
+# and the corresponding action that MUST follow within a time window.
+# If the knowledge trigger is observed in CIEU but the required action
+# is NOT observed within detection_window_sec, a KNOWLEDGE_ACTION_GAP
+# omission is registered.
+#
+# Fields:
+#   knowledge_id:         Unique rule identifier
+#   knowledge_source:     Documentation/policy file where the knowledge originates
+#   knowledge_trigger:    CIEU event_type pattern that signals "agent has this knowledge"
+#   required_action:      CIEU event_type pattern that must appear after the trigger
+#   detection_window_sec: Max seconds between trigger and required action
+#   severity:             high | medium | low
+#   description:          Human-readable explanation of the knowledge-action contract
+
+rules:
+  - knowledge_id: check_brain_before_decision
+    knowledge_source: knowledge/ceo/board_autonomous_directive_20260418_night.md
+    knowledge_trigger: "decision_generating_tool_call"
+    required_action: "CIEU_BRAIN_QUERY"
+    detection_window_sec: 30
+    severity: high
+    description: >
+      Before any decision-generating tool call, the agent must query the CIEU
+      brain for relevant prior knowledge. Knowing without consulting = omission.
+
+  - knowledge_id: test_before_commit
+    knowledge_source: feedback_cto_owns_technical_modeling.md
+    knowledge_trigger: "git_commit"
+    required_action: "pytest_run"
+    detection_window_sec: 60
+    severity: high
+    description: >
+      Every git commit must be preceded by a pytest run within the last 60 seconds.
+      Already enforced by hook, but this rule provides CIEU-level auditability.
+
+  - knowledge_id: boot_context_before_dispatch
+    knowledge_source: feedback_hi_agent_campaign_mechanism.md
+    knowledge_trigger: "subagent_dispatch"
+    required_action: "read_czl_subgoals"
+    detection_window_sec: 10
+    severity: medium
+    description: >
+      Before dispatching a sub-agent, the dispatcher must read .czl_subgoals.json
+      to provide boot context. Dispatch without state read = knowledge-action gap.
+
+  - knowledge_id: verify_receipt_before_marking_complete
+    knowledge_source: feedback_subagent_receipt_empirical_verify.md
+    knowledge_trigger: "subagent_receipt_rt1_0"
+    required_action: "empirical_verify"
+    detection_window_sec: 30
+    severity: high
+    description: >
+      When a sub-agent reports Rt+1=0 (task complete), the coordinator must
+      run empirical verification (ls/wc/pytest) before accepting the claim.
+      Trust-without-verify = knowledge-action gap.
+
+  - knowledge_id: ecosystem_check_before_new_entity
+    knowledge_source: feedback_ceo_ecosystem_view_required.md
+    knowledge_trigger: "new_entity_creation"
+    required_action: "glob_grep_ecosystem_scan"
+    detection_window_sec: 15
+    severity: medium
+    description: >
+      Before creating any new entity (module/rule/engineer/event), the agent
+      must scan existing codebase with Glob+Grep to avoid duplication.
+      Building without looking = knowledge-action gap.
+
+  - knowledge_id: k9_violation_requires_response
+    knowledge_source: k9_audit_operational_contract.md
+    knowledge_trigger: "K9_VIOLATION_DETECTED"
+    required_action: "K9_VIOLATION_RESOLVED"
+    detection_window_sec: 120
+    severity: high
+    description: >
+      When K9 detects a violation, there must be a resolution event within 120s.
+      Knowing about a violation without acting on it = knowledge-action gap.

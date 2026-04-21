@@ -1,0 +1,17 @@
+{
+  "axis": "B5_dispatch_cycle",
+  "timestamp": 1776602897,
+  "target_median_minutes": 10.0,
+  "total_tasks": 37,
+  "status_distribution": {
+    "claimed": 10,
+    "completed": 25,
+    "blocked": 2
+  },
+  "tasks_with_claim_delta": 32,
+  "tasks_with_complete_delta": 25,
+  "median_claim_minutes": 0.16,
+  "median_complete_minutes": 51.89,
+  "primary_median_minutes": 0.16,
+  "verdict": "pass"
+}

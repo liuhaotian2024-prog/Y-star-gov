@@ -1,0 +1,11 @@
+{
+  "axis": "B3_rewrite_fire",
+  "timestamp": 1776602897,
+  "window_seconds": 7200,
+  "target_ratio": 0.3,
+  "fail_ratio": 0.1,
+  "total_denies": 36,
+  "denies_with_guidance": 15,
+  "guidance_ratio": 0.4166666666666667,
+  "verdict": "pass"
+}

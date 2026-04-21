@@ -1,0 +1,29 @@
+# Phase Lifecycle Manifest — tracks multi-phase feature rollouts
+# Used by OmissionEngine.register_post_ship_completeness_obligation()
+# to auto-register "did we ship the rest?" obligations after Phase N ships.
+#
+# Each feature_id maps to a set of phases with ship_markers.
+# A ship_marker is a callable-name string resolved at check time by the
+# marker checker registry in omission_engine.py.
+#
+# Board directive 2026-04-19: "shipping infrastructure != shipping discipline"
+
+features:
+  - feature_id: arch18_cieu_brain
+    description: "CIEU Brain — causal learning from governance event streams"
+    phases:
+      phase_1:
+        description: "Foundation — activation log bridge"
+        ship_markers:
+          - activation_log_nonzero
+          - cieu_brain_bridge_tests_pass
+      phase_2:
+        description: "Continuous streaming daemon"
+        ship_markers:
+          - continuous_daemon_running
+          - hebbian_edges_nonzero
+      phase_3:
+        description: "Dimensional drift + semantic coordinates"
+        ship_markers:
+          - dim_drift_applied
+          - event_type_coords_populated

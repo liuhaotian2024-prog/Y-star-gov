@@ -1,0 +1,22 @@
+{
+  "axis": "B4_omission_closure",
+  "timestamp": 1776602897,
+  "target_closure": 0.8,
+  "total_obligations": 17437,
+  "fulfilled": 0,
+  "pending": 110,
+  "soft_overdue": 176,
+  "hard_overdue": 17151,
+  "open_count": 17437,
+  "closure_rate": 0.0,
+  "entity_status_dist": {
+    "assigned": 15277
+  },
+  "violation_count": 3322,
+  "obligation_status_dist": {
+    "hard_overdue": 17151,
+    "pending": 110,
+    "soft_overdue": 176
+  },
+  "verdict": "fail"
+}

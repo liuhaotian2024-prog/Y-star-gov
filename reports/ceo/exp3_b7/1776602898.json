@@ -1,0 +1,15 @@
+{
+  "axis": "B7_receipt_truth",
+  "timestamp": 1776602898,
+  "total_tasks": 37,
+  "completed_tasks": 25,
+  "tasks_with_receipt": 25,
+  "receipts_with_paths": 0,
+  "receipts_no_paths": 25,
+  "verified_receipts": 0,
+  "hallucinated_receipts": 0,
+  "hallucination_details": [],
+  "scope_file_verified": 0,
+  "scope_file_missing": 0,
+  "verdict": "pass"
+}
