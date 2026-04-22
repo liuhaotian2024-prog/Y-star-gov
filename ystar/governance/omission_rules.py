@@ -330,6 +330,37 @@ RULE_DISPATCH_CLAIM_MUST_SPAWN = OmissionRule(
     deduplicate          = True,
 )
 
+# Rule I: Y* declared (5-tuple with m_functor) must produce tool_call evidence
+# V3 Wave-3 Phase 3 — navigation omission realtime enforcement
+# When an agent declares Y* intent with m_functor, it MUST produce tool_call
+# execution evidence within 5 min (soft) / 10 min (hard). Declaring intent
+# without executing = navigation omission, the "say != do" failure mode.
+RULE_NAV_DECLARED_UNEXECUTED = OmissionRule(
+    rule_id              = "rule_i_nav_declared_unexecuted",
+    name                 = "Navigation Declared But Unexecuted",
+    description          = (
+        "When an agent declares a Y* 5-tuple with m_functor set, "
+        "it must produce tool_call execution evidence within the TTL. "
+        "Declaring navigation intent without executing is a Phase 3 "
+        "omission failure: the agent said what to do but never did it."
+    ),
+    trigger_event_types  = [GEventType.YSTAR_DECLARED],
+    actor_selector       = _select_from_event_actor,
+    obligation_type      = OmissionType.NAV_DECLARED_UNEXECUTED.value,
+    required_event_types = [
+        GEventType.TOOL_CALL_EVIDENCE,
+        GEventType.COMPLETION_EVENT,
+    ],
+    due_within_secs      = 300.0,   # 5 min soft TTL
+    hard_overdue_secs    = 600.0,   # 10 min hard TTL -> escalation
+    violation_code       = "nav_declared_unexecuted",
+    severity             = Severity.HIGH,
+    escalation_policy    = _make_default_escalation(
+        reminder_secs=120.0, escalate_secs=600.0
+    ),
+    deduplicate          = True,
+)
+
 # 内置规则集合（按优先级顺序）
 BUILTIN_RULES: List[OmissionRule] = [
     RULE_DELEGATION,
@@ -340,6 +371,7 @@ BUILTIN_RULES: List[OmissionRule] = [
     RULE_ESCALATION,
     RULE_CLOSURE,
     RULE_DISPATCH_CLAIM_MUST_SPAWN,
+    RULE_NAV_DECLARED_UNEXECUTED,
 ]
 
 

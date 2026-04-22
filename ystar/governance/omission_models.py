@@ -125,6 +125,10 @@ class OmissionType(str, Enum):
     # CZL-DISPATCH-EXEC: CEO must spawn Agent for claimed dispatch card
     DISPATCH_CLAIM_MUST_SPAWN     = "dispatch_claim_must_spawn"
 
+    # V3 Wave-3: Navigation declared but unexecuted (Phase 3 realtime enforce)
+    # Agent declares Y* 5-tuple with m_functor but produces no tool_call evidence
+    NAV_DECLARED_UNEXECUTED       = "nav_declared_unexecuted"
+
     # Test-only obligation types (used in test suite)
     TEST_OBLIGATION               = "test_obligation"
     OBLIGATION1                   = "obligation1"
@@ -523,3 +527,7 @@ class GEventType:
     # CZL-DISPATCH-EXEC: dispatch board claim-to-spawn lifecycle
     ENGINEER_CLAIM_TASK = "ENGINEER_CLAIM_TASK"  # subscriber claims card from whiteboard
     SUBAGENT_START      = "SUBAGENT_START"       # CEO spawns Agent for claimed card
+
+    # V3 Wave-3: Navigation omission enforcement (Phase 3 realtime)
+    YSTAR_DECLARED      = "ystar_declared"       # agent declares 5-tuple Y* with m_functor
+    TOOL_CALL_EVIDENCE  = "tool_call_evidence"   # agent produces tool_call execution evidence
