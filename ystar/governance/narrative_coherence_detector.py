@@ -160,6 +160,42 @@ class NarrativeCoherenceDetector:
                     source_text=text
                 ))
 
+        # Pattern 5: Philosophy/methodology claim patterns (G4 binding)
+        # "过了 P-3 反事实", "done P-4 real testing", "M Triangle 三问 通过"
+        philosophy_patterns = [
+            # P-1 through P-14 claims
+            (r"(?:过了|done|applied|checked|passed)\s+P-1\b", "philosophy_p1"),
+            (r"(?:过了|done|applied|checked|passed)\s+P-2\b", "philosophy_p2"),
+            (r"(?:过了|done|applied|checked|passed)\s+P-3\b", "philosophy_p3"),
+            (r"(?:过了|done|applied|checked|passed)\s+P-4\b", "philosophy_p4"),
+            (r"(?:过了|done|applied|checked|passed)\s+P-5\b", "philosophy_p5"),
+            (r"(?:过了|done|applied|checked|passed)\s+P-6\b", "philosophy_p6"),
+            (r"(?:过了|done|applied|checked|passed)\s+P-7\b", "philosophy_p7"),
+            (r"(?:过了|done|applied|checked|passed)\s+P-8\b", "philosophy_p8"),
+            (r"(?:过了|done|applied|checked|passed)\s+P-9\b", "philosophy_p9"),
+            (r"(?:过了|done|applied|checked|passed)\s+P-10\b", "philosophy_p10"),
+            (r"(?:过了|done|applied|checked|passed)\s+P-11\b", "philosophy_p11"),
+            (r"(?:过了|done|applied|checked|passed)\s+P-12\b", "philosophy_p12"),
+            (r"(?:过了|done|applied|checked|passed)\s+P-13\b", "philosophy_p13"),
+            (r"(?:过了|done|applied|checked|passed)\s+P-14\b", "philosophy_p14"),
+            # Chinese P-X claims
+            (r"P-3\s*反事实", "philosophy_p3"),
+            (r"P-4\s*真实测试", "philosophy_p4"),
+            (r"P-6\s*独立复现", "philosophy_p6"),
+            (r"P-12\s*先查后造", "philosophy_p12"),
+            # M Triangle claims
+            (r"(?:过了|done|applied|checked|passed)\s+M\s*Triangle", "philosophy_m_triangle"),
+            (r"三问\s*(?:通过|done|checked|passed)", "philosophy_m_triangle"),
+            (r"M[\-\s]Triangle\s+(?:balanced|三问)", "philosophy_m_triangle"),
+        ]
+        for pattern, claim_type in philosophy_patterns:
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                claims.append(ActionClaim(
+                    type=claim_type,
+                    text=match.group(0),
+                    source_text=text
+                ))
+
         return claims
 
     def _check_claim(
@@ -252,7 +288,151 @@ class NarrativeCoherenceDetector:
                     claim_type=claim.type
                 )
 
+        # ================================================================
+        # G4: Philosophy / Methodology claim evidence checks
+        # ================================================================
+        elif claim.type.startswith("philosophy_"):
+            gap = self._check_philosophy_claim(claim, turn_tools, agent_id)
+            if gap:
+                return gap
+
         return None
+
+    # ================================================================
+    # G4: Philosophy-specific evidence requirements
+    # ================================================================
+
+    # Map of philosophy claim type -> (evidence_check_fn, expected_evidence_desc, severity)
+    PHILOSOPHY_EVIDENCE_MAP = {
+        "philosophy_p1": {
+            "evidence_pattern": r"M-1[：:]|M-2[：:]|M-3[：:]|M-1 Survivability|M-2 Governability|M-3 Value",
+            "expected": "M-1/M-2/M-3 face identification in reply text",
+            "severity": "MEDIUM",
+        },
+        "philosophy_p2": {
+            "evidence_pattern": r"Y\*[：:].*Xt[：:]|Xt[：:].*U[：:]|Yt\+1[：:].*Rt\+1[：:]",
+            "expected": "Y*/Xt/U/Yt+1/Rt+1 5-tuple structure in reply",
+            "severity": "HIGH",
+        },
+        "philosophy_p3": {
+            "evidence_pattern": r"如果不做.*会|if not.*then|if we had not|反事实[：:]|counterfactual[：:]|如果不",
+            "expected": "Counterfactual reasoning text (e.g. 'if not X then Y')",
+            "severity": "MEDIUM",
+        },
+        "philosophy_p4": {
+            "evidence_tool": "Bash",
+            "evidence_command_pattern": r"pytest|python.*test|npm test|cargo test",
+            "expected": "Bash tool call with real test execution (pytest/npm test/etc)",
+            "severity": "HIGH",
+        },
+        "philosophy_p5": {
+            "evidence_pattern": r"PASS|FAIL|\d+/\d+|\d+ pass|\d+ fail|通过率|pass rate",
+            "expected": "Quantitative PASS/FAIL count in reply",
+            "severity": "MEDIUM",
+        },
+        "philosophy_p6": {
+            "evidence_pattern": r"cross verified|independently confirmed|二次验证|复现.*通过",
+            "expected": "At least 2 independent verification references",
+            "severity": "MEDIUM",
+        },
+        "philosophy_p7": {
+            "evidence_pattern": r"M.*→.*U.*→.*action|M.*->.*U.*->.*result|目标.*→.*行动.*→.*结果",
+            "expected": "Goal chain (M -> mid -> U -> action -> result)",
+            "severity": "MEDIUM",
+        },
+        "philosophy_p8": {
+            "evidence_pattern": r"source[：:]|file[：:]|SQL[：:]|line \d+|path[：:]",
+            "expected": "Source path/SQL/file:line for quantitative claims",
+            "severity": "MEDIUM",
+        },
+        "philosophy_p9": {
+            "evidence_pattern": r"\[L[0-5]\]|L[0-5] (?:IDEA|SPEC|IMPL|TESTED|SHIPPED|ADOPTED)",
+            "expected": "[LX] maturity tag in reply",
+            "severity": "MEDIUM",
+        },
+        "philosophy_p10": {
+            "evidence_pattern": r"Y\*.*Xt.*U.*Yt\+1.*Rt\+1|Y\*[：:]|Xt[：:]|Yt\+1[：:]",
+            "expected": "Y*/Xt/U/Yt+1/Rt+1 header in ruling/spec",
+            "severity": "HIGH",
+        },
+        "philosophy_p11": {
+            "evidence_pattern": r"观察.*搜索.*分析.*解决|observe.*search.*analyze.*solve|OODA.*6",
+            "expected": "OODA 6-step list in reply",
+            "severity": "MEDIUM",
+        },
+        "philosophy_p12": {
+            "evidence_tool": "Read",
+            "expected": "Read/Glob/Grep tool call (search before build)",
+            "severity": "HIGH",
+        },
+        "philosophy_p13": {
+            "evidence_pattern": r"charter.*registry.*boot.*dispatch|CIEU.*FG.*scope.*pre-auth|8.*cascade",
+            "expected": "8-cascade sub-entity list",
+            "severity": "MEDIUM",
+        },
+        "philosophy_p14": {
+            "evidence_pattern": r"诚实承认|honest|诚实点|我承认|坦白|transparency",
+            "expected": "Explicit honesty label",
+            "severity": "LOW",
+        },
+        "philosophy_m_triangle": {
+            "evidence_pattern": r"推进.*面|在推进|pushes.*M-|削弱.*面|可能削弱|weakens.*M-|三角平衡|triangle.*balanced",
+            "expected": "Three-line M-face identification (pushes/weakens/balanced)",
+            "severity": "HIGH",
+        },
+    }
+
+    def _check_philosophy_claim(
+        self,
+        claim: ActionClaim,
+        turn_tools: list,
+        agent_id: str
+    ) -> Optional[NarrativeGap]:
+        """Check if a philosophy/methodology claim has corresponding evidence.
+
+        Evidence can be:
+        1. Text patterns in the source text (reply body)
+        2. Required tool calls in turn_tools
+        """
+        spec = self.PHILOSOPHY_EVIDENCE_MAP.get(claim.type)
+        if not spec:
+            return None
+
+        tool_names = [getattr(t, 'name', '') for t in turn_tools]
+        source_text = claim.source_text
+
+        has_evidence = False
+
+        # Check text-pattern evidence
+        if "evidence_pattern" in spec:
+            if re.search(spec["evidence_pattern"], source_text, re.IGNORECASE | re.DOTALL):
+                has_evidence = True
+
+        # Check tool-call evidence
+        if "evidence_tool" in spec and not has_evidence:
+            required_tool = spec["evidence_tool"]
+            if "evidence_command_pattern" in spec:
+                # Must have tool + matching command
+                for t in turn_tools:
+                    if getattr(t, 'name', '') == required_tool:
+                        params = getattr(t, 'params', {})
+                        command = params.get("command", "")
+                        if re.search(spec["evidence_command_pattern"], command, re.IGNORECASE):
+                            has_evidence = True
+                            break
+            else:
+                # Just need the tool to exist
+                if required_tool in tool_names:
+                    has_evidence = True
+
+        if not has_evidence:
+            return NarrativeGap(
+                claim=claim.text,
+                expected_tool=spec["expected"],
+                actual_tools=tool_names,
+                severity=spec["severity"],
+                claim_type=claim.type
+            )
 
     def emit_gap_event(
         self,
@@ -268,19 +448,24 @@ class NarrativeCoherenceDetector:
             import time
             import uuid
 
-            self.cieu.write_dict({
+            # Use subtype-specific event type for philosophy claims
+            is_philosophy = gap.claim_type.startswith("philosophy_")
+            event_type = "NARRATIVE_GAP" if is_philosophy else "narrative_bias_detected"
+            subtype = "PHILOSOPHY_UNVERIFIED_CLAIM" if is_philosophy else None
+
+            event_dict = {
                 "event_id": str(uuid.uuid4()),
                 "seq_global": int(time.time() * 1_000_000),
                 "created_at": time.time(),
                 "session_id": session_id,
                 "agent_id": agent_id,
-                "event_type": "narrative_bias_detected",
+                "event_type": event_type,
                 "decision": "warn" if gap.severity != "HIGH" else "deny",
                 "passed": False,
                 "violations": [gap.claim_type],
                 "task_description": (
                     f"Narrative gap detected: agent claimed '{gap.claim}' "
-                    f"but expected tool '{gap.expected_tool}' was not called. "
+                    f"but expected evidence '{gap.expected_tool}' was not found. "
                     f"Actual tools: {', '.join(gap.actual_tools) or 'none'}"
                 ),
                 "severity": gap.severity,
@@ -288,7 +473,11 @@ class NarrativeCoherenceDetector:
                 "expected_tool": gap.expected_tool,
                 "actual_tools": gap.actual_tools,
                 "evidence_grade": "narrative_coherence",
-            })
+            }
+            if subtype:
+                event_dict["subtype"] = subtype
+
+            self.cieu.write_dict(event_dict)
         except Exception as e:
             _log.error(f"Failed to write narrative gap to CIEU: {e}")
 
