@@ -16,6 +16,11 @@ build/
 .ystar_session.json
 *.db
 *.sqlite
+.ystar_active_agent
+call_records*
+data/
+*.db-shm
+*.db-wal
 
 # Environment & secrets
 .env
@@ -42,3 +47,11 @@ desktop.ini
 *.db-wal
 *.db
 __pycache__/
+
+# Commit message drafts (never track)
+.commit_msg*.txt
+.commit_msgs/
+
+# Benchmark stdout captures
+bench_out*.tmp
+bench_out.tmp
