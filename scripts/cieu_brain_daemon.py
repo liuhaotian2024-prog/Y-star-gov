@@ -111,6 +111,11 @@ def main():
         default=0,
         help="Start from this seq_global (0 = auto-detect)",
     )
+    parser.add_argument(
+        "--agent-filter",
+        default="",
+        help="Filter ingest events to those whose agent_id contains this substring (case-insensitive). Empty = ingest all (backward compat).",
+    )
     args = parser.parse_args()
 
     # Install signal handlers
@@ -125,9 +130,12 @@ def main():
     cursor = args.since_seq
     if cursor == 0:
         cursor = _get_last_ingested_seq(args.brain_db)
+    agent_filter = args.agent_filter.strip().lower()
     print(f"[daemon] Starting from seq_global={cursor}")
     print(f"[daemon] poll_interval={args.poll_interval}s, "
           f"max_iterations={args.max_iterations}, k={args.k}")
+    if agent_filter:
+        print(f"[daemon] agent_filter='{agent_filter}' — only ingesting matching events")
 
     iteration = 0
     total_events = 0
