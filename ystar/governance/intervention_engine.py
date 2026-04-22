@@ -287,7 +287,14 @@ class InterventionEngine:
         causal_engine:         Optional[Any] = None,
     ) -> None:
         self.omission_store              = omission_store
-        self.cieu_store                  = cieu_store
+        # [CZL-CIEU-SECOND-ORDER-SILENT-AUDIT 2026-04-21] Mirror OmissionEngine
+        # fix pattern (line 117-124): default to real CIEUStore for intervention
+        # audit. NullCIEUStore only if passed explicitly; None → real persist.
+        if cieu_store is not None:
+            self.cieu_store              = cieu_store
+        else:
+            from ystar.governance.cieu_store import CIEUStore
+            self.cieu_store              = CIEUStore(db_path=".ystar_cieu_intervention.db")
         self._now                        = now_fn or time.time
         self.pulse_store                 = PulseStore()
 

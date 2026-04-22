@@ -122,7 +122,14 @@ class AutonomyEngine:
         self.omission_engine = omission_engine or OmissionEngine()
         self.stall_multiplier = stall_multiplier
         self.knowledge_root = Path(knowledge_root or "knowledge")
-        self.cieu_store = cieu_store
+        # [CZL-CIEU-SECOND-ORDER-SILENT-AUDIT 2026-04-21] Mirror OmissionEngine
+        # fix pattern (line 117-124): default to real CIEUStore for autonomy
+        # tick audit. NullCIEUStore only if explicit; None → real persist.
+        if cieu_store is not None:
+            self.cieu_store = cieu_store
+        else:
+            from ystar.governance.cieu_store import CIEUStore
+            self.cieu_store = CIEUStore(db_path=".ystar_cieu_autonomy.db")
 
         # In-memory intent registry (keyed by task_id).
         # In production, this would be backed by the CIEU store or a

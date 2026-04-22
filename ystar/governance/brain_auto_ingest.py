@@ -543,23 +543,38 @@ def _record_co_activation_batch(node_ids: list, db_path: str):
     """Strengthen edges between nodes ingested in the same directory batch.
 
     Per CTO ruling section 5: same-directory → co-activation with hebbian edge.
+
+    2026-04-21 hang-fix: previously O(N²) loop with 2M separate INSERTs for
+    N=1000 nodes would hang SQLite. Now uses executemany + cap + chunked commit.
     """
+    MAX_NODES = 50  # O(N²) cap — 50*50*2 = 5000 edges max per batch, sane
+    if len(node_ids) > MAX_NODES:
+        node_ids = node_ids[:MAX_NODES]  # sample first N; log if important
+
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA busy_timeout=5000")
     now = time.time()
+
+    rows = []
     for i, a in enumerate(node_ids):
         for b in node_ids[i + 1:]:
-            for src, tgt in [(a, b), (b, a)]:
-                conn.execute("""
-                    INSERT INTO edges
-                    (source_id, target_id, edge_type, weight,
-                     created_at, updated_at, co_activations)
-                    VALUES (?, ?, 'proximity', 0.3, ?, ?, 1)
-                    ON CONFLICT(source_id, target_id) DO UPDATE SET
-                        co_activations = co_activations + 1,
-                        updated_at = excluded.updated_at
-                """, (src, tgt, now, now))
-    conn.commit()
+            rows.append((a, b, now, now))
+            rows.append((b, a, now, now))
+
+    # batch insert via executemany (single prepared statement, no N² .execute)
+    CHUNK = 500
+    for start in range(0, len(rows), CHUNK):
+        conn.executemany("""
+            INSERT INTO edges
+            (source_id, target_id, edge_type, weight,
+             created_at, updated_at, co_activations)
+            VALUES (?, ?, 'proximity', 0.3, ?, ?, 1)
+            ON CONFLICT(source_id, target_id) DO UPDATE SET
+                co_activations = co_activations + 1,
+                updated_at = excluded.updated_at
+        """, rows[start:start + CHUNK])
+        conn.commit()  # chunked commit, not one giant transaction
+
     conn.close()
 
 
