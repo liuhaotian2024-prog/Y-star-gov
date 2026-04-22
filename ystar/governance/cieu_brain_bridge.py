@@ -311,3 +311,243 @@ def process_event(
         })
 
     return activations
+
+
+# ── Node 6D Coordinate Computation ─────────────────────────────────────
+# Unlike project_event_to_6d (which projects CIEU events into 6D space),
+# compute_6d_coords computes the intrinsic 6D position for brain *nodes*
+# based on their metadata: node_type, textual content, creation time,
+# and access pattern.
+
+# Node-type base profiles: (dim_y, dim_x, dim_z, dim_t_base, dim_phi, dim_c)
+# dim_t_base is overridden by recency computation; value here is fallback weight.
+_NODE_TYPE_PROFILES: Dict[str, Coord6D] = {
+    # High identity/depth
+    "self_knowledge":       (0.85, 0.40, 0.50, 0.50, 0.60, 0.45),
+    "identity":             (0.90, 0.35, 0.45, 0.50, 0.55, 0.50),
+    # High breadth/knowledge
+    "knowledge":            (0.40, 0.80, 0.45, 0.50, 0.50, 0.35),
+    "meta":                 (0.55, 0.75, 0.50, 0.50, 0.80, 0.40),
+    # High impact/transcendence
+    "strategic":            (0.55, 0.60, 0.80, 0.55, 0.60, 0.75),
+    "paradigm":             (0.60, 0.65, 0.85, 0.50, 0.70, 0.55),
+    # High metacognition
+    "ceo_learning":         (0.65, 0.70, 0.55, 0.55, 0.80, 0.45),
+    # Mid-range ecosystem types
+    "ecosystem_team":       (0.30, 0.55, 0.40, 0.50, 0.30, 0.40),
+    "ecosystem_module":     (0.25, 0.65, 0.45, 0.50, 0.35, 0.45),
+    "ecosystem_product":    (0.30, 0.60, 0.55, 0.50, 0.30, 0.50),
+    "ecosystem_entanglement": (0.35, 0.55, 0.50, 0.50, 0.40, 0.35),
+    # Hub nodes
+    "hub":                  (0.40, 0.50, 0.55, 0.50, 0.45, 0.40),
+    # Memory nodes
+    "memory":               (0.50, 0.45, 0.30, 0.60, 0.45, 0.30),
+    # Report nodes (bulk -- low identity, mid knowledge, low transcendence)
+    "report":               (0.25, 0.55, 0.30, 0.55, 0.25, 0.35),
+}
+
+# Default for unknown/empty node_type
+_NODE_TYPE_DEFAULT: Coord6D = (0.30, 0.40, 0.30, 0.50, 0.30, 0.35)
+
+# Content keyword boosters: keyword -> (dim_index, boost_amount)
+# dim indices: 0=y, 1=x, 2=z, 3=t, 4=phi, 5=c
+_KEYWORD_BOOSTS: List[Tuple[str, int, float]] = [
+    # dim_y (identity/depth) boosters
+    ("identity", 0, 0.12),
+    ("self", 0, 0.08),
+    ("who am i", 0, 0.10),
+    ("who-am-i", 0, 0.10),
+    ("aiden", 0, 0.06),
+    ("身份", 0, 0.10),
+    # dim_x (knowledge/breadth) boosters
+    ("framework", 1, 0.08),
+    ("architecture", 1, 0.10),
+    ("model", 1, 0.06),
+    ("theory", 1, 0.08),
+    ("analysis", 1, 0.06),
+    # dim_z (impact/transcendence) boosters
+    ("mission", 2, 0.10),
+    ("m triangle", 2, 0.12),
+    ("m-triangle", 2, 0.12),
+    ("impact", 2, 0.08),
+    ("value", 2, 0.06),
+    ("transcend", 2, 0.10),
+    # dim_phi (metacognition) boosters
+    ("reflection", 4, 0.10),
+    ("meta", 4, 0.08),
+    ("counterfactual", 4, 0.12),
+    ("反事实", 4, 0.12),
+    ("metacog", 4, 0.10),
+    ("lesson", 4, 0.08),
+    ("learning", 4, 0.06),
+    ("wisdom", 4, 0.08),
+    # dim_c (courage/action) boosters
+    ("ship", 5, 0.10),
+    ("action", 5, 0.08),
+    ("execute", 5, 0.10),
+    ("deploy", 5, 0.08),
+    ("决策", 5, 0.08),
+    ("courage", 5, 0.12),
+    ("勇气", 5, 0.12),
+    ("decisive", 5, 0.08),
+]
+
+
+def compute_6d_coords(
+    node_type: str,
+    content: str,
+    created_at: float,
+    access_count: int,
+    *,
+    time_range: Optional[Tuple[float, float]] = None,
+    max_access: int = 1000,
+) -> Coord6D:
+    """Compute intrinsic 6D coordinates for a brain node.
+
+    Args:
+        node_type: The node's type (e.g. 'self_knowledge', 'report', 'meta').
+        content: Combined name + summary text for keyword matching.
+        created_at: Unix timestamp of node creation.
+        access_count: How many times the node has been accessed.
+        time_range: (min_ts, max_ts) for normalization. If None, dim_t uses
+                    a sigmoid fallback based on absolute recency.
+        max_access: Cap for access_count normalization (default 1000).
+
+    Returns:
+        (dim_y, dim_x, dim_z, dim_t, dim_phi, dim_c) each in [0.0, 1.0].
+    """
+    # 1. Start with node_type base profile
+    nt = (node_type or "").strip().lower()
+    base = list(_NODE_TYPE_PROFILES.get(nt, _NODE_TYPE_DEFAULT))
+
+    # 2. Apply content keyword boosts
+    content_lower = (content or "").lower()
+    for keyword, dim_idx, boost in _KEYWORD_BOOSTS:
+        if keyword in content_lower:
+            base[dim_idx] = min(1.0, base[dim_idx] + boost)
+
+    # 3. Compute dim_t (evolution/direction): recency + access momentum
+    if created_at and created_at > 0:
+        if time_range and time_range[1] > time_range[0]:
+            t_min, t_max = time_range
+            # Linear recency in [0.2, 0.9] range
+            recency = (created_at - t_min) / (t_max - t_min)
+            recency = 0.2 + 0.7 * max(0.0, min(1.0, recency))
+        else:
+            # Fallback: sigmoid of seconds-ago / day
+            now = time.time()
+            age_days = max(0, (now - created_at)) / 86400.0
+            recency = 0.9 / (1.0 + age_days / 7.0)  # half-life ~7 days
+
+        # Access momentum: log-scaled, adds up to 0.1
+        if access_count > 0:
+            access_factor = min(1.0, math.log1p(access_count) / math.log1p(max_access))
+            momentum = 0.1 * access_factor
+        else:
+            momentum = 0.0
+
+        base[3] = min(1.0, recency + momentum)
+    # else keep base[3] as profile default
+
+    # 4. Clamp all to [0.05, 0.95] to avoid degenerate extremes
+    result = tuple(max(0.05, min(0.95, v)) for v in base)
+    return result  # type: ignore[return-value]
+
+
+def backfill_6d_coords(
+    db_path: str,
+    *,
+    batch_size: int = 500,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """Batch-update 6D coordinates for all nodes with default (0.5, 0.5) coords.
+
+    Reads all unset nodes, computes 6D coords via compute_6d_coords,
+    and writes them back in batches.
+
+    Args:
+        db_path: Path to aiden_brain.db.
+        batch_size: Number of rows per UPDATE transaction.
+        dry_run: If True, compute but do not write.
+
+    Returns:
+        Dict with keys: total_updated, time_range, sample_updates.
+    """
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA journal_mode=WAL")
+
+    # Get time range for normalization
+    row = conn.execute(
+        "SELECT min(created_at), max(created_at) FROM nodes WHERE created_at > 0"
+    ).fetchone()
+    t_min = row[0] if row and row[0] else 0
+    t_max = row[1] if row and row[1] else time.time()
+    time_range_val = (t_min, t_max) if t_min > 0 else None
+
+    # Get max access_count for normalization (capped at p99 to avoid outlier domination)
+    max_acc_row = conn.execute(
+        "SELECT access_count FROM nodes ORDER BY access_count DESC LIMIT 1 OFFSET "
+        "(SELECT cast(count(*) * 0.01 as integer) FROM nodes)"
+    ).fetchone()
+    max_access = max(1, max_acc_row[0] if max_acc_row and max_acc_row[0] else 1000)
+
+    # Fetch unset nodes
+    cur = conn.execute(
+        "SELECT id, node_type, name, summary, created_at, access_count "
+        "FROM nodes WHERE dim_y = 0.5 AND dim_x = 0.5"
+    )
+    rows = cur.fetchall()
+
+    total = len(rows)
+    updates = []
+    samples = []
+
+    for i, r in enumerate(rows):
+        nid, ntype, name, summary, c_at, acc = r
+        content = f"{name or ''} {summary or ''}"
+        coords = compute_6d_coords(
+            node_type=ntype or "",
+            content=content,
+            created_at=c_at or 0,
+            access_count=acc or 0,
+            time_range=time_range_val,
+            max_access=max_access,
+        )
+        updates.append((coords[0], coords[1], coords[2],
+                        coords[3], coords[4], coords[5], nid))
+
+        if len(samples) < 10:
+            samples.append({
+                "id": nid,
+                "node_type": ntype,
+                "name": (name or "")[:60],
+                "coords": {
+                    "dim_y": round(coords[0], 4),
+                    "dim_x": round(coords[1], 4),
+                    "dim_z": round(coords[2], 4),
+                    "dim_t": round(coords[3], 4),
+                    "dim_phi": round(coords[4], 4),
+                    "dim_c": round(coords[5], 4),
+                },
+            })
+
+    if not dry_run:
+        # Batch update
+        for start in range(0, len(updates), batch_size):
+            batch = updates[start:start + batch_size]
+            conn.executemany(
+                "UPDATE nodes SET dim_y=?, dim_x=?, dim_z=?, "
+                "dim_t=?, dim_phi=?, dim_c=? WHERE id=?",
+                batch,
+            )
+            conn.commit()
+
+    conn.close()
+
+    return {
+        "total_updated": total if not dry_run else 0,
+        "total_candidates": total,
+        "time_range": time_range_val,
+        "max_access_p99": max_access,
+        "sample_updates": samples,
+    }

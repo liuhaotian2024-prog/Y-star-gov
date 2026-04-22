@@ -433,6 +433,51 @@ rules:
         - eng-compliance
     trigger_hook: "Stop.PostReply"
 
+  - name: engineer_receipt_missing_8_module_header
+    pattern: "(?i)(##\\s*RECEIPT|\\*\\*Y\\*\\*|\\*\\*Xt\\*\\*|\\*\\*Rt\\+1\\*\\*)"
+    mode: warn
+    message: "Engineer receipt missing structured '## 8 Module Activation' segment. Per aiden_8_module_cognitive_architecture.md (Board 2026-04-22), thinking is behavior — agent should explicit-show cognitive process (M1 反射, M2 记忆调用, M3 资料整理, M4 路径规划, M5 方法论选择, M6 错误监控, M7 主动行动, M8 反思整合) in receipt structure. Required: header + >=6/8 module markers."
+    rationale: "Board 2026-04-22 catch — 'Claude inference 不是真思考全部, 只是前额反射'. 8 Module Global Workspace architecture (Kahneman System 1/2 + Baars GWT + Friston Active Inference + MAP) mandates cognitive process transparency. Receipt without 8-module header = implicit-only thinking = M1-only reductive error. Wave-4 baseline period (warn 7 days, then promote to deny). Detector: scripts/hook_subagent_output_scan.py check_8_module_header()."
+    dry_run_until: 1777363200  # 2026-04-28T08:00:00Z — 7-day baseline period before promote to deny
+    dry_run_rationale: "7-day baseline for ecosystem adaptation. All engineers must update receipt templates to include 8 Module Activation segment."
+    created_at: "2026-04-22T18:00:00Z"
+    scope:
+      agent_ids:
+        - eng-governance
+        - eng-platform
+        - eng-kernel
+        - eng-domains
+        - eng-data
+        - eng-security
+        - eng-ml
+        - eng-perf
+        - eng-compliance
+    trigger_hook: "PostToolUse.Agent"
+
+  - name: e1_receipt_drift_reject
+    pattern: "(?i)(tool[_ -]?uses?|tool[_ -]?calls?|Bash\\s+\\d+\\s*\\+\\s*Read).*\\d+"
+    mode: deny
+    message: "E1 Receipt-Honesty REJECT: Sub-agent tool_uses claim drift >30% vs metadata. Over-claim = hallucination, under-claim = omission. CEO must re-dispatch with explicit re-receipt request. Per Board 2026-04-22 Wave-4: receipt-honesty non-negotiable."
+    rationale: "Board 2026-04-22 root cause analysis — E1 不收敛 (Wave-1 45% → Wave-3 47% → 全维度 42%). Wave-1.5 prompt template fix was reminder not enforce (no hook reject). This rule upgrades from warn to deny for >30% drift. Detector: scripts/hook_subagent_output_scan.py e1_receipt_honesty_check(). Cross-check: claim_mismatch.detect_tool_uses_mismatch(). Tiered: <10% allow, 10-30% warn, >30% deny."
+    dry_run_until: null  # Immediate enforce — E1 has had 6+ days of warn-only baseline
+    created_at: "2026-04-22T18:00:00Z"
+    validator: claim_mismatch.detect_tool_uses_mismatch
+    validator_kwargs:
+      reject_threshold_pct: 30
+      warn_threshold_pct: 10
+    scope:
+      agent_ids:
+        - eng-governance
+        - eng-platform
+        - eng-kernel
+        - eng-domains
+        - eng-data
+        - eng-security
+        - eng-ml
+        - eng-perf
+        - eng-compliance
+    trigger_hook: "PostToolUse.Agent"
+
 # Whitelists — Files exempt from ForgetGuard checks (referenced by stem)
 whitelists:
   - role_mandate
