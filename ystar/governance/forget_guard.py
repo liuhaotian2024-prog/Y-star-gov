@@ -185,7 +185,12 @@ class ForgetGuard:
         # Natural language keyword matching
         # Example pattern: "CEO assigns code|git task to eng-kernel without CTO"
         keywords = re.split(r"[|\s]+", pattern.lower())
-        matches = sum(1 for kw in keywords if kw in search_text)
+        # Use word-boundary regex instead of substring to prevent
+        # e.g. "p-1" matching inside "p-10" (Wave-1.5 fix)
+        matches = sum(
+            1 for kw in keywords
+            if re.search(r'\b' + re.escape(kw) + r'\b', search_text)
+        )
         threshold = len(keywords) * 0.6  # 60% keyword match required
 
         return matches >= threshold
