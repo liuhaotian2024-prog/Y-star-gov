@@ -48,23 +48,70 @@ class ForgetGuard:
         self._load_rules()
 
     def _load_rules(self):
-        """Load rules from YAML file."""
+        """Load rules from YAML file(s).
+
+        Supports two schemas:
+        - v0.42 (Y-star-gov): name/pattern/mode/message/rationale
+        - v1.1 (ystar-company): id/trigger.conditions/action/recipe/severity
+        Also loads secondary company-side rules file if it exists.
+        """
+        import os
+
         if not self.rules_path.exists():
             return
 
         with open(self.rules_path) as f:
-            data = yaml.safe_load(f)
+            data = yaml.safe_load(f) or {}
+
+        # Load secondary rules file (company-side schema 1.1)
+        secondary_path = "/Users/haotianliu/.openclaw/workspace/ystar-company/governance/forget_guard_rules.yaml"
+        if os.path.exists(secondary_path):
+            try:
+                with open(secondary_path) as f2:
+                    data2 = yaml.safe_load(f2) or {}
+                # merge rules arrays
+                existing_rules = data.get("rules", [])
+                existing_rules.extend(data2.get("rules", []))
+                data["rules"] = existing_rules
+            except Exception:
+                pass
 
         for rule_data in data.get("rules", []):
-            self.rules.append(ForgetGuardRule(
-                name=rule_data["name"],
-                pattern=rule_data["pattern"],
-                mode=rule_data.get("mode", "warn"),
-                message=rule_data["message"],
-                rationale=rule_data["rationale"],
-                dry_run_until=rule_data.get("dry_run_until"),
-                created_at=rule_data.get("created_at", ""),
-            ))
+            # Schema detection
+            if "name" in rule_data and "pattern" in rule_data:
+                # v0.42 schema
+                self.rules.append(ForgetGuardRule(
+                    name=rule_data["name"],
+                    pattern=rule_data["pattern"],
+                    mode=rule_data.get("mode", "warn"),
+                    message=rule_data["message"],
+                    rationale=rule_data.get("rationale", ""),
+                    dry_run_until=rule_data.get("dry_run_until"),
+                    created_at=rule_data.get("created_at", ""),
+                ))
+            elif "id" in rule_data:
+                # schema 1.1 — map to v0.42 equivalent best-effort
+                trigger = rule_data.get("trigger", {})
+                conds = trigger.get("conditions", []) if isinstance(trigger, dict) else []
+                # gather keywords across conditions
+                keywords = []
+                for c in conds:
+                    if isinstance(c, dict):
+                        kws = c.get("keywords", [])
+                        if isinstance(kws, list):
+                            keywords.extend(str(k) for k in kws)
+                # pattern = keywords joined by | for keyword-OR matching
+                pattern = "|".join(keywords) if keywords else ""
+                self.rules.append(ForgetGuardRule(
+                    name=rule_data["id"],
+                    pattern=pattern,
+                    mode=rule_data.get("action", "warn"),
+                    message=rule_data.get("recipe", "")[:500] if rule_data.get("recipe") else "",
+                    rationale=rule_data.get("description", ""),
+                    dry_run_until=None,
+                    created_at=rule_data.get("last_reviewed", ""),
+                ))
+            # else: silently skip malformed rule
 
     def check(self, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -119,6 +166,10 @@ class ForgetGuard:
         - Natural language description (simple keyword matching)
         - Regex (if starts with ^)
         """
+        # Guard: skip rules with null/empty pattern (schema rot defense)
+        if pattern is None or pattern == "":
+            return False
+
         agent_id = context.get("agent_id", "")
         action_type = context.get("action_type", "")
         payload = str(context.get("action_payload", ""))
