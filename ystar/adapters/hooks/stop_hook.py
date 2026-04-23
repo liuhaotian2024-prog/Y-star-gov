@@ -422,11 +422,43 @@ def _emit_cieu_event(event_type: str, metadata: dict) -> None:
         _log.warning(f"CIEU event {event_type} emission failed: {e}")
 
 
+# ── YAML Frontmatter Parser (E1 drift cross-check) ──────────────────────
+
+def _parse_receipt_frontmatter(receipt_text: str) -> dict | None:
+    """
+    Parse YAML frontmatter from sub-agent receipt text.
+
+    Expected format:
+        ---
+        tool_uses_claimed: 5
+        agent_id: eng-kernel
+        ...
+        ---
+        (rest of receipt prose)
+
+    Returns:
+        dict of parsed YAML fields, or None if no frontmatter found or parse fails.
+    """
+    match = re.match(r"^---\n(.*?)\n---", receipt_text, re.DOTALL)
+    if not match:
+        return None
+    if _yaml is None:
+        _log.warning("yaml package not installed; cannot parse receipt frontmatter")
+        return None
+    try:
+        parsed = _yaml.safe_load(match.group(1))
+        return parsed if isinstance(parsed, dict) else None
+    except Exception as e:
+        _log.warning(f"YAML frontmatter parse failed: {e}")
+        return None
+
+
 # ── E2: Auto-Validate ALL Sub-Agent Receipts (CZL Gate 2 Generalized) ────
 
 def auto_validate_subagent_receipt(
     receipt_text: str,
     declared_artifacts: list[Path] | None = None,
+    metadata_tool_uses: int | None = None,
 ) -> dict:
     """
     E2: Generalized CZL Gate 2 receipt validation that runs on ALL sub-agent returns.
@@ -455,7 +487,44 @@ def auto_validate_subagent_receipt(
         >>> if not result["is_valid"]:
         ...     inject_correction_to_ceo(result)
     """
-    # Step 1: Extract artifact paths from prose if not explicitly declared
+    # Step 1: E1 frontmatter drift cross-check (tool_uses_claimed vs metadata)
+    # MUST run before any early-return so drift is always caught.
+    e1_drift_rejected = False
+    e1_drift_detail = None
+    frontmatter = _parse_receipt_frontmatter(receipt_text)
+    if frontmatter and metadata_tool_uses is not None:
+        tool_uses_claimed = frontmatter.get("tool_uses_claimed")
+        if isinstance(tool_uses_claimed, (int, float)):
+            tool_uses_claimed = int(tool_uses_claimed)
+            drift = abs(tool_uses_claimed - metadata_tool_uses) / max(metadata_tool_uses, 1)
+            if drift > 0.30:
+                e1_drift_rejected = True
+                e1_drift_detail = {
+                    "tool_uses_claimed": tool_uses_claimed,
+                    "metadata_tool_uses": metadata_tool_uses,
+                    "drift": round(drift, 3),
+                }
+                _emit_cieu_event("E1_RECEIPT_DRIFT_REJECTED", {
+                    "decision": "deny",
+                    **e1_drift_detail,
+                })
+                return {
+                    "is_valid": False,
+                    "missing_artifacts": [],
+                    "claimed_rt": None,
+                    "actual_rt": 0.0,
+                    "validation_status": "e1_drift_rejected",
+                    "e1_drift": e1_drift_detail,
+                    "e1_correction": (
+                        f"<system-reminder>E1_RECEIPT_DRIFT_REJECTED: "
+                        f"Receipt frontmatter claimed tool_uses={tool_uses_claimed} "
+                        f"but metadata reports {metadata_tool_uses} "
+                        f"(drift={drift:.1%}, threshold=30%). "
+                        f"Receipt DENIED. Re-submit with accurate tool_uses_claimed.</system-reminder>"
+                    ),
+                }
+
+    # Step 2: Extract artifact paths from prose if not explicitly declared
     if declared_artifacts is None:
         declared_artifacts = _extract_artifact_paths_from_prose(receipt_text)
 
@@ -474,7 +543,7 @@ def auto_validate_subagent_receipt(
             "validation_status": "no_artifacts_to_check",
         }
 
-    # Step 2: Run empirical validation via czl_protocol.validate_receipt()
+    # Step 3: Run empirical validation via czl_protocol.validate_receipt()
     if validate_receipt is None:
         _log.warning("CZL validate_receipt not available (czl_protocol import failed)")
         return {
@@ -490,14 +559,14 @@ def auto_validate_subagent_receipt(
         artifacts_expected=declared_artifacts,
     )
 
-    # Step 3: Extract claimed Rt+1 from receipt text (supports both "=" and ":" formats)
+    # Step 4: Extract claimed Rt+1 from receipt text (supports both "=" and ":" formats)
     claimed_rt_match = re.search(r"Rt\+1.*?[=:]\s*([\d.]+)", receipt_text)
     claimed_rt = float(claimed_rt_match.group(1)) if claimed_rt_match else None
 
-    # Step 4: Identify missing artifacts
+    # Step 5: Identify missing artifacts
     missing_artifacts = [p for p in declared_artifacts if not p.exists()]
 
-    # Step 5: Emit CIEU event with validation verdict
+    # Step 6: Emit CIEU event with validation verdict
     validation_status = "pass" if is_valid else "fail"
     _emit_cieu_event("RECEIPT_AUTO_VALIDATED", {
         "validation_status": validation_status,
@@ -507,18 +576,20 @@ def auto_validate_subagent_receipt(
         "artifacts_missing": [str(p) for p in missing_artifacts],
     })
 
-    # Step 6: Extract 5-tuple and auto-emit RT_MEASUREMENT if present
+    # Step 7: Extract 5-tuple and auto-emit RT_MEASUREMENT if present
     five_tuple = _extract_5tuple_from_receipt(receipt_text)
     if five_tuple is not None:
         _emit_rt_measurement_from_receipt(five_tuple, actual_rt)
 
-    return {
+    result = {
         "is_valid": is_valid,
         "missing_artifacts": missing_artifacts,
         "claimed_rt": claimed_rt,
         "actual_rt": actual_rt,
         "validation_status": validation_status,
     }
+
+    return result
 
 
 def _extract_artifact_paths_from_prose(receipt_text: str) -> list[Path]:
