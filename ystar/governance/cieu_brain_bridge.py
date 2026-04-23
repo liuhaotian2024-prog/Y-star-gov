@@ -426,6 +426,23 @@ def compute_6d_coords(
         if keyword in content_lower:
             base[dim_idx] = min(1.0, base[dim_idx] + boost)
 
+    # 2b. Metacognitive dim_phi refinement — node_type + content signal
+    # High-metacog node types get a base floor to ensure retrieval salience.
+    _METACOG_TYPE_BOOST: Dict[str, float] = {
+        "ceo_learning": 0.10,
+        "meta": 0.10,
+        "self_knowledge": 0.10,
+        "paradigm": 0.05,
+    }
+    if nt in _METACOG_TYPE_BOOST:
+        base[4] = min(1.0, base[4] + _METACOG_TYPE_BOOST[nt])
+
+    # Content-based metacog signal: reflection/metacog/meta-rule/self-check
+    _METACOG_CONTENT_KEYWORDS = ["reflection", "metacog", "meta-rule", "self-check"]
+    for kw in _METACOG_CONTENT_KEYWORDS:
+        if kw in content_lower:
+            base[4] = min(1.0, base[4] + 0.20)
+
     # 3. Compute dim_t (evolution/direction): recency + access momentum
     if created_at and created_at > 0:
         if time_range and time_range[1] > time_range[0]:
