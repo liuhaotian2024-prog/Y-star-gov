@@ -145,7 +145,20 @@ def main():
     while not _shutdown_requested:
         iteration += 1
 
-        events = _fetch_new_cieu_events(args.cieu_db, cursor)
+        raw_events = _fetch_new_cieu_events(args.cieu_db, cursor)
+        # Apply agent_filter: drop events whose agent_id doesn't match
+        # but still advance cursor past all fetched events to avoid re-fetch loop
+        if raw_events and agent_filter:
+            for e in raw_events:
+                seq = e.get("seq_global", 0)
+                if seq > cursor:
+                    cursor = seq
+            events = [
+                e for e in raw_events
+                if agent_filter in (e.get("agent_id") or "").lower()
+            ]
+        else:
+            events = raw_events
         if events:
             t0 = time.time()
             batch_act = 0
