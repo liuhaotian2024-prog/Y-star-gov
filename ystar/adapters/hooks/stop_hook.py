@@ -38,6 +38,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+try:
+    import yaml as _yaml
+except ImportError:
+    _yaml = None
+
 # Import CZL validators (Gate 1/2)
 try:
     from ystar.kernel.czl_protocol import validate_dispatch, validate_receipt
