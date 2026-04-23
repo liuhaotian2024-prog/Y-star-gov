@@ -235,6 +235,10 @@ _NEW_COLUMNS = [
     ("evidence_grade",      "TEXT DEFAULT 'decision'"),
     ("decision_canonical",  "TEXT"),
     ("provenance",          "TEXT"),
+    # Wave-2 Step-1: M-functor alignment columns
+    ("m_functor",           "TEXT"),
+    ("m_weight",            "REAL DEFAULT 0"),
+    ("y_star_validator_pass", "INTEGER DEFAULT 0"),
 ]
 
 
@@ -410,6 +414,10 @@ class CIEUStore:
         decision_canonical = _normalize_decision(raw_decision)
         agent_id_val = d.get("agent_id", "")
         provenance = _provenance_for_agent(agent_id_val)
+        # [Wave-2 Step-1] M-functor alignment columns
+        m_functor = d.get("m_functor")  # e.g. "M-1", "M-2a", "M-2b", "M-3"
+        m_weight = d.get("m_weight", 0) or 0
+        y_star_validator_pass = 1 if d.get("y_star_validator_pass") else 0
 
         with self._conn() as conn:
             conn.execute("""
@@ -422,13 +430,15 @@ class CIEUStore:
                      task_description, contract_hash, chain_depth,
                      params_json, result_json, human_initiator, lineage_path,
                      evidence_grade,
-                     decision_canonical, provenance)
+                     decision_canonical, provenance,
+                     m_functor, m_weight, y_star_validator_pass)
                 VALUES
                     (?, ?, ?,   ?, ?, ?,   ?, ?,   ?, ?, ?, ?,
                      ?, ?, ?, ?, ?,   ?, ?, ?,
                      ?, ?, ?, ?,
                      ?,
-                     ?, ?)
+                     ?, ?,
+                     ?, ?, ?)
             """, (
                 d.get("event_id") or str(uuid.uuid4()),
                 d.get("seq_global") or int(time.time() * 1_000_000),
@@ -457,6 +467,9 @@ class CIEUStore:
                 evidence_grade,
                 decision_canonical,
                 provenance,
+                m_functor,
+                m_weight,
+                y_star_validator_pass,
             ))
 
     def ingest_from_session(
