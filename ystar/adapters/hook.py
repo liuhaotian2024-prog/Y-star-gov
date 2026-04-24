@@ -153,13 +153,48 @@ def _extract_params(tool_name: str, tool_input: dict) -> dict:
     # ── Agent tool: set .ystar_active_agent to subagent_type ──────────────
     # CZL-MARKER-PER-SESSION-ISOLATION (2026-04-19): Write to per-session
     # marker file when session ID is available, plus global for backward compat.
+    #
+    # CZL-SPAWN-PPID-MARKER-FIX (2026-04-24): Write subagent identity to BOTH
+    # the caller's ppid marker AND a named subagent marker that the child process
+    # can find. The child's PPID is unknown at spawn time (it hasn't started yet),
+    # so we write .ystar_active_agent.subagent_{name} as a breadcrumb.
+    # Also write to scripts/ dir (where hook_wrapper reads from), not just cwd.
     if tool_name == "Agent":
         subagent_type = tool_input.get("subagent_type")
         if subagent_type:
             try:
                 _cwd = os.getcwd()
                 active_agent_path = os.path.join(_cwd, ".ystar_active_agent")
-                # Per-session marker (primary target)
+
+                # Resolve the scripts/ directory for marker writes
+                # (hook_wrapper.py reads from scripts/, not necessarily cwd)
+                _scripts_dir = os.path.join(_cwd, "scripts")
+                if not os.path.isdir(_scripts_dir):
+                    # Try YSTAR_REPO_ROOT
+                    _rr = os.environ.get("YSTAR_REPO_ROOT", "")
+                    if _rr:
+                        _scripts_dir = os.path.join(_rr, "scripts")
+                    if not os.path.isdir(_scripts_dir):
+                        # Try workspace_config
+                        try:
+                            from ystar.workspace_config import get_labs_workspace
+                            _ws = get_labs_workspace()
+                            if _ws:
+                                _scripts_dir = str(_ws / "scripts")
+                        except Exception:
+                            pass
+                _write_dirs = [_cwd]
+                if os.path.isdir(_scripts_dir) and _scripts_dir != _cwd:
+                    _write_dirs.append(_scripts_dir)
+
+                # Map subagent_type to canonical governance ID for consistency
+                try:
+                    from ystar.adapters.identity_detector import _map_agent_type
+                    _canonical = _map_agent_type(subagent_type)
+                except Exception:
+                    _canonical = subagent_type
+
+                # Per-session marker (primary target) — caller's session
                 _sid_for_agent = os.environ.get("CLAUDE_SESSION_ID", "").strip()
                 _per_session_path = None
                 if _sid_for_agent:
@@ -167,7 +202,7 @@ def _extract_params(tool_name: str, tool_input: dict) -> dict:
                     if _sanitized:
                         _per_session_path = os.path.join(_cwd, f".ystar_active_agent.{_sanitized}")
                 if not _per_session_path:
-                    # PPID fallback
+                    # PPID fallback — caller's PPID
                     try:
                         _ppid = str(os.getppid())
                         if _ppid and _ppid != "1":
@@ -177,14 +212,29 @@ def _extract_params(tool_name: str, tool_input: dict) -> dict:
                 # Write per-session marker if available
                 if _per_session_path:
                     with open(_per_session_path, "w") as f:
-                        f.write(subagent_type)
+                        f.write(_canonical)
                     active_agent_path = _per_session_path  # for CIEU event
-                # Always write global marker for backward compat
-                try:
-                    with open(os.path.join(_cwd, ".ystar_active_agent"), "w") as f:
-                        f.write(subagent_type)
-                except Exception:
-                    pass  # Non-fatal
+
+                # Write to all target directories (cwd + scripts/)
+                for _wd in _write_dirs:
+                    try:
+                        # Global marker for backward compat
+                        with open(os.path.join(_wd, ".ystar_active_agent"), "w") as f:
+                            f.write(_canonical)
+                        # Named subagent marker — child can look this up
+                        # by its own agent_type from the payload
+                        _safe_name = "".join(
+                            c for c in subagent_type if c.isalnum() or c in "-_"
+                        )
+                        if _safe_name:
+                            _named_path = os.path.join(
+                                _wd, f".ystar_active_agent.subagent_{_safe_name}"
+                            )
+                            with open(_named_path, "w") as f:
+                                f.write(_canonical)
+                    except Exception:
+                        pass  # Non-fatal
+
                 # Emit CIEU event
                 from ystar.governance.cieu_store import CIEUStore
                 cieu_db = ".ystar_cieu.db"
@@ -192,17 +242,19 @@ def _extract_params(tool_name: str, tool_input: dict) -> dict:
                     store = CIEUStore(cieu_db)
                     store.write_dict({
                         "session_id":    "unknown",  # Will be overwritten by caller if known
-                        "agent_id":      subagent_type,
+                        "agent_id":      _canonical,
                         "event_type":    "AGENT_IDENTITY_SET",
                         "decision":      "allow",
                         "passed":        True,
                         "file_path":     active_agent_path,
                         "evidence_grade": "action",
                         "params":        {"subagent_type": subagent_type,
-                                         "per_session": _per_session_path is not None},
+                                         "canonical": _canonical,
+                                         "per_session": _per_session_path is not None,
+                                         "write_dirs": _write_dirs},
                     })
-                    _log.info("AGENT_IDENTITY_SET: .ystar_active_agent -> %s (per_session=%s)",
-                             subagent_type, _per_session_path is not None)
+                    _log.info("AGENT_IDENTITY_SET: .ystar_active_agent -> %s (canonical=%s, per_session=%s)",
+                             subagent_type, _canonical, _per_session_path is not None)
                 except Exception as e:
                     _log.error("Failed to write AGENT_IDENTITY_SET event: %s", e)
             except Exception as e:
@@ -2136,9 +2188,30 @@ def handle_hook_event(
     # correctly.  Without this, the session_start_protocol_incomplete rule
     # sees who="agent"/"guest" and DENY-all → fail-closed deadlock.
     # See: reports/incidents/2026-04-23-hook-fail-closed-deadlock.md
+    #
+    # CZL-SPAWN-PPID-MARKER-FIX (2026-04-24): Check agent_type FIRST.
+    # For subagents, Claude Code sets agent_type to the definition name
+    # (e.g. "Leo-Kernel"). This is authoritative and must take priority
+    # over stale ppid markers that resolve to "ceo".
     _v2_aid = payload.get("agent_id", "")
     _v2_atype = payload.get("agent_type", "")
-    if not _v2_aid or _v2_aid == "agent":
+
+    # Priority 0: agent_type from payload (subagent identity)
+    _v2_resolved = False
+    if _v2_atype and _v2_atype not in ("", "agent", None):
+        try:
+            from ystar.adapters.identity_detector import _map_agent_type
+            _v2_mapped = _map_agent_type(_v2_atype)
+            if _v2_mapped and _v2_mapped not in ("agent", "guest"):
+                payload["agent_id"] = _v2_mapped
+                _v2_resolved = True
+                _log.info("[v2-ppid-fix] Subagent identity from agent_type='%s' -> '%s'",
+                         _v2_atype, _v2_mapped)
+        except Exception as _v2_map_exc:
+            _log.warning("[v2-ppid-fix] Failed to map agent_type: %s", _v2_map_exc)
+
+    # Priority 1: marker fallback (for root process only)
+    if not _v2_resolved and (not _v2_aid or _v2_aid == "agent"):
         # Try marker fallback chain: per-session → per-ppid → global newest
         _v2_marker = _read_marker_fallback()
         if _v2_marker and _v2_marker != "agent":
