@@ -16,9 +16,20 @@ Break-glass bypass (INC-2026-04-23 Item #9):
 - .k9_rescue_mode flag file: if present, ALL ForgetGuard rules return None (full bypass)
 - 3+ consecutive DENYs for same agent in 5 min: auto-downgrade deny → warn (lock-death prevention)
 Both paths leave audit trail in violation dict metadata.
+
+Deny history persistence (INC-2026-04-24 Item #9 live-fire fix):
+- hook_wrapper.py runs as a fresh subprocess per invocation, so in-memory _deny_history
+  was always empty.  Now persisted to /tmp/.ystar_fg_deny_history.json so consecutive
+  DENYs accumulate across process boundaries within the 5-min window.
+- Return dict includes hook_wrapper-compatible alias keys (action/rule_id/recipe/severity)
+  alongside canonical keys (mode/rule_name/message/rationale).
+- _matches_pattern now reads both canonical context keys AND hook-wire keys
+  (tool/tool_input/file_path/command/content) so pattern matching works when called
+  from hook_wrapper.py.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
@@ -34,6 +45,8 @@ import yaml
 BREAK_GLASS_FLAG = ".k9_rescue_mode"
 CONSECUTIVE_DENY_THRESHOLD = 3
 CONSECUTIVE_DENY_WINDOW_SECS = 300  # 5 minutes
+# Persistent deny-history file for cross-process accumulation
+_DENY_HISTORY_PATH = "/tmp/.ystar_fg_deny_history.json"
 
 
 @dataclass
@@ -52,7 +65,8 @@ class ForgetGuard:
     """ForgetGuard engine — detects organizational amnesia."""
 
     def __init__(self, rules_path: Optional[Path] = None,
-                 rescue_mode_search_dirs: Optional[List[str]] = None):
+                 rescue_mode_search_dirs: Optional[List[str]] = None,
+                 deny_history_path: Optional[str] = None):
         if rules_path is None:
             rules_path = Path(__file__).parent / "forget_guard_rules.yaml"
 
@@ -61,12 +75,15 @@ class ForgetGuard:
         # Break-glass state: track consecutive denies per agent_id
         # Structure: {agent_id: [(timestamp, rule_name), ...]}
         self._deny_history: Dict[str, List[tuple]] = defaultdict(list)
+        # Persistent deny history file path (cross-process accumulation)
+        self._deny_history_path = deny_history_path or _DENY_HISTORY_PATH
         # Directories to search for .k9_rescue_mode flag
         self._rescue_mode_dirs = rescue_mode_search_dirs or [
             os.getcwd(),
             os.path.expanduser("~/.openclaw/workspace/ystar-company"),
         ]
         self._load_rules()
+        self._load_deny_history()
 
     def _load_rules(self):
         """Load rules from YAML file(s).
@@ -133,6 +150,40 @@ class ForgetGuard:
                     created_at=rule_data.get("last_reviewed", ""),
                 ))
             # else: silently skip malformed rule
+
+    # ── Deny history persistence (cross-process) ─────────────────────────────
+
+    def _load_deny_history(self) -> None:
+        """Load deny history from persistent file, pruning expired entries."""
+        try:
+            if os.path.isfile(self._deny_history_path):
+                with open(self._deny_history_path, "r") as f:
+                    raw = json.load(f)
+                now = time.time()
+                cutoff = now - CONSECUTIVE_DENY_WINDOW_SECS
+                for agent_id, entries in raw.items():
+                    valid = [(ts, rn) for ts, rn in entries if ts >= cutoff]
+                    if valid:
+                        self._deny_history[agent_id] = valid
+        except (json.JSONDecodeError, OSError, TypeError, ValueError):
+            # Corrupted file — reset (fail-open)
+            self._deny_history = defaultdict(list)
+
+    def _save_deny_history(self) -> None:
+        """Persist deny history to file for cross-process accumulation."""
+        try:
+            # Prune expired entries before saving
+            now = time.time()
+            cutoff = now - CONSECUTIVE_DENY_WINDOW_SECS
+            serializable = {}
+            for agent_id, entries in self._deny_history.items():
+                valid = [(ts, rn) for ts, rn in entries if ts >= cutoff]
+                if valid:
+                    serializable[agent_id] = valid
+            with open(self._deny_history_path, "w") as f:
+                json.dump(serializable, f)
+        except OSError:
+            pass  # fail-open: inability to persist must not crash hook
 
     def _is_rescue_mode(self) -> bool:
         """Check if .k9_rescue_mode flag exists in any search directory."""
