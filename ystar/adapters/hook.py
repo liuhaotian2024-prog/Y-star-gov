@@ -2004,6 +2004,89 @@ def _process_obligation_triggers(
 # ARCH-6: handle_hook_event — thin entry point for v2 hook adapter
 # ═══════════════════════════════════════════════════════════════════════
 
+
+def _read_marker_fallback() -> Optional[str]:
+    """Read agent identity from marker files, mirroring hook_wrapper v1 lines 167-253.
+
+    Fallback chain: per-session (CLAUDE_SESSION_ID) → per-session (PPID) →
+    global newest (scripts/.ystar_active_agent vs repo-root/.ystar_active_agent).
+
+    Returns the marker content string, or None if no marker found.
+
+    Added post-INC-2026-04-23: v2 thin adapter path lacked this chain,
+    causing agent to resolve as "agent"/"guest" → session_start_protocol_incomplete
+    DENY-all → fail-closed deadlock for ~3 hours.
+    """
+    _repo_root = os.environ.get("YSTAR_REPO_ROOT", "")
+    if not _repo_root:
+        # Heuristic: workspace_config or cwd-based detection
+        try:
+            from ystar.workspace_config import get_labs_workspace
+            ws = get_labs_workspace()
+            if ws:
+                _repo_root = str(ws)
+        except Exception:
+            pass
+
+    _scripts_dir = os.path.join(_repo_root, "scripts") if _repo_root else ""
+
+    # 1. Per-session marker via CLAUDE_SESSION_ID
+    _sid = os.environ.get("CLAUDE_SESSION_ID", "").strip()
+    if _sid:
+        _sanitized = "".join(c for c in _sid if c.isalnum() or c in "-_")
+        if _sanitized:
+            for base in [_repo_root, _scripts_dir]:
+                if not base:
+                    continue
+                _path = os.path.join(base, f".ystar_active_agent.{_sanitized}")
+                try:
+                    content = open(_path, "r", encoding="utf-8").read().strip()
+                    if content:
+                        _log.debug("[marker-fallback] per-session (%s): '%s'", _sanitized, content)
+                        return content
+                except FileNotFoundError:
+                    pass
+
+    # 2. Per-session marker via PPID
+    _ppid = os.environ.get("PPID", "")
+    if not _ppid:
+        try:
+            _ppid = str(os.getppid())
+        except Exception:
+            _ppid = ""
+    if _ppid and _ppid != "1":
+        for base in [_repo_root, _scripts_dir]:
+            if not base:
+                continue
+            _path = os.path.join(base, f".ystar_active_agent.ppid_{_ppid}")
+            try:
+                content = open(_path, "r", encoding="utf-8").read().strip()
+                if content:
+                    _log.debug("[marker-fallback] per-ppid (%s): '%s'", _ppid, content)
+                    return content
+            except FileNotFoundError:
+                pass
+
+    # 3. Global marker — pick newest of repo-root and scripts/ variants
+    _candidates = []
+    for base in [_repo_root, _scripts_dir]:
+        if not base:
+            continue
+        _path = os.path.join(base, ".ystar_active_agent")
+        try:
+            _st = os.stat(_path)
+            content = open(_path, "r", encoding="utf-8").read().strip()
+            if content:
+                _candidates.append((_st.st_mtime, content))
+        except FileNotFoundError:
+            pass
+    if _candidates:
+        _candidates.sort(reverse=True)
+        return _candidates[0][1]
+
+    return None
+
+
 def _load_rules_from_dir(rules_dir: str) -> None:
     """
     Load router rules from a directory of .py files.
@@ -2044,6 +2127,25 @@ def handle_hook_event(
         ``{"hookSpecificOutput": ...}`` means deny/redirect.
     """
     from ystar.governance.router_registry import get_default_registry
+
+    # ── INC-2026-04-23: Marker fallback chain (ported from hook_wrapper v1) ──
+    # When Claude Code sends agent_id="" and agent_type="agent" (root process
+    # defaults), _detect_agent_id falls through to priority 7 (marker files)
+    # or returns "guest".  The v1 path in hook_wrapper.py (lines 167-253)
+    # pre-injects the marker into payload.agent_id so priority 1 resolves
+    # correctly.  Without this, the session_start_protocol_incomplete rule
+    # sees who="agent"/"guest" and DENY-all → fail-closed deadlock.
+    # See: reports/incidents/2026-04-23-hook-fail-closed-deadlock.md
+    _v2_aid = payload.get("agent_id", "")
+    _v2_atype = payload.get("agent_type", "")
+    if not _v2_aid or _v2_aid == "agent":
+        # Try marker fallback chain: per-session → per-ppid → global newest
+        _v2_marker = _read_marker_fallback()
+        if _v2_marker and _v2_marker != "agent":
+            payload["agent_id"] = _v2_marker
+            if _v2_atype in ("", "agent", None):
+                payload.pop("agent_type", None)
+            _log.info("[v2-marker] Payload agent_id overridden to '%s' from marker fallback", _v2_marker)
 
     # ── CEO Constitutional Deny (ported from hook_wrapper v1) ────────────
     # CEO must not write directly to Y-star-gov product source.
