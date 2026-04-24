@@ -129,6 +129,10 @@ class OmissionType(str, Enum):
     # Agent declares Y* 5-tuple with m_functor but produces no tool_call evidence
     NAV_DECLARED_UNEXECUTED       = "nav_declared_unexecuted"
 
+    # Article 11: Board-offline autonomous obligations (Board directive 2026-04-15)
+    # Registered by hook_session_start.py for CEO autonomous mode enforcement
+    ARTICLE_11_PARALLEL_ENFORCEMENT = "article_11_parallel_enforcement"
+
     # Test-only obligation types (used in test suite)
     TEST_OBLIGATION               = "test_obligation"
     OBLIGATION1                   = "obligation1"
