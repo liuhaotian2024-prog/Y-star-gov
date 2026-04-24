@@ -154,11 +154,20 @@ def _extract_params(tool_name: str, tool_input: dict) -> dict:
     # CZL-MARKER-PER-SESSION-ISOLATION (2026-04-19): Write to per-session
     # marker file when session ID is available, plus global for backward compat.
     #
-    # CZL-SPAWN-PPID-MARKER-FIX (2026-04-24): Write subagent identity to BOTH
-    # the caller's ppid marker AND a named subagent marker that the child process
-    # can find. The child's PPID is unknown at spawn time (it hasn't started yet),
-    # so we write .ystar_active_agent.subagent_{name} as a breadcrumb.
-    # Also write to scripts/ dir (where hook_wrapper reads from), not just cwd.
+    # CZL-SPAWN-PPID-MARKER-FIX v2 (2026-04-24): IMPORTANT — do NOT write to
+    # the caller's ppid marker here. All subagents within the same Claude Code
+    # session share the same PPID as the root process. Writing the subagent's
+    # identity to ppid_{PPID} clobbers the root process (CEO) identity, causing
+    # identity cross-contamination.
+    #
+    # Instead, write only:
+    #   1. Global .ystar_active_agent (backward compat, last-writer-wins)
+    #   2. Named .ystar_active_agent.subagent_{name} breadcrumb (child lookup)
+    #   3. Per-session marker via CLAUDE_SESSION_ID (if available)
+    #
+    # The child subagent resolves identity via payload.agent_type (authoritative,
+    # set by Claude Code for every subagent tool call) — see hook_wrapper.py
+    # CZL-SPAWN-PPID-MARKER-FIX v2 block.
     if tool_name == "Agent":
         subagent_type = tool_input.get("subagent_type")
         if subagent_type:
@@ -194,21 +203,13 @@ def _extract_params(tool_name: str, tool_input: dict) -> dict:
                 except Exception:
                     _canonical = subagent_type
 
-                # Per-session marker (primary target) — caller's session
+                # Per-session marker via CLAUDE_SESSION_ID only (NOT ppid)
                 _sid_for_agent = os.environ.get("CLAUDE_SESSION_ID", "").strip()
                 _per_session_path = None
                 if _sid_for_agent:
                     _sanitized = "".join(c for c in _sid_for_agent if c.isalnum() or c in "-_")
                     if _sanitized:
                         _per_session_path = os.path.join(_cwd, f".ystar_active_agent.{_sanitized}")
-                if not _per_session_path:
-                    # PPID fallback — caller's PPID
-                    try:
-                        _ppid = str(os.getppid())
-                        if _ppid and _ppid != "1":
-                            _per_session_path = os.path.join(_cwd, f".ystar_active_agent.ppid_{_ppid}")
-                    except Exception:
-                        pass
                 # Write per-session marker if available
                 if _per_session_path:
                     with open(_per_session_path, "w") as f:
