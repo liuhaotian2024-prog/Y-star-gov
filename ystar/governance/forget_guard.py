@@ -195,10 +195,13 @@ class ForgetGuard:
     def _check_consecutive_deny_escalation(self, agent_id: str) -> bool:
         """Return True if agent has hit CONSECUTIVE_DENY_THRESHOLD denies in window.
 
-        Also prunes expired entries from history.
+        Reloads from persistent file to capture denies recorded by prior processes,
+        then prunes expired entries.
         """
         if not agent_id:
             return False
+        # Reload from disk to pick up denies from other process invocations
+        self._load_deny_history()
         now = time.time()
         cutoff = now - CONSECUTIVE_DENY_WINDOW_SECS
         # Prune old entries
@@ -209,9 +212,10 @@ class ForgetGuard:
         return len(self._deny_history[agent_id]) >= CONSECUTIVE_DENY_THRESHOLD
 
     def _record_deny(self, agent_id: str, rule_name: str) -> None:
-        """Record a deny event for lock-death tracking."""
+        """Record a deny event for lock-death tracking. Persists to disk."""
         if agent_id:
             self._deny_history[agent_id].append((time.time(), rule_name))
+            self._save_deny_history()
 
     def check(self, context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -271,12 +275,18 @@ class ForgetGuard:
                         break_glass_downgrade = True
 
                 return {
+                    # Canonical keys
                     "rule_name": rule.name,
                     "message": rule.message,
                     "rationale": rule.rationale,
                     "mode": effective_mode,
                     "in_grace_period": in_grace_period,
                     "break_glass_downgrade": break_glass_downgrade,
+                    # Hook-wire alias keys (hook_wrapper.py reads these)
+                    "action": effective_mode,
+                    "rule_id": rule.name,
+                    "recipe": rule.message,
+                    "severity": "high" if effective_mode == "deny" else "low",
                 }
 
         return None
@@ -288,18 +298,35 @@ class ForgetGuard:
         Pattern can be:
         - Natural language description (simple keyword matching)
         - Regex (if starts with ^)
+
+        Reads both canonical keys (action_type/action_payload/target_agent)
+        and hook-wire keys (tool/tool_input/file_path/command/content/active_agent)
+        so matching works whether called from unit tests or hook_wrapper.py.
         """
         # Guard: skip rules with null/empty pattern (schema rot defense)
         if pattern is None or pattern == "":
             return False
 
-        agent_id = context.get("agent_id") or ""
-        action_type = context.get("action_type") or ""
+        agent_id = context.get("agent_id") or context.get("active_agent") or ""
+        action_type = context.get("action_type") or context.get("tool") or ""
         payload = str(context.get("action_payload") or "")
         target_agent = context.get("target_agent") or ""
+        # Hook-wire keys: aggregate tool_input sub-fields into payload
+        file_path = str(context.get("file_path") or "")
+        command = str(context.get("command") or "")
+        content = str(context.get("content") or "")
+        tool_input = context.get("tool_input")
+        tool_input_str = ""
+        if isinstance(tool_input, dict):
+            tool_input_str = " ".join(str(v) for v in tool_input.values())
+        elif isinstance(tool_input, str):
+            tool_input_str = tool_input
 
-        # Build searchable text
-        search_text = f"{agent_id} {action_type} {payload} {target_agent}".lower()
+        # Build searchable text (union of canonical + hook-wire fields)
+        search_text = (
+            f"{agent_id} {action_type} {payload} {target_agent} "
+            f"{file_path} {command} {content} {tool_input_str}"
+        ).lower()
 
         # Regex pattern
         if pattern.startswith("^"):

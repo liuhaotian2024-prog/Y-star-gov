@@ -478,6 +478,28 @@ rules:
         - eng-compliance
     trigger_hook: "PostToolUse.Agent"
 
+  - name: czl_termination_drift_reply_catch
+    pattern: "(?i)(session\\s*close|下\\s*session|认知预算跌了|建议\\s*close|明天新\\s*session|checkpoint|收工|close\\s*session|session\\s*结束|建议这里\\s*close)"
+    mode: deny
+    message: "CZL termination drift detected. Reply has session-close semantics while Rt+1 != 0 and no new dispatch. Must list open Rt+1 items, dispatch undispatched NOW, only close when empirical Rt+1=0."
+    rationale: "Board 2026-04-24 caught CEO 5x same session. CZL loop: Rt+1 != 0 means return to U. Rt+1=0 is ONLY valid stop. Fatigue and catch count are NOT stop signals."
+    dry_run_until: null
+    created_at: "2026-04-24T06:00:00Z"
+    cieu_event: CZL_TERMINATION_DRIFT_CAUGHT
+    severity: high
+    scope:
+      agent_ids:
+        - ceo
+        - ethan-cto
+    trigger_hook: "Stop.PostReply"
+    co_conditions:
+      - type: rt_not_zero
+        description: "Reply contains Rt+1 non-zero indicator"
+        pattern: "(?i)(Rt\\+1\\s*[=:]\\s*0\\.\\d|honest\\s+gap|\\d+/\\d+\\s*FAIL|gap\\s*[:=]|未完成|Rt\\+1\\s*!=\\s*0|Rt\\+1\\s*[>]\\s*0)"
+      - type: no_recent_dispatch
+        description: "Reply lacks dispatch evidence"
+        pattern_absent: "(?i)(Agent.*spawn|dispatch_board|派\\s*(Ethan|Maya|Leo|Ryan|Samantha|Sofia|Marco|Zara)|Agent\\s+tool|subagent_type)"
+
 # Whitelists — Files exempt from ForgetGuard checks (referenced by stem)
 whitelists:
   - role_mandate
