@@ -1,0 +1,152 @@
+---
+schema_version: "0.1"
+schema_id: u_v2_cognitive_schema
+authored_by: Aiden (CEO)
+authored_date: 2026-04-24
+mandate: Board 2026-04-24 directive "make methodology runtime-required not prose-advisory"
+status: MVP for experiment persistence feasibility (reports/experiments/exp_u_v2_schema_persistence_20260424.md)
+supersedes_partial: dispatch_board CZL-WAVE-5-RECEIPT-STRUCTURED-SCHEMA (31h overdue)
+
+description: |
+  U_v2 Cognitive Schema: transforms the U slot in CZL 5-tuple (Y*/Xt/U/Yt+1/Rt+1)
+  from free-form "action" to structured methodology-enforced field. Each U unit
+  must pass schema validation before tool call emission. Missing fields → hook
+  DENY + REDIRECT with fill-in recipe.
+
+  Purpose: make Y*gov methodology (M-Triangle, 14 原则, 8-module cognitive,
+  4-factor culture, 8-cascade) a runtime-checked schema not prose advisory.
+  Target: methodology-applied rate from ~40-60% (prose) to ≥90% (schema).
+
+  This is v0.1 MVP for empirical experiment. Full Wave-2 Axis-D design will
+  expand based on experiment results.
+---
+
+# Required fields (all 5 MUST be present; missing field → hook DENY + REDIRECT)
+
+required_fields:
+
+  m_tag:
+    field_type: enum
+    allowed_values:
+      - M-1           # Survivability
+      - M-2a          # Commission prevention (防做错)
+      - M-2b          # Omission prevention (防不作为)
+      - M-3           # Value Production
+    description: "Which M Triangle axis does this U advance?"
+    redirect_recipe: |
+      Missing m_tag field. Pick one from [M-1, M-2a, M-2b, M-3].
+      If your U advances governance rules: M-2a.
+      If your U advances obligation tracking: M-2b.
+      If your U advances identity/continuity: M-1.
+      If your U advances product/sales/revenue: M-3.
+      If unclear, STOP and ask CEO which axis.
+
+  empirical_basis:
+    field_type: list
+    min_items: 1
+    item_schema:
+      source: {field_type: enum, allowed_values: [file_ref, sql_query, cieu_event_id, pytest, git_commit, log_line]}
+      ref: {field_type: str, min_length: 1}  # path/id/hash/query string
+    description: "At least 1 verifiable artifact reference. Rejects speculation (P-4 principle)."
+    redirect_recipe: |
+      Missing empirical_basis. Must cite ≥1 verifiable artifact:
+      - file_ref: "/path/to/file.py:123"
+      - sql_query: "SELECT ... FROM cieu_events WHERE ..."
+      - cieu_event_id: uuid
+      - pytest: "test_name PASS/FAIL"
+      - git_commit: hash
+      - log_line: "scripts/hook_debug.log 12:18:52 ..."
+
+  counterfactual:
+    field_type: str
+    min_length: 30
+    description: "Blast radius analysis per P-3. What happens if this U NOT done, or done wrong?"
+    redirect_recipe: |
+      Missing counterfactual (P-3). Answer in ≥30 chars:
+      "If NOT done: ___. If done wrong: ___."
+
+  preexisting_search:
+    field_type: dict
+    required_keys: [glob_patterns, results_count]
+    description: "P-12 先查后造. Before proposing, MUST have searched existing assets."
+    redirect_recipe: |
+      Missing preexisting_search (P-12). Must show:
+      glob_patterns: ["**/*.py", "reports/**/*.md", ...]
+      results_count: int (count from grep/glob execution)
+      If 0 results, state explicitly; if >3 results, review them in U.
+
+  rt_plus_1_honest:
+    field_type: str
+    description: |
+      Residual gap after this U completes. "0" ONLY if target metric empirically
+      met with artifact ref. Any fuzzy claim WITHOUT artifact → must be "non-zero,
+      specific gap: ___".
+    redirect_recipe: |
+      Missing rt_plus_1_honest. Answer:
+      - "0 — metric X met per artifact Y" (with verifiable ref)
+      - OR "non-zero: specific gap ___" (identify gap, don't claim 0)
+      Per memory feedback_ship_neq_done_rt1_zero_discipline: ship ≠ done.
+
+# Optional fields (high-stakes decisions only)
+
+optional_fields:
+
+  eight_module_activation:
+    description: "Full 8-module cognitive activation trace per Aiden 8-Module arch"
+    trigger_if: high_stakes_decision OR ruling OR spec OR amendment
+    structure:
+      m1_reflex: "auto"
+      m2_memory: {queried_node_ids: list, distance_threshold: 0.35}
+      m3_resources: {refs_consulted: list}
+      m4_path: "OODA step label"
+      m5_methodology: "principles applied this cycle (from 14)"
+      m6_error_monitor: "expected CIEU event type + delta"
+      m7_proactive: "trigger source (hook event / obligation overdue / Board directive / self-observed)"
+      m8_reflection: {prior_lesson_ref: path, applied_how: str}
+
+  four_factor_culture:
+    description: "Sub-agent spawn only — CEO pre-check 4 factors"
+    trigger_if: agent_type == sub_agent_spawn
+    structure:
+      model: "claude-opus-4-7 / ..."
+      role: "explicit subagent_type from Agent tool"
+      culture_ref: "path to role's culture doc (e.g. knowledge/{role}/culture/)"
+      high_stakes_framing: "explicit statement in prompt"
+
+  eight_cascade:
+    description: "P-13: new entity (rule / module / agent / event type) must pass 8 cascade"
+    trigger_if: proposes_new_entity
+    checklist:
+      charter: "AMENDMENT if constitutional"
+      registry: "added to forget_guard_rules / router_registry / ..."
+      boot: "governance_boot.sh integration"
+      dispatch: "dispatch_board schema if T1"
+      hook: "hook_wrapper / PreToolUse / PostToolUse wire"
+      cieu: "new event_type emit + schema"
+      fg_scope: "forget_guard rule scope covers"
+      preauth: "pre-authorization check if break_glass-adjacent"
+
+# Validator behavior
+
+validator:
+  hook_emit_on_missing: U_V2_SCHEMA_INCOMPLETE_DENY
+  hook_emit_on_complete: U_V2_SCHEMA_COMPLETE
+  hook_emit_on_theater: U_V2_THEATER_DETECTED  # claim present but artifact empty/too short
+  redirect_pattern: "provide fill-in recipe per field + allow resubmit"
+  deny_cap: "no infinite retry — after 3 DENY in 5 min, escalate to CEO"
+
+# Live-fire acceptance
+
+live_fire_test:
+  required_before_ship:
+    - "Deliberate missing m_tag → DENY fires + recipe shown"
+    - "Deliberate empty empirical_basis → DENY fires"
+    - "Compliant receipt → PASS + CIEU U_V2_SCHEMA_COMPLETE event emit"
+    - "Theater attempt (empty counterfactual field present) → U_V2_THEATER_DETECTED emit"
+
+# Escape hatch
+
+break_glass:
+  condition: "Iron Rule 3-channel escalation OR K9 Rescue active"
+  behavior: "schema enforce suppressed; post-incident audit in reports/incidents/ lists all skipped U entries"
+  rationale: "fail-safe > fail-closed during emergency; compromise logged for review"
