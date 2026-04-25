@@ -245,12 +245,13 @@ class TestHookIntegration:
 
         # Mock _load_session_config_cached which is what hook.py actually calls
         with patch("ystar.adapters.hook._load_session_config_cached", return_value=config):
-            with patch("ystar.adapters.cieu_writer._write_boot_record"):
-                with patch("ystar.adapters.cieu_writer._write_cieu"):
-                    response = check_hook(hook_payload, agent_id="ceo", policy=policy)
+                with patch("ystar.adapters.cieu_writer._write_boot_record"):
+                    with patch("ystar.adapters.cieu_writer._write_cieu"):
+                        response = check_hook(hook_payload, agent_id="ceo", policy=policy)
 
-                    assert response.get("action") == "block"
-                    assert "must dispatch engineering tasks via CTO" in response.get("message", "")
+                        hook_output = response.get("hookSpecificOutput", {})
+                        assert hook_output.get("permissionDecision") == "deny"
+                        assert "must dispatch engineering tasks via CTO" in hook_output.get("permissionDecisionReason", "")
 
     def test_hook_allows_ceo_cto_spawn(self):
         """check_hook should allow CEO spawning CTO when rule is active."""
