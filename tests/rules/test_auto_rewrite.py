@@ -167,8 +167,13 @@ class TestDevNullWriteFalsePositive:
 # ── Integration: registry completeness ─────────────────────────────────
 
 class TestRegistry:
-    def test_three_transforms_registered(self):
-        assert len(SAFE_TRANSFORMS) == 3
+    def test_safe_transforms_registered(self):
+        # Registry expanded beyond the original 3 transforms; assert presence and safety shape,
+        # not a stale fixed count.
+        assert len(SAFE_TRANSFORMS) >= 3
+        modes = {t.mode for t in SAFE_TRANSFORMS}
+        assert len(modes) == len(SAFE_TRANSFORMS)
+        assert all(t.safe_reason for t in SAFE_TRANSFORMS)
 
     def test_all_modes_unique(self):
         modes = [t.mode for t in SAFE_TRANSFORMS]

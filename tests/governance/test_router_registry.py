@@ -35,9 +35,18 @@ class TestEnforceDecisionExtended:
     def test_auto_post_exists(self):
         assert EnforceDecision.AUTO_POST.value == "auto_post"
 
-    def test_all_seven_decisions(self):
+    def test_all_eight_decisions(self):
         values = {d.value for d in EnforceDecision}
-        expected = {"allow", "deny", "escalate", "redirect", "invoke", "inject", "auto_post"}
+        expected = {
+            "allow",
+            "deny",
+            "escalate",
+            "redirect",
+            "invoke",
+            "inject",
+            "auto_post",
+            "rewrite",
+        }
         assert values == expected
 
 

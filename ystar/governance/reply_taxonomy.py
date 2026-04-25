@@ -119,9 +119,13 @@ def validate_template(tag: str, reply_text: str) -> Tuple[bool, List[str]]:
                 label_names = ["Y\*", "Xt", "U", "Yt+1", "Rt+1"]
                 errors.append(f"missing_5tuple_label: {label_names[i]}")
 
-        # Require agent_id mention (basic heuristic: name or sub-agent ID pattern)
+        # Require agent_id mention.
+        #
+        # Accept canonical role IDs (eng-*, cto, secretary, etc.), Claude-style
+        # opaque sub-agent IDs, and Bridge Labs staff short names commonly used
+        # in human-facing dispatch receipts (e.g. "派 Maya").
         agent_mention = re.search(
-            r'(eng-\w+|cto|ceo|cmo|cso|cfo|secretary|sub-agent\s+[a-f0-9]{16})',
+            r'(eng-\w+|cto|ceo|cmo|cso|cfo|secretary|sub-agent\s+[a-f0-9]{16}|\b(Maya|Ryan|Leo|Jordan|Ethan|Samantha|Alex|Priya|Carlos|Elena|Aiden)\b)',
             reply_text,
             re.IGNORECASE
         )

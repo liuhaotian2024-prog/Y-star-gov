@@ -1,129 +1,129 @@
 """
-Test ForgetGuard rule: subagent_unauthorized_git_op
+Test ForgetGuard rule: unauthorized_git_write_via_tool
 
-Ensures sub-agents cannot perform git operations without explicit authorization.
-Board Decision Rule (CLAUDE.md): code merges require Board confirmation.
-
-Gap origin: Ryan sub-agent d2852174 committed 53 files uncaught by any rule.
+v0.5 ForgetGuard is structured-only. This test verifies the behavioral
+git-write rule through ForgetGuard.check(), not by inspecting legacy
+pattern/scope fields.
 """
 
-import pytest
-import re
+import tempfile
+import uuid
 import yaml
 from pathlib import Path
 
+from ystar.governance.forget_guard import ForgetGuard
+
+
+RULE_NAME = "unauthorized_git_write_via_tool"
+
 
 def load_rules():
-    """Load ForgetGuard rules from YAML."""
     rules_path = Path(__file__).parent.parent.parent / "ystar" / "governance" / "forget_guard_rules.yaml"
-    with open(rules_path, 'r') as f:
+    with open(rules_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
-    return data['rules']
+    return data["rules"]
 
 
-def test_subagent_git_commit_fires():
-    """Sub-agent 'git commit' should trigger rule."""
-    rules = load_rules()
-    rule = next(r for r in rules if r['name'] == 'subagent_unauthorized_git_op')
-
-    # Simulate Ryan sub-agent running git commit
-    bash_command = 'git commit -m "feat: some feature"'
-    agent_id = 'eng-platform'
-
-    pattern = re.compile(rule['pattern'], re.IGNORECASE)
-    match = pattern.search(bash_command)
-
-    assert match is not None, "Rule pattern must match 'git commit'"
-    assert agent_id in rule['scope']['agent_ids'], f"{agent_id} must be in rule scope"
+def get_rule():
+    return next(r for r in load_rules() if r["name"] == RULE_NAME)
 
 
-def test_ceo_git_status_does_not_fire():
-    """CEO running 'git status' (read-only) should NOT trigger rule."""
-    rules = load_rules()
-    rule = next(r for r in rules if r['name'] == 'subagent_unauthorized_git_op')
-
-    # CEO running read-only git command
-    bash_command = 'git status'
-    agent_id = 'ceo'
-
-    pattern = re.compile(rule['pattern'], re.IGNORECASE)
-    match = pattern.search(bash_command)
-
-    # Pattern shouldn't match 'status' (not in commit|push|add|reset|merge|rebase)
-    assert match is None, "Rule must NOT match 'git status'"
-
-    # Even if matched, CEO is not in scope
-    assert agent_id not in rule['scope']['agent_ids'], "CEO must NOT be in rule scope"
+def make_guard():
+    rules_path = Path(__file__).parent.parent.parent / "ystar" / "governance" / "forget_guard_rules.yaml"
+    deny_history_path = Path(tempfile.gettempdir()) / f".ystar_fg_git_rule_test_{uuid.uuid4().hex}.json"
+    return ForgetGuard(rules_path=rules_path, deny_history_path=str(deny_history_path))
 
 
-def test_subagent_explicit_authorization_bypass():
-    """Sub-agent task with 'you may commit' annotation should be allowed (future)."""
-    rules = load_rules()
-    rule = next(r for r in rules if r['name'] == 'subagent_unauthorized_git_op')
+def test_git_commit_fires():
+    """git commit through tool layer should trigger rule."""
+    guard = make_guard()
+    result = guard.check({
+        "tool_name": "Bash",
+        "command": 'git commit -m "feat: some feature"',
+        "agent_id": "eng-platform",
+    })
 
-    # This test documents future extension: task metadata contains authorization token
-    # Current rule (v1) always warns; v2 should check task deliverable for token
-    bash_command = 'git commit -m "authorized change"'
-    agent_id = 'eng-governance'
-    task_metadata = {'explicit_git_authorization': True}  # Future extension
+    assert result is not None
+    assert result["rule_name"] == RULE_NAME
+    assert result["mode"] == "deny"
 
-    pattern = re.compile(rule['pattern'], re.IGNORECASE)
-    match = pattern.search(bash_command)
 
-    assert match is not None, "Pattern matches but should check authorization token"
-    # v2 rule should check task_metadata['explicit_git_authorization'] before warning
-    # For now, rule always fires (warn mode during dry_run period)
+def test_git_status_does_not_fire():
+    """git status is read-only and should not trigger rule."""
+    guard = make_guard()
+    result = guard.check({
+        "tool_name": "Bash",
+        "command": "git status",
+        "agent_id": "ceo",
+    })
+
+    assert result is None
+
+
+def test_rule_is_structured_only():
+    """Rule must remain v0.5 structured-only, with no legacy pattern/scope."""
+    rule = get_rule()
+
+    assert rule["type"] == "structured"
+    assert "conditions" in rule
+    assert "pattern" not in rule
+    assert "scope" not in rule
 
 
 def test_non_git_bash_does_not_fire():
-    """Sub-agent running non-git Bash commands should NOT trigger rule."""
-    rules = load_rules()
-    rule = next(r for r in rules if r['name'] == 'subagent_unauthorized_git_op')
+    """Non-git Bash commands should not trigger rule."""
+    guard = make_guard()
+    result = guard.check({
+        "tool_name": "Bash",
+        "command": "python -m pytest tests/",
+        "agent_id": "eng-kernel",
+    })
 
-    # Sub-agent running pytest
-    bash_command = 'python -m pytest tests/'
-    agent_id = 'eng-kernel'
-
-    pattern = re.compile(rule['pattern'], re.IGNORECASE)
-    match = pattern.search(bash_command)
-
-    assert match is None, "Rule must NOT match non-git Bash commands"
+    assert result is None
 
 
-def test_all_destructive_git_ops_covered():
-    """Rule pattern must cover all destructive git operations."""
-    rules = load_rules()
-    rule = next(r for r in rules if r['name'] == 'subagent_unauthorized_git_op')
-    pattern = re.compile(rule['pattern'], re.IGNORECASE)
+def test_all_git_write_ops_covered():
+    """Structured rule must cover common git write operations."""
+    guard = make_guard()
 
-    destructive_ops = [
+    write_ops = [
         'git commit -m "test"',
-        'git push origin main',
-        'git add .',
-        'git reset --hard HEAD',
-        'git merge feature-branch',
-        'git rebase main',
+        "git push origin main",
+        "git add .",
+        "git reset --hard HEAD",
+        "git merge feature-branch",
+        "git rebase main",
+        "git tag v1",
+        "git cherry-pick abc123",
+        "git revert abc123",
     ]
 
-    for cmd in destructive_ops:
-        match = pattern.search(cmd)
-        assert match is not None, f"Rule must match destructive git op: {cmd}"
+    for cmd in write_ops:
+        result = guard.check({
+            "tool_name": "Bash",
+            "command": cmd,
+            "agent_id": "eng-platform",
+        })
+        assert result is not None, f"Rule must match git write op: {cmd}"
+        assert result["rule_name"] == RULE_NAME
 
 
 def test_read_only_git_ops_not_covered():
-    """Rule pattern must NOT cover read-only git operations."""
-    rules = load_rules()
-    rule = next(r for r in rules if r['name'] == 'subagent_unauthorized_git_op')
-    pattern = re.compile(rule['pattern'], re.IGNORECASE)
+    """Structured rule must not cover read-only git operations."""
+    guard = make_guard()
 
     read_only_ops = [
-        'git status',
-        'git log --oneline',
-        'git diff HEAD',
-        'git show d2852174',
-        'git branch -a',
+        "git status",
+        "git log --oneline",
+        "git diff HEAD",
+        "git show d2852174",
+        "git branch -a",
     ]
 
     for cmd in read_only_ops:
-        match = pattern.search(cmd)
-        assert match is None, f"Rule must NOT match read-only git op: {cmd}"
+        result = guard.check({
+            "tool_name": "Bash",
+            "command": cmd,
+            "agent_id": "eng-platform",
+        })
+        assert result is None, f"Rule must NOT match read-only git op: {cmd}"
