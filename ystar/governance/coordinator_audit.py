@@ -237,36 +237,38 @@ def is_dispatch_receipt(reply_text: str, agent_id: str = "ceo") -> tuple[bool, s
 
 def _label_present(label: str, text: str) -> bool:
     """
-    Robust label detection handling markdown bold + asterisk collision.
+    Strict structural label detection for CZL 5-tuple replies.
 
-    Adopted from kernel/czl_protocol.py:89 dual-substring pattern.
-    Fixes Y* false negatives when markdown bold escapes asterisk.
-
-    Args:
-        label: One of "Y*", "Xt", "U", "Yt+1", "Rt+1"
-        text: Reply text to search
-
-    Returns:
-        True if label present (with or without escape), False otherwise
-
-    Examples:
-        _label_present("Y*", "**Y***") → True (raw asterisk)
-        _label_present("Y*", "**Y\\***") → True (escaped asterisk)
-        _label_present("Yt+1", "**Yt+1**") → True (literal plus)
-        _label_present("Yt+1", "**Yt\\+1**") → True (escaped plus)
+    Important: this must not treat prose mentions like "missing Xt and U" or
+    "Rt+1=0 was verified" as formal 5-tuple labels. In strict mode, a label
+    is present only when it appears as a markdown-bold section marker such as
+    **Xt** or **Rt+1**.
     """
-    # Handle markdown bold + asterisk collision for Y*
+    import re
+
     if label == "Y*":
-        return ("**Y*" in text) or ("**Y\\*" in text) or ("Y\\*" in text)
+        patterns = [
+            r"\*\*Y\*\*\s*[:=]?",
+            r"\*\*Y\\\*\*\s*[:=]?",
+        ]
+    elif label == "Xt":
+        patterns = [r"\*\*Xt\*\*\s*[:=]?"]
+    elif label == "U":
+        patterns = [r"\*\*U\*\*\s*[:=]?"]
+    elif label == "Yt+1":
+        patterns = [
+            r"\*\*Yt\+1\*\*\s*[:=]?",
+            r"\*\*Yt\\\+1\*\*\s*[:=]?",
+        ]
+    elif label == "Rt+1":
+        patterns = [
+            r"\*\*Rt\+1\*\*\s*[:=]?",
+            r"\*\*Rt\\\+1\*\*\s*[:=]?",
+        ]
+    else:
+        patterns = [rf"\*\*{re.escape(label)}\*\*\s*[:=]?"]
 
-    # Handle plus escape collision for Yt+1, Rt+1
-    if label == "Yt+1":
-        return ("Yt+1" in text) or ("Yt\\+1" in text)
-    if label == "Rt+1":
-        return ("Rt+1" in text) or ("Rt\\+1" in text)
-
-    # Plain labels (Xt, U) — no escape collision
-    return label in text
+    return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
 
 
 def validate_5tuple(reply_text: str, strictness: str = "strict") -> tuple[bool, list[str]]:
@@ -404,7 +406,9 @@ def check_reply_5tuple_compliance(reply_text: str, strictness: str = "strict", a
         "reason": reason,
         "strictness": strictness,
         "missing_labels": missing_labels,
-        "reply_length": len(reply_text)
+        "missing_sections": missing_labels,  # backward-compatible alias
+        "reply_length": len(reply_text),
+        "char_count": len(reply_text),       # backward-compatible alias
     }
 
 

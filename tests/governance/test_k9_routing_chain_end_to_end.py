@@ -183,10 +183,15 @@ def start_subscriber_daemon() -> int:
     Returns:
         int: PID of daemon process
     """
+    env = os.environ.copy()
+    env["YSTAR_COMPANY_ROOT"] = str(COMPANY_ROOT)
+    env["YSTAR_CIEU_DB"] = str(CIEU_DB)
+
     proc = subprocess.Popen(
         [sys.executable, str(SUBSCRIBER_SCRIPT), "start"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        env=env,
     )
 
     # Wait for PID file to appear
