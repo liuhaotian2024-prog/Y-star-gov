@@ -1,511 +1,198 @@
-# ForgetGuard Rules Schema v0.42
-# Detects agents forgetting organizational principles/hierarchy/constraints after session restart
+# ForgetGuard Rules — Schema v0.5 (Behavioral Governance, post-purge 2026-04-25)
+#
+# ============================================================================
+# DESIGN PRINCIPLE: This file enforces ACTIONS, not WORDS.
+# ============================================================================
+#
+# Every rule below uses STRUCTURED CONDITIONS over typed event fields.
+# Keyword/regex matching against payload text is structurally forbidden —
+# the loader (forget_guard.py) raises ForgetGuardSchemaError on startup if
+# any rule contains a `pattern:` field or omits `type: structured`.
+#
+# Why this is enforced structurally:
+#   v0.42 used keyword bag-of-words matching at 60% threshold. Rules like
+#   `pattern: "ceo task eng-"` triggered on ANY content containing those
+#   words, including agents writing role-architecture documents or
+#   discussing the dispatch process. 31 of 35 rules in v0.42 had this
+#   defect. Repeated cleanup attempts kept failing because under cognitive
+#   pressure, contributors (human and AI) regrew keyword blacklists at the
+#   first sign of a new failure — they could not keep "speech ≠ behavior"
+#   in working memory while debugging.
+#
+#   The fix is mechanical: the engine refuses to load keyword rules. You
+#   cannot regrow what the parser will not accept.
+#
+# ============================================================================
+# WHAT BELONGS HERE vs WHAT BELONGS ELSEWHERE
+# ============================================================================
+#
+# BELONGS HERE (runtime hook, structured conditions):
+#   - "Sub-agent attempts git push" → check tool_name + agent_role + parsed
+#     command tokens. NOT by grepping for "git push" in any text.
+#   - "Sub-agent receipt has tool_uses count diverging from metadata" →
+#     check structured numeric fields claimed_tool_uses vs
+#     actual_tool_uses_from_metadata. NOT by regex on receipt text.
+#   - "File written outside agent's allowed write scope" → check path against
+#     allowlist. NOT by reading file contents.
+#
+# BELONGS ELSEWHERE (NOT in this file):
+#   - "Reply contains forbidden phrasing" → semantic audit, not runtime hook.
+#   - "Document discusses governance changes" → human review, not auto-block.
+#   - "Agent expressed intent to defer" → that is a thought, not an action.
+#     Thoughts are not governable in this layer.
+#   - "Receipt missing required structural section" → schema validator on
+#     the parsed receipt object, not text grep on the rendered text.
+#
+# ============================================================================
+# CONDITION GRAMMAR (forget_guard.py _check_one_condition)
+# ============================================================================
+#
+#   <field>: value                    →  context[field] == value
+#   <field>_in: [v1, v2, ...]         →  context[field] in list
+#   <field>_under_any: [p1, p2, ...]  →  context[field].startswith(any prefix)
+#   has_field: name                   →  context[name] is non-empty
+#   command_parsed_first_token: x     →  shlex.split(command)[0] == x
+#   command_parsed_subcommand_in: [.] →  shlex.split(command)[1] in list
+#   mismatch_metric: <python_expr>    →  eval expr on context (safe builtins)
+#   check: <named_check>              →  call _NAMED_CHECKS[name](context)
+#   grace_window_minutes: N           →  advisory metadata only (always True)
+#
+# All conditions in a rule's `conditions:` dict must hold (AND).
+#
+# ============================================================================
 
 rules:
-  - name: ceo_direct_engineer_dispatch
-    pattern: "ceo task eng-"
+  # =====================================================================
+  # Rule 1: Unauthorized git write operations through tool layer
+  # =====================================================================
+  # Intent: All git write operations (commit/push/reset/merge/rebase/...)
+  #         should go through the human or top-level coordinator, not be
+  #         executed directly via the agent tool layer. This preserves a
+  #         single committer for repo state and prevents uncoordinated
+  #         history mutation by sub-agents.
+  #
+  # Trigger: bash_command tool call where the command, when shell-parsed,
+  #          starts with `git <write-subcommand>`. The fact that the
+  #          command goes through the agent tool layer (Bash tool) is itself
+  #          the signal — humans run git directly in shell, not through this
+  #          hook path.
+  #
+  # NOT triggered:
+  #   - Agent writing markdown that mentions git push (speech)
+  #   - Agent reading git status / git log / git diff (read operations)
+  #   - Human running git commands in their own shell (does not go through
+  #     this hook)
+  #   - Agent pasting a code example that contains "git commit"
+  #
+  # Note on agent identity: this rule does NOT depend on agent_id or
+  # agent_role for triggering. The hook layer's identity tracking is
+  # imperfect (active_agent marker file races between concurrent sub-agents),
+  # so depending on it would create false negatives. Tool-level activity is
+  # the reliable signal.
+  - name: unauthorized_git_write_via_tool
+    type: structured
+    conditions:
+      tool_name_in: [bash_command, Bash, bash]
+      command_parsed_first_token: git
+      command_parsed_subcommand_in:
+        - commit
+        - push
+        - add
+        - reset
+        - merge
+        - rebase
+        - tag
+        - cherry-pick
+        - revert
+        - "push --force"
     mode: deny
-    message: "CEO直接派代码任务给工程师。按第三条（hierarchy discipline），必须经CTO分工。"
-    rationale: "AGENTS.md Article 3 — CEO coordinates C-suite, CTO manages engineers. Direct CEO→engineer dispatch bypasses technical leadership and breaks delegation chain."
-    dry_run_until: null  # null = immediately enforce; set to Unix timestamp for grace period
-    created_at: "2026-04-13T16:30:00Z"
+    message: |
+      Git write operation via tool layer denied. Sub-agents must produce
+      receipts and let the human or coordinator commit. Use a return-receipt
+      describing the file changes; do not run git write commands through
+      the agent tool path.
+    rationale: |
+      AGENTS.md hierarchy discipline: sub-agents do not own repo history.
+      Single committer prevents conflicting concurrent mutations and preserves
+      audit chain integrity. This is a behavioral rule (matches actual command
+      execution at the tool layer), not a speech rule (does not block any
+      discussion of git in markdown, comments, or strings).
+    created_at: "2026-04-25T07:40:00Z"
 
-  - name: ceo_skip_gov_dispatch
-    pattern: "(?i)(agent.*eng-|dispatch.*eng-|spawn.*eng-)(?!.*DISPATCH:)"
-    mode: deny
-    message: "CEO派工程任务缺失 gov_dispatch token。必须先调用 gov_dispatch MCP tool 获取 token，再在 Agent prompt 里包含 [DISPATCH:token]。"
-    rationale: "WORKING_STYLE.md 第十二条 + .claude/agents/ceo.md Dispatch Gate Protocol — 防止 CEO 绕过 CTO 审批直接派代码任务。所有工程 dispatch 必须经 gov_dispatch MCP 工具生成 token。"
-    dry_run_until: null
-    created_at: "2026-04-15T14:00:00Z"
-
-  - name: task_dispatch_without_y_star
-    pattern: "(?i)\\b(task|dispatch|mission|directive)\\s*[:\\-](?!.*(Y\\*|Y\\s*\\*|理想契约))"
-    mode: deny
-    message: "任务 dispatch 缺失 CIEU 5-tuple (Y*/Xt/U/Yt+1/Rt+1)。按 WORKING_STYLE.md 第十二条，所有任务必须包含 Y* 理想契约定义。"
-    rationale: "WORKING_STYLE.md 第十二条 CIEU 任务工作法 + Board Iron Rule 1.6 — 防止 agent 绕过 5-tuple 格式回到'印象驱动执行'。Y* 缺失 = 无验证标准 = 不可审计。"
-    dry_run_until: 1744750800  # 2026-04-22 00:00:00 UTC — 7-day grace period for ecosystem adaptation
-    created_at: "2026-04-15T14:00:00Z"
-
-  - name: defer_language
-    pattern: "(?i)(明日|tomorrow morning|等会儿|晚些|以后再|改天|明晚|tomorrow|queued for|next session|明早|wait for|稍后|later|下周|next week)"
-    mode: deny
-    message: "Defer language detected. Only explicit Board 'stop' / '收工' permits deferral. Otherwise execute now, spawn sub-agent (Article 11), or ask Board explicitly."
-    rationale: "feedback_no_clock_out.md — Unilateral deferral violates autonomous operation principle. Board expects work to continue until explicit stop signal."
-    dry_run_until: null
-    created_at: "2026-04-15T20:00:00Z"
-
-  - name: choice_question_to_board
-    pattern: "(?i)(Option A|Option B|请选择|1\\)|2\\)|3\\)|方案一|方案二)"
-    mode: deny
-    message: "Choice questions to Board are PROHIBITED. CEO must make unilateral decisions and execute. Board will override if wrong."
-    rationale: "CLAUDE.md 硬约束 + AGENTS.md CEO role — Choice questions block autonomous operation. Unattended systems cannot answer 'pick 1/2/3' questions."
-    dry_run_until: null
-    created_at: "2026-04-15T20:00:00Z"
-
-  - name: defer_language_in_commit_msg
-    pattern: "(?i)git commit.*(-m|--message).*['\"].*?(明日|tomorrow morning|等会儿|晚些|以后再|改天|明晚|明早|tomorrow|next session|queued for|wait for|稍后|later|下周|next week)"
-    mode: deny
-    message: "禁止在 commit message 中使用 defer 语义词汇。Commit 表示'已完成落盘'，与'明日/queued/稍后'语义冲突。"
-    rationale: "feedback_no_clock_out.md — Commit messages must reflect actual completion state [LX], not future intent."
-    dry_run_until: null
-
-  - name: enforcement_gap_persistent
-    pattern: "(?i)(enforcement.*gap|gap.*enforcement|rule.*not.*enforced|violation.*recur)"
+  # =====================================================================
+  # Rule 2: Sub-agent receipt tool_uses count diverges from metadata
+  # =====================================================================
+  # Intent: When a sub-agent returns a receipt self-reporting "tool_uses: N"
+  #         and the actual count from MCP/Agent metadata is M, large
+  #         |N - M| indicates either fabrication (over-claim) or omission
+  #         (under-claim). Both undermine receipt-honesty. This rule fires
+  #         on the structured numeric difference, not on receipt text.
+  #
+  # Trigger: sub_agent_return event where both claimed_tool_uses and
+  #          actual_tool_uses_from_metadata are present and differ by >= 2.
+  #
+  # NOT triggered:
+  #   - Agent writing a doc that mentions tool_uses
+  #   - Agent quoting prior tool_uses values
+  #   - Sub-agent return without numeric tool_uses fields (caller must
+  #     provide both for this rule to evaluate)
+  #
+  # Note: severity tier (warn vs deny) is handled at the caller layer based
+  #       on percentage drift; this rule simply flags the structural
+  #       mismatch. Caller can downgrade to warn for small diffs.
+  - name: subagent_receipt_tool_uses_mismatch
+    type: structured
+    conditions:
+      event_type: sub_agent_return
+      has_field: claimed_tool_uses
+      mismatch_metric: "abs((claimed_tool_uses or 0) - (actual_tool_uses_from_metadata or 0)) >= 2"
     mode: warn
-    message: "Enforcement gap detected in ≥2 consecutive observer scans. Auto-Enforcement Meta-Observer recommends runtime ForgetGuard rule creation."
-    rationale: "governance/auto_enforce_meta.md C1 recurrence criterion — Persistent enforcement gaps with ≥3 criteria met should trigger automated ForgetGuard rule generation (warn mode, review before deny)."
-    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h observation period (AI 1 day ≈ human 1 year)
-    dry_run_rationale: "AI iteration cycle: 1 day = ~1 year human time. 48h is the human-equivalent of ~year-long observation."
-    created_at: "2026-04-16T08:00:00Z"
-    helper_script: "ystar/governance/enforcement_observer.py::scan_pending_enforcement_candidates"
+    message: |
+      Sub-agent {agent_id} reported tool_uses={claimed} but metadata shows
+      {actual} (diff={diff}). Investigate before trusting the receipt.
+    rationale: |
+      Receipt-honesty is foundational to delegation trust. Discrepancies
+      indicate either fabrication or measurement bug; both warrant inspection.
+      Structural numeric check, not text matching — discussions of tool_uses
+      in documents do not trigger.
+    created_at: "2026-04-25T07:40:00Z"
 
-  - name: defer_language_in_echo
-    pattern: "(?i)echo.*['\"].*?(明日|tomorrow morning|等会儿|晚些|以后再|改天|明晚|明早|tomorrow|next session|queued for|wait for|稍后|later|下周|next week)"
-    mode: deny
-    message: "禁止 echo defer 语义到 Board 可见输出（如 reports/、session_close 等）。Board 期望自主执行，defer 语义违反 autonomous operation 原则。"
-    rationale: "feedback_no_clock_out.md — Output to Board must reflect immediate action or explicit escalation, not unilateral deferral."
-    dry_run_until: null
-    created_at: "2026-04-15T20:00:00Z"
-
-  - name: czl_dispatch_missing_5tuple
-    pattern: "(?i)(Agent.*prompt|dispatch.*sub-agent|spawn.*eng-)"
-    mode: deny
-    message: "CZL Gate 1 violation: dispatch lacks 5-tuple structure (Y*/Xt/U/Yt+1/Rt+1). Call czl_protocol.validate_dispatch() before Agent tool spawn."
-    rationale: "CZL Unified Communication Protocol v1.0 — Gate 1 enforcement prevents impression-driven dispatch. All CEO/CTO → sub-agent tasks must include Y* (verifiable contract), Xt (tool-measured pre-state), U (concrete actions ≤15), Yt+1 (post-state verification), Rt+1 (gap target 0). Ref: ystar/kernel/czl_protocol.py, Board 2026-04-16 Constitutional."
-    dry_run_until: null
-    created_at: "2026-04-16T02:00:00Z"
-    validator: czl_protocol.validate_dispatch
-    validator_kwargs:
-      check_speculation: true
-      max_tool_uses: 15
-
-  - name: czl_receipt_rt_not_zero
-    pattern: "(?i)(sub-agent.*return|receipt.*Rt\\+1|完成.*5-tuple)"
-    mode: deny
-    message: "CZL Gate 2 violation: receipt claims Rt+1=0 but empirical verification failed (artifacts missing or tests failed). Call czl_protocol.validate_receipt() after sub-agent return."
-    rationale: "CZL Unified Communication Protocol v1.0 — Gate 2 enforcement rejects hallucinated success via empirical file checks. Receipt rt_value must match actual artifact existence + test pass counts. Prevents CZL-1 class of zero-tool hallucination. Ref: ystar/kernel/czl_protocol.py validate_receipt(), Board 2026-04-16 Constitutional."
-    dry_run_until: null
-    created_at: "2026-04-16T02:00:00Z"
-    validator: czl_protocol.validate_receipt
-    validator_kwargs:
-      verify_artifacts: true
-      verify_bash_output: true
-
-  - name: realtime_artifact_archival_sla
-    pattern: "(?i)(new file:|created:|wrote:).*\\b(reports/|knowledge/|products/|content/|governance/).*(?!.*ARCHIVE_INDEX)"
+  # =====================================================================
+  # Rule 3: Artifact written to archival scope but not registered in index
+  # =====================================================================
+  # Intent: Files written under reports/, knowledge/, products/, content/,
+  #         governance/ should appear in ARCHIVE_INDEX so they are
+  #         discoverable in subsequent sessions. Loose artifacts get lost
+  #         and waste future tokens re-discovering them.
+  #
+  # Trigger: file_write_committed event where the path falls under archival
+  #          scope AND a named check confirms the path is not yet in
+  #          ARCHIVE_INDEX after a grace window.
+  #
+  # Mode: audit. This is observation only — does not block writes. CEO
+  #        decides whether to register the artifact or explain why ephemeral.
+  #
+  # NOT triggered:
+  #   - Writing a doc that discusses the archival process
+  #   - Writing within the grace window (ephemeral working files)
+  #   - Writing outside archival scope (e.g., scratch dirs, /tmp)
+  - name: archival_artifact_not_indexed
+    type: structured
+    conditions:
+      event_type: file_write_committed
+      path_under_any:
+        - reports/
+        - knowledge/
+        - products/
+        - content/
+        - governance/
+      grace_window_minutes: 30
+      check: file_path_not_in_archive_index
     mode: audit
-    message: "New artifact created in archival scope (reports/knowledge/products/content/governance). Secretary SLA: index in knowledge/ARCHIVE_INDEX.md ≤30 min + emit ARTIFACT_ARCHIVED. Automated scan: scripts/archive_sla_scan.py (cron)."
-    rationale: "agents/Secretary.md §CZL duties item 6 — real-time artifact archival SLA. Automated enforcement via cron + CIEU breach emission prevents knowledge drift from passive forgetting."
-    dry_run_until: null
-    created_at: "2026-04-16T06:00:00Z"
-
-  - name: ceo_deferred_dispatch_promise_orphan
-    pattern: "(?i)(下波派|后续调起|next round (spawn|dispatch)|next dispatch via|等.{1,8}完成.{1,8}(派|spawn|调起))"
-    mode: warn
-    message: "CEO/CTO deferred-dispatch promise without same-reply Agent call. Forbidden: '下波派 X', 'next round spawn Y', '后续调起 Z' as tail promises. FIX: (1) Spawn NOW if ready, (2) Create .claude/tasks/ card (no verbal promise), (3) WORLD_STATE.md backlog (no '下波' language). Constitutional: Unified Work Protocol Article 2.3 — '反 pattern: 推别的 / 推下一个 / 换到 / defer'."
-    rationale: "Board 2026-04-16 P0 forensic (reports/cto/ceo_deferred_dispatch_root_cause_20260416.md) — CEO exhibits systematic promise hypocrisy (≥3 violations today, 100% orphan rate). Root cause: reply-tail attention dropout + Chinese passive voice + cognitive load overflow. Structural fix: deny future-tense dispatch promises, enforce same-reply execution or explicit backlog."
-    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h pending tier-routing migration completion
-    dry_run_rationale: "CZL-77 requires tier-routing context propagation for accurate session_recent_actions tracking. Until shipped, rule runs in warn mode (audit-only) to collect violation patterns without blocking CEO workflow. Auto-upgrade to deny mode after 48h (AI 1 day ≈ human 1 year observation cycle)."
-    created_at: "2026-04-16T10:00:00Z"
-    helper_script: "ystar/governance/coordinator_audit.py::check_deferred_dispatch_orphan"
-
-  - name: coordinator_summary_rt_audit
-    pattern: "(?i)(收敛|complete|全部\\s*done|wave\\s*.*shipped|全部\\s*verified|all\\s+green|fully\\s+resolved|landing\\s+complete|所有.*完成)"
-    mode: warn
-    message: "CZL Meta-Gate violation: coordinator (CEO/CTO) claimed closure (detected phrase: '{claim_phrase}') while {pending_count} unjustified pending tasks exist (IDs: {unjustified_pending_ids}). Call coordinator_audit.check_summary_rt_drift() before summary reply."
-    rationale: "Board 2026-04-16 meta-fix — Gate 2 only validated per-receipt Rt+1, not coordinator-level summaries. CEO wrote 'wave 完整收敛' while TaskList held 12+ pending → undetected drift. Closure claims must have actual Rt+1=0 (zero unjustified pending). Coordinator replies require same rigor as sub-agent receipts. Ref: ystar/governance/coordinator_audit.py, CZL Unified Communication Protocol v1.0."
-    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h warn-only observation (AI 1 day ≈ human 1 year)
-    dry_run_rationale: "AI iteration cycle: 1 day = ~1 year human time. 48h is the human-equivalent of ~year-long observation."
-    created_at: "2026-04-16T07:00:00Z"
-    helper_script: "ystar/governance/coordinator_audit.py::check_summary_rt_drift"
-
-  - name: subagent_tool_uses_claim_mismatch
-    pattern: "(?i)tool[_ -]?(uses?|calls?)\\s*[:：]\\s*(\\d+)"
-    mode: warn
-    message: "Sub-agent receipt tool_uses claim does not match metadata (diff ≥2). Call claim_mismatch.detect_tool_uses_mismatch() to validate. Examples: sub-agent C3 (claim 13, metadata 38), sub-agent C2 (claim 14, metadata 24), sub-agent B3 (claim 9, metadata 22), sub-agent #CZL-1 (claim 9, metadata 0). Severity: hallucination (claim > actual), omission (claim < actual), zero_tool_hallucination (claim > 0, actual = 0)."
-    rationale: "E1 priority enforcement (Board 2026-04-16) — Sub-agent receipt must honestly reflect tool_uses count. Drift ≥2 indicates either hallucinated completion (claim > actual) or omitted work acknowledgment (claim < actual). CZL-1 zero-tool hallucination class = most severe. Ref: ystar/governance/claim_mismatch.py detect_tool_uses_mismatch()."
-    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h grace for ecosystem adaptation (AI 1 day ≈ human 1 year)
-    dry_run_rationale: "AI iteration cycle: 1 day = ~1 year human time. 48h is the human-equivalent of ~year-long observation."
-    created_at: "2026-04-16T11:00:00Z"
-
-  - name: charter_drift_mid_session
-    pattern: "(?i)(AGENTS\\.md|CLAUDE\\.md|governance/.*\\.md|\\.claude/agents/.*\\.md)"
-    mode: warn
-    message: "Charter file modified mid-session detected. File mtime > session_start_ts indicates silent constitutional drift risk. Call charter_drift.detect_charter_drift() to enumerate drifted files + emit CIEU CHARTER_DRIFT_DETECTED per file with mtime delta + git diff --stat. Recommendation: hot-reload modified files or schedule session restart to re-ingest charter changes."
-    rationale: "I1 Priority (Board 2026-04-16 K9-RT Discussion) — Mid-session charter changes create silent context drift. Agent continues operating under stale constitutional constraints while charter evolves. Detection enables: (1) hot-reload warning to Board, (2) CIEU audit trail for governance forensics, (3) graceful session restart trigger. Reference charter scope: AGENTS.md, CLAUDE.md, governance/*.md, .claude/agents/*.md. Ref: ystar/governance/charter_drift.py detect_charter_drift()."
-    dry_run_until: null  # Immediate enforcement (warn only, non-blocking)
-    created_at: "2026-04-16T15:00:00Z"
-    validator: charter_drift.detect_charter_drift
-    validator_kwargs:
-      session_start_ts: auto  # Daemon reads from .ystar_session.json["session_start_time"]
-    validator: claim_mismatch.detect_tool_uses_mismatch
-    validator_kwargs:
-      # validator receives (receipt_text, metadata_tool_uses) from harness
-      # returns dict {claimed, actual, diff, severity} or None
-
-  - name: wave_scope_undeclared
-    pattern: "(?i)(wave|本批|本轮).*?(收敛|complete|全部\\s*done|shipped|verified|all\\s+green|fully\\s+resolved|landing\\s+complete|所有.*完成)"
-    mode: warn
-    message: "Wave/batch closure claim lacks explicit TaskID scope declaration. Detected wave-language ('{wave_term}') + closure-language ('{closure_term}') but no TaskID list (missing pattern: '#\\d+' or 'task[_\\s]?id'). Call coordinator_audit.check_wave_scope_declared() before wave-level summary reply."
-    rationale: "Board 2026-04-16 batch drift fix — Prose wave closure (e.g., 'wave shipped') without explicit TaskID enumeration creates ambiguous scope. Sub-agents cannot verify which tasks are actually claimed complete. Requires explicit '#123, #124, #125' or equivalent task_id list in same paragraph as closure claim. Extension to coordinator_summary_rt_audit pattern."
-    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h observation period (AI 1 day ≈ human 1 year)
-    dry_run_rationale: "AI iteration cycle: 1 day = ~1 year human time. 48h is the human-equivalent of ~year-long observation."
-    created_at: "2026-04-16T20:00:00Z"
-    helper_script: "ystar/governance/coordinator_audit.py::check_wave_scope_declared"
-
-  - name: subagent_unauthorized_git_op
-    pattern: "git\\s+(commit|push|add|reset|merge|rebase)"
-    mode: warn
-    message: "Sub-agent (agent_id={agent_id}) attempted git operation: '{matched_command}'. Board Decision Rule (CLAUDE.md): code merges require Board confirmation. Sub-agents must not perform git operations unless deliverable explicitly authorizes. CEO/CTO are accountable for git op authorization."
-    rationale: "Board 2026-04-16 K9 forensic trace — A sub-agent (d2852174) committed 53 files uncaught. Existing rules only checked commit message content, not actor × command matrix. Sub-agents performing git ops without explicit authorization violates Board Decision Rule: 'All external releases, code merges, and actual payments require manual confirmation.' This rule enforces actor-level constraint: only CEO/CTO may perform git operations unless sub-agent task deliverable contains explicit 'you may commit' token."
-    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h grace period for explicit authorization pattern adoption
-    dry_run_rationale: "AI iteration cycle: 1 day = ~1 year human time. 48h allows ecosystem to adopt explicit authorization tokens in task deliverables before deny enforcement."
-    created_at: "2026-04-16T16:00:00Z"
-    scope:
-      agent_ids:
-        - eng-platform
-        - eng-kernel
-        - eng-governance
-        - eng-domains
-        - secretary
-        - ethan-cto
-        - sofia-cmo
-        - zara-cso
-        - marco-cfo
-
-  - name: ceo_dispatch_missing_self_check
-    pattern: "(?i)(Agent.*tool|spawn.*sub-?agent|dispatch.*eng-|dispatch.*ethan|dispatch.*sofia|dispatch.*zara|dispatch.*marco)"
-    mode: warn
-    message: "CEO Agent tool dispatch missing Self-Check 3-question markers. Before dispatching sub-agent, CEO must validate: (1) ≤1 deliverable? (2) ≤15 tool_uses? (3) context complete (file paths, deps, Rt+1 definition)? Pattern should include 'Self-Check' / 'self_check' / 3-question structure in same reply as Agent call."
-    rationale: "Universal audit Q1 priority enforcement (Board 2026-04-16) — CEO dispatch without self-check risks multi-task disguise (sub-agent #5 a8dd03b6, 6 tasks → 0 ship) + race dispatch (sub-agent #5 a0af160b, redundant commit). Recipe: governance/ceo_dispatch_self_check.md requires CEO validate 3 criteria before Agent tool. Detection: Agent call by ceo agent_id without 'self-check' keyword or 3-question markers in surrounding text."
-    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h observation period (AI 1 day ≈ human 1 year)
-    dry_run_rationale: "AI iteration cycle: 1 day = ~1 year human time. 48h allows ecosystem to adopt explicit self-check pattern before escalation."
-    created_at: "2026-04-16T23:00:00Z"
-    scope:
-      agent_ids:
-        - ceo
-    recipe_doc: "governance/ceo_dispatch_self_check.md"
-
-  - name: defer_disguised_as_schedule
-    pattern: "(?i)(明天|tomorrow|稍后|later|next\\s+session|wait\\s+for|稍候|改天|晚些|下周|next\\s+week).*?\\b(再|will|then|later|等)\\b"
-    mode: warn
-    message: "Detected time-word + shirk-verb combo (defer disguised as schedule). Pattern: '{matched_phrase}'. Per MEMORY feedback_defer_vs_schedule_distinction, time words alone are OK (e.g., '明天09:00 cron run'), but time+shirk combo = forbidden defer. CEO/CTO must execute now, spawn sub-agent, or escalate to Board — not unilaterally defer."
-    rationale: "Universal audit Q6 priority enforcement (Board 2026-04-16) — MEMORY rule 'defer ≠ schedule' had no automated detector. Time-only phrases ('明天09:00', 'tomorrow morning') pass as legitimate schedule; time+shirk combos ('明天再做', 'later will handle') violate autonomous operation principle. Rule disambiguates feedback_no_clock_out (blanket defer ban) from legitimate scheduling."
-    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h observation period (AI 1 day ≈ human 1 year)
-    dry_run_rationale: "AI iteration cycle: 1 day = ~1 year human time. 48h allows agents to learn time-only vs time+shirk distinction."
-    created_at: "2026-04-16T23:00:00Z"
-    scope:
-      agent_ids:
-        - ceo
-        - ethan-cto
-
-  - name: methodology_hardcoded_cadence
-    pattern: "(?i)\\b(weekly|monthly|quarterly|sprint|biweekly|fortnight|annual|24h|workday|每周|每月|每季|每天|Week\\s*\\d+)\\b"
-    mode: warn
-    message: "Methodology contains hardcoded calendar cycle: '{matched_phrase}'. Per MEMORY feedback_methodology_no_human_time_grain, methodology/dispatch/receipt must use dependency-sequence + event-trigger language ONLY. Forbidden: weekly, monthly, quarterly, sprint, biweekly, fortnight, annual, 24h, workday, 每周, 每月, 每季, 每天, Week N. Required: 'after N atomic completions', 'after Board directive', 'when X event occurs', 'triggered by Y'. Call coordinator_audit.check_hardcoded_cadence() before methodology/dispatch/receipt finalization."
-    rationale: "Board 2026-04-16 sharpened methodology constraint — 0 hardcoded human time-grain cycles permitted. Today CZL-69 (weekly ritual), CZL-72 (5pt-week), CZL-74 (6h estimate), CZL-76 (Week 1-4 timeline) leaked calendar cycles because no automated detector existed. Structural fix: ForgetGuard rule blocks time-grain regardless of justification. Methodology must use dependency-sequence (after N atomic completions) + event-trigger (when OmissionEngine fires) language exclusively. Ref: ystar/governance/coordinator_audit.py check_hardcoded_cadence(), MEMORY feedback_methodology_no_human_time_grain."
-    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h observation period (AI 1 day ≈ human 1 year, auto-promote to deny)
-    dry_run_rationale: "AI iteration cycle: 1 day = ~1 year human time. 48h is the human-equivalent of ~year-long observation. Auto-promote to deny after dry_run_until expiry."
-    created_at: "2026-04-17T00:00:00Z"
-    helper_script: "ystar/governance/coordinator_audit.py::check_hardcoded_cadence"
-
-  # ── Threshold-Tuned Rules (CZL-103 Cross-Validation) ───────────────
-
-  - name: phantom_variable
-    pattern: "^(?!.*(comment|doc|#)).*\\b(phantom|undefined)\\s*="
-    mode: warn
-    message: "Phantom variable assignment detected in file_write/bash_command context: '{matched_phrase}'. Potential uninitialized variable or AST-level binding error. Rule demoted to warn per CZL-103 cross-validation (98% FP rate in broad pattern). Tightened scope: file_write/bash_command only, AST-level assignment pattern, excludes comments/docs."
-    rationale: "CZL-103 empirical cross-validation (2026-04-16) — Original phantom_variable detector had 98% FP rate (489 total, 10 TP, 479 FP) due to overly broad pattern triggering on prose 'phantom' keyword in docs/comments. TUNING: (1) Narrow scope to file_write + bash_command contexts only (exclude file_read/external_observation), (2) Refine pattern to AST-level assignment (e.g., 'x = phantom_value'), (3) Demote deny→warn until pattern refined. 7-day corpus analysis: deny precision 2% unacceptable, warn mode until ≥80% TP rate achieved."
-    dry_run_until: 1776672000  # 2026-04-20T08:00:00Z — 72h warn-mode observation, promote to deny if TP rate ≥80%
-    dry_run_rationale: "72h warn mode (AI 1.5 day ≈ human 1.5 year) allows pattern validation via production corpus. Auto-promote to deny after 72h if TP rate ≥80% in next cross-validation scan."
-    created_at: "2026-04-16T20:00:00Z"
-    scope:
-      action_types: [file_write, bash_command]
-    tuning_decision: "Demote deny→warn + narrow scope (file_write/bash_command only) + tighten pattern (AST assignment, exclude comments/docs). 98% FP rate → target ≤20% FP after tuning."
-    cross_validation_report: "reports/governance/enforcement_threshold_cross_validation_20260416.md"
-
-  - name: root_cause_fix_required
-    pattern: "(?i)\\b(fix|patch|workaround)\\b.*\\b(kernel/|governance/)\\b"
-    mode: deny
-    message: "Root cause fix required: detected fix/patch/workaround in high-severity scope (kernel/ or governance/). Recurrence threshold: ≥2 occurrences in 48h window. Per CZL-103 tuning, severity-based enforcement: kernel/governance=deny, tests/docs=warn, content=info."
-    rationale: "CZL-103 empirical cross-validation (2026-04-16) — Original root_cause_fix_required had 87% FP rate (203 total, 27 TP, 176 FP) due to lack of severity classification. TUNING: (1) Add recurrence_threshold=2 (must appear ≥2 times in 48h to escalate to deny), (2) Add severity_map: kernel/governance=deny, tests=warn, docs/content=info. 7-day corpus: 87% warning/warn → 13% actually need deny enforcement. Threshold now context-aware to reduce false positives while maintaining high-severity coverage."
-    dry_run_until: null  # Immediate enforcement with recurrence_threshold=2
-    created_at: "2026-04-16T20:00:00Z"
-    recurrence_threshold: 2  # Must appear ≥2 times in 48h to escalate to deny
-    severity_map:
-      kernel/: deny
-      governance/: deny
-      tests/: warn
-      docs/: info
-      content/: info
-    tuning_decision: "Add recurrence_threshold=2 + severity_map (kernel/governance=deny, tests/docs=warn/info). 87% FP rate → target ≤20% FP via context-aware severity routing."
-    cross_validation_report: "reports/governance/enforcement_threshold_cross_validation_20260416.md"
-
-  - name: document_requires_execution_plan
-    pattern: "(?i)\\.md.*\\b(will|plan to|TODO|next step|action item)\\b"
-    mode: deny
-    message: "Document contains execution plan language but may lack actionable follow-up: '{matched_phrase}'. Per CZL-103 tuning, exempt paths: reports/autonomous/, knowledge/archive/, memory/, reports/drift_hourly/. Requires future-tense marker ('will', 'plan to', 'TODO') in doc content to trigger."
-    rationale: "CZL-103 empirical cross-validation (2026-04-16) — Original document_requires_execution_plan had 59% FP rate (85 total, 35 TP, 50 FP) due to triggering on all .md creation without context. TUNING: (1) Exempt archive/reference paths (reports/autonomous/, knowledge/archive/, memory/, reports/drift_hourly/), (2) Require future-tense verbs in content ('will', 'plan to', 'TODO') not just doc creation. 41% TP rate acceptable but needs scope narrowing to reduce warning noise from already-complete execution reports."
-    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h observation period
-    dry_run_rationale: "48h warn mode (AI 1 day ≈ human 1 year) allows pattern validation. Auto-promote to deny after 48h if FP rate drops below 30%."
-    created_at: "2026-04-16T20:00:00Z"
-    exempt_paths:
-      - reports/autonomous/
-      - knowledge/archive/
-      - memory/
-      - reports/drift_hourly/
-    require_future_tense_marker: true  # Must contain "TODO", "will", "plan to" in content
-    tuning_decision: "Exempt archive paths + require future-tense markers. 59% FP rate → target ≤30% FP via scope refinement (planning docs vs completed reports)."
-    cross_validation_report: "reports/governance/enforcement_threshold_cross_validation_20260416.md"
-
-  - name: omission_governance
-    pattern: "(?i)\\b(omission|missed|skipped|forgot|didn't)\\b"
-    mode: warn
-    message: "Omission detected: '{matched_phrase}'. Per CZL-103 tuning, escalate only if ≥3 omissions in 24h window. Current mode: warn. Escalation threshold: 3/24h. Deny threshold: 5/24h (auto-promote after 7-day warn period)."
-    rationale: "CZL-103 empirical cross-validation (2026-04-16) — Original omission_governance had 100% escalate (3,322 violations, 0 deny, 0 warn) creating Board alert fatigue (474/day average). TUNING: (1) Downgrade escalate→warn, (2) Add escalate_threshold=3 (escalate only if ≥3 omissions in 24h window), (3) Add deny_threshold=5 (promote to deny if ≥5 omissions in 24h). 474/day escalations unsustainable → target ~10/day via threshold gating. 7-day warn period before auto-promote to deny for recurring omissions."
-    dry_run_until: 1776844800  # 2026-04-24T08:00:00Z — 7-day warn period (AI 7 day ≈ human 7 year observation cycle)
-    dry_run_rationale: "7-day warn mode (AI 7 day ≈ human 7 year) collects recurrence patterns. Auto-promote recurring omissions (≥5 in 24h) to deny after 7-day baseline."
-    created_at: "2026-04-16T20:00:00Z"
-    escalate_threshold: 3  # Escalate only if ≥3 omissions in 24h window
-    deny_threshold: 5  # Promote to deny if ≥5 omissions in 24h
-    observation_window: 86400  # 24 hours (seconds)
-    tuning_decision: "Downgrade escalate→warn + add threshold gates (escalate ≥3/24h, deny ≥5/24h). 474/day escalation flood → target ~10/day via recurrence filtering."
-    cross_validation_report: "reports/governance/enforcement_threshold_cross_validation_20260416.md"
-
-  - name: intervention_governance
-    pattern: "(?i)\\b(intervene|intervention|override|emergency)\\b"
-    mode: audit
-    message: "Intervention language detected: '{matched_phrase}'. Per CZL-103 cross-validation, rule marked as deprecation candidate (0% deny rate in 7-day corpus: 417 violations, 0 deny, 254 allow, 163 escalate). Mode downgraded to audit-only for 7-day observation window. If deny rate remains 0% after observation, recommend removal per ineffective enforcement criterion."
-    rationale: "CZL-103 empirical cross-validation (2026-04-16) — intervention_governance had 0% deny rate (417 total, 0 deny, 61% allow, 39% escalate) indicating ineffective enforcement. TUNING DECISION: Option A (Deprecate) selected over Option B (Promote escalate→deny) because 61% allow rate suggests pattern too broad. Downgrade to audit mode (informational logging only, no enforcement) for 7-day observation window. If deny rate remains 0% after re-validation, recommend formal deprecation + removal from rule set to reduce governance overhead."
-    dry_run_until: 1776844800  # 2026-04-24T08:00:00Z — 7-day observation window before deprecation decision
-    dry_run_rationale: "7-day audit mode (AI 7 day ≈ human 7 year) collects usage patterns. If deny rate still 0% after observation → formal deprecation recommended to Board."
-    created_at: "2026-04-16T20:00:00Z"
-    deprecation_candidate: true
-    tuning_decision: "Downgrade to audit mode (informational only). 0% deny rate + 61% allow suggests ineffective pattern. 7-day observation window → deprecate if deny rate remains 0%."
-    cross_validation_report: "reports/governance/enforcement_threshold_cross_validation_20260416.md"
-
-  - name: missing_l_tag
-    pattern: "(?i)(完成|done|shipped|delivered|verified|closed|resolved)"
-    mode: deny
-    message: "Maturity tag missing on L3+ completion claim. All work items must include L0-L5 maturity label per feedback_status_maturity_taxonomy.md. Detected completion phrase: '{claim_phrase}' without [L3], [L4], or [L5] tag."
-    rationale: "Universal audit Q5 priority enforcement (Board 2026-04-16) — Completion claims without L tag = ambiguous success. L3+ completion claims must include explicit [L3]/[L4]/[L5] maturity tag. Promotes existing warn rule to deny when completion language + no L[3-5] tag found. Forces honest self-assessment per Board 2026-04-13 taxonomy."
-    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h observation period (AI 1 day ≈ human 1 year)
-    dry_run_rationale: "AI iteration cycle: 1 day = ~1 year human time. 48h allows ecosystem to adopt L tag pattern before deny enforcement."
-    created_at: "2026-04-16T23:00:00Z"
-    deny_condition_check: "completion_claim_without_l_tag"
-    l_tag_required_pattern: "\\[L[3-5]\\]"
-
-  - name: multi_task_dispatch_disguise
-    pattern: "^.*(写|write|实装|implement|create|build).*?(写|write|实装|implement|create|build)|.*(task|任务)\\s*[12345]:"
-    mode: deny
-    message: "Multi-task dispatch disguise detected. Agent tool prompt contains ≥2 distinct deliverable verbs (e.g., 'Write X AND Write Y') or enumerated task pattern ('Task 1:', 'Task 2:'). Per CZL 5-tuple + Article 11, each dispatch must be atomic (1 deliverable, ≤15 tool_uses). Spawn N separate sub-agents for N deliverables, or use sequential dispatch with continuation verification."
-    rationale: "Universal audit Q2 priority enforcement (Board 2026-04-16) — Multi-task dispatch violates atomic dispatch principle. Examples: sub-agent #5 a8dd03b6 (6 tasks → 0 ship), sub-agent #3 96438663 (3 tasks split mid-execution). Single-deliverable prose with scope guards remains warn-only. Deny triggers only on: (1) ≥2 distinct deliverable verbs in same Agent call, (2) enumerated task list pattern. Prevents task-list disguised as single dispatch."
-    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h grace period for atomic dispatch pattern adoption
-    dry_run_rationale: "AI iteration cycle: 1 day = ~1 year human time. 48h allows ecosystem to adopt N-dispatch-for-N-deliverables pattern before deny enforcement."
-    created_at: "2026-04-17T00:00:00Z"
-    deny_condition_check: "multi_deliverable_detected"
-
-  - name: task_card_without_spawn
-    pattern: "^.*(\\.claude/tasks/.*\\.md|task\\s+card)(?!.*(spawn|subagent_type|execute|Agent\\s+tool))"
-    mode: warn
-    message: "Task card reference detected in Agent tool prompt without explicit spawn instruction. Pattern: '{matched_phrase}'. Per MEMORY feedback_taskcard_not_dispatch, writing .claude/tasks/*.md file does NOT trigger sub-agent execution. Agent call must contain explicit 'subagent_type' or spawn instruction (e.g., 'spawn eng-platform to execute task card') in same prompt. Task card without spawn = dead task."
-    rationale: "Universal audit Q7 priority enforcement (Board 2026-04-16) — Task card write ≠ dispatch. CEO must explicitly spawn sub-agent AND reference task card in same Agent call. Detection: Agent prompt mentions .claude/tasks/ path or 'task card' keyword but lacks 'subagent_type' / 'spawn' / 'execute' / 'Agent tool' instruction. Prevents write-and-forget task drift."
-    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h observation period (AI 1 day ≈ human 1 year)
-    dry_run_rationale: "AI iteration cycle: 1 day = ~1 year human time. 48h allows ecosystem to learn task-card-must-spawn pattern."
-    created_at: "2026-04-17T00:00:00Z"
-
-  - name: coordinator_reply_missing_5tuple
-    pattern: "(?i).*"  # Catch-all pattern for reply text length + structure check
-    mode: warn
-    message: "CZL Meta-Dogfood violation: coordinator (CEO/CTO) reply exceeds 200 chars without 5-tuple structure. Detected {char_count} chars, missing sections: {missing_sections}. Dispatches use Y*/Xt/U/Yt+1/Rt+1 ✅ but replies to Board are pure prose — hypocrisy. Call coordinator_audit.check_reply_5tuple_compliance() before Stop hook reply."
-    rationale: "Board 2026-04-16 hypocrisy catch — CEO enforces 5-tuple on sub-agents via CZL Gate 1/2 but replies to Board use prose tables/散文, zero structure compliance. CZL dogfood principle: coordinator replies must follow same rigor as dispatches. Required sections: **Y\\***, **Xt**, **U**, **Yt+1**, **Rt+1** (case-sensitive structure markers). Replies ≤200 chars exempt (acknowledgments, quick status). Ref: ystar/governance/coordinator_audit.py check_reply_5tuple_compliance(), CZL Unified Communication Protocol v1.0."
-    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h warn-only observation (AI 1 day ≈ human 1 year, auto-promote to deny)
-    dry_run_rationale: "AI iteration cycle: 1 day = ~1 year human time. 48h is the human-equivalent of ~year-long observation. Auto-promote to deny after dry_run_until expiry."
-    created_at: "2026-04-16T12:00:00Z"
-    helper_script: "ystar/governance/coordinator_audit.py::check_reply_5tuple_compliance"
-    scope:
-      agent_ids:
-        - ceo
-        - ethan-cto
-
-  - name: subagent_boot_no_state_read
-    pattern: "(?i)(agent.*tool|spawn.*sub-?agent|dispatch.*eng-)"
-    mode: warn
-    message: "Sub-agent dispatch BOOT CONTEXT missing: prompt lacks 'Read .czl_subgoals.json' instruction or sub-agent's first 4 tool_uses do NOT include .czl_subgoals.json Read. Per governance/sub_agent_boot_prompt_template.md, every sub-agent dispatch must include BOOT CONTEXT block (read .czl_subgoals.json + git log -10 --oneline) before task body. Prevents parallel-blindness R3 failure class."
-    rationale: "W2 priority enforcement (Board 2026-04-16, Campaign v6) — R3 root cause: parallel sub-agents lack campaign context → state-blind execution → race conditions, choice questions, permission denials. Examples: sub-agent #3 not aware of another sub-agent's .claude/tasks/ write perm → choice question; sub-agent unaware of another sub-agent's commit → permission denial; CEO sub-agent #4/#5 race → duplicate AGENTS.md IRON RULE 0. Structural fix: mandate BOOT CONTEXT block in all dispatches. Detector checks: (1) prompt contains 'BOOT CONTEXT' + '.czl_subgoals.json' markers OR (2) sub-agent's first 4 tool_uses include Read .czl_subgoals.json. Ref: governance/sub_agent_boot_prompt_template.md, scripts/detect_subagent_boot_no_state_read.py."
-    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h shadow observation (AI 1 day ≈ human 1 year), auto-promote to warn
-    dry_run_rationale: "AI iteration cycle: 1 day = ~1 year human time. 48h shadow period collects violation patterns before warn enforcement."
-    created_at: "2026-04-17T01:00:00Z"
-    helper_script: "scripts/detect_subagent_boot_no_state_read.py::detect_boot_context_missing"
-    scope:
-      agent_ids:
-        - ceo
-        - ethan-cto
-
-  - name: new_artifact_without_precheck
-    pattern: "(?i)(Write|write).*governance/.*\\.md"
-    mode: warn
-    message: "NEW governance/*.md artifact created WITHOUT precheck_existing.py routing gate. W22.2 backlog drain enforcement: before writing NEW files in governance/ or Y-star-gov/ystar/governance/, sub-agent MUST run 'python3 scripts/precheck_existing.py <component_name>' (per sub_agent_boot_prompt_template.md step 3) and cite precheck JSON in receipt if EXTEND recommendation given. Detector checks: (1) Write tool call to governance/*.md (2) NO ROUTING_GATE_CHECK CIEU event within 30s before Write. Prevents duplication / reinventing wheels across 4-repo ecosystem."
-    rationale: "W22.2 backlog drain (Board 2026-04-16, CZL-115 primer §5) — Root cause: multi-repo ecosystem has distributed duplication: methodology_v1.md × reply_scan_detector_methodology_v1.md; session_watchdog.py × gov_health.py × agent_capability_monitor.py. Precheck script emits ROUTING_GATE_CHECK CIEU event to form empirical audit chain. Integration pipeline: precheck emit → Write → coordinator_audit reads strictness → session_watchdog AC score. Ref: governance/CZL-115_primer_governance_enforcement.md §5, scripts/precheck_existing.py."
-    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h observation (AI 1 day ≈ human 1 year), auto-promote to warn
-    dry_run_rationale: "AI iteration cycle: 1 day = ~1 year human time. 48h allows sub-agents to adapt to mandatory precheck pattern."
-    created_at: "2026-04-17T02:00:00Z"
-    helper_script: "scripts/precheck_existing.py::emit_cieu_routing_gate"
-    cieu_detector: "ROUTING_GATE_CHECK"
-    scope:
-      agent_ids:
-        - eng-governance
-        - eng-platform
-        - eng-kernel
-        - eng-domains
-
-  - name: spec_missing_formal_section
-    pattern: "(?i)Write.*governance/.*methodology.*\\.md"
-    mode: warn
-    message: "Methodology spec missing formal sections. W22.2 backlog drain: governance methodology files (e.g., *_methodology_v1.md) MUST contain both '## Formal Definitions' AND '## Mathematical Model' sections (per CZL-115 primer §5 Formal Section Compliance). Detector: grep for both section headers. Missing formal sections → spec is prose-only → no empirical validation anchor → drift risk. Example: reply_scan_detector_methodology_v1.md §1-6 has taxonomy/pseudocode but lacks formal math."
-    rationale: "W22.2 backlog drain (Board 2026-04-16, CZL-115 primer §5) — Methodology specs without formal definitions become institutional prose (like early AGENTS.md) that decays under iteration pressure. Formal sections provide empirical validation anchor: Mathematical Model enables unit tests; Formal Definitions enable automated compliance checks. Session_watchdog.get_formal_section_compliance_score() scans governance/*.md modified last 7 days for both headers. Integration: formal_section_compliance is AC signal 6/6. Ref: CZL-115 primer §5, session_watchdog.py."
-    dry_run_until: 1776499200  # 2026-04-18T08:00:00Z — 48h observation (AI 1 day ≈ human 1 year), auto-promote to warn
-    dry_run_rationale: "AI iteration cycle: 1 day = ~1 year human time. 48h allows engineers to retrofit formal sections into existing methodologies."
-    created_at: "2026-04-17T02:00:00Z"
-    helper_script: "scripts/session_watchdog.py::get_formal_section_compliance_score"
-    scope:
-      agent_ids:
-        - eng-governance
-        - eng-platform
-
-  - name: redirect_ignored
-    pattern: null  # Triggered by OmissionEngine MUST_EXECUTE_REDIRECT obligation TTL expiry
-    mode: deny
-    message: "REDIRECT_IGNORED: agent received free-text REDIRECT but failed to execute fix within TTL. OmissionEngine obligation 'must_execute_redirect' expired. Next tool call denied until REDIRECT fix is applied."
-    rationale: "ARCH-11b — When GuidancePayload is absent (no structured auto-invoke via ARCH-11a), REDIRECT is free-text advisory. Agents historically ignore these 10+ times per session (Board 2026-04-18 observation). OmissionEngine tracks obligation with TTL=3 tool_uses. Expiry triggers REDIRECT_IGNORED CIEU event + deny next tool call. Forces compliance with governance fix instructions."
-    dry_run_until: null  # Immediate enforcement
-    created_at: "2026-04-18T12:00:00Z"
-    cieu_event: REDIRECT_IGNORED
-    severity: high
-    scope:
-      obligation_type: must_execute_redirect
-
-  - name: dispatch_missing_phase_a
-    pattern: null  # custom detector via helper_script
-    mode: warn
-    message: "Sub-agent dispatch prompt missing Action Model v2 Phase A steps. Required: .czl_subgoals.json read, precheck_existing.py, git log, session_watchdog.py --statusline, pgrep k9_routing_subscriber. See governance/action_model_v2.md §2."
-    rationale: "CTO #127 Action Model v2 — Phase A (5-step BOOT) prevents parallel-blindness, collision, hallucination. Per sub_agent_boot_prompt_template.md constitutional requirement."
-    dry_run_until: 1745020800  # 2026-04-19 00:00:00 UTC — 48h baseline, auto-promote warn per §6 3-strike escalation
-    created_at: "2026-04-16T18:00:00Z"
-    helper_script: "scripts/action_model_validator.py::validate_dispatch_phase_a"
-    scope:
-      agent_ids:
-        - ceo
-        - cto
-        - eng-governance
-        - eng-platform
-        - eng-kernel
-        - eng-domains
-        - eng-data
-        - eng-security
-        - eng-ml
-        - eng-perf
-        - eng-compliance
-    trigger_hook: "Agent.PreToolUse"
-
-  - name: receipt_missing_phase_c_heavy
-    pattern: null  # custom detector via helper_script
-    mode: warn
-    message: "Heavy atomic receipt missing Action Model v2 Phase C steps. Required ≥8/9: test, verification, experiment, AC delta, K9 audit, CIEU emit, trust delta, knowledge writeback, cascade trigger. See governance/action_model_v2.md §2."
-    rationale: "CTO #127 Action Model v2 — Phase C (9-step post-dispatch) prevents hallucinated receipts, silent regressions, knowledge loss. Per CZL-114/CZL-128 empirical proof requirement."
-    dry_run_until: 1745020800  # 2026-04-19 00:00:00 UTC — 48h baseline, auto-promote warn per §6 3-strike escalation
-    created_at: "2026-04-16T18:00:00Z"
-    helper_script: "scripts/action_model_validator.py::validate_receipt_phase_c"
-    helper_params:
-      atomic_class: "Heavy"  # Pass to validator
-    scope:
-      agent_ids:
-        - ceo
-        - cto
-        - eng-governance
-        - eng-platform
-        - eng-kernel
-        - eng-domains
-        - eng-data
-        - eng-security
-        - eng-ml
-        - eng-perf
-        - eng-compliance
-    trigger_hook: "Stop.PostReply"
-
-  - name: engineer_receipt_missing_8_module_header
-    pattern: "(?i)(##\\s*RECEIPT|\\*\\*Y\\*\\*|\\*\\*Xt\\*\\*|\\*\\*Rt\\+1\\*\\*)"
-    mode: warn
-    message: "Engineer receipt missing structured '## 8 Module Activation' segment. Per aiden_8_module_cognitive_architecture.md (Board 2026-04-22), thinking is behavior — agent should explicit-show cognitive process (M1 反射, M2 记忆调用, M3 资料整理, M4 路径规划, M5 方法论选择, M6 错误监控, M7 主动行动, M8 反思整合) in receipt structure. Required: header + >=6/8 module markers."
-    rationale: "Board 2026-04-22 catch — 'Claude inference 不是真思考全部, 只是前额反射'. 8 Module Global Workspace architecture (Kahneman System 1/2 + Baars GWT + Friston Active Inference + MAP) mandates cognitive process transparency. Receipt without 8-module header = implicit-only thinking = M1-only reductive error. Wave-4 baseline period (warn 7 days, then promote to deny). Detector: scripts/hook_subagent_output_scan.py check_8_module_header()."
-    dry_run_until: 1777363200  # 2026-04-28T08:00:00Z — 7-day baseline period before promote to deny
-    dry_run_rationale: "7-day baseline for ecosystem adaptation. All engineers must update receipt templates to include 8 Module Activation segment."
-    created_at: "2026-04-22T18:00:00Z"
-    scope:
-      agent_ids:
-        - eng-governance
-        - eng-platform
-        - eng-kernel
-        - eng-domains
-        - eng-data
-        - eng-security
-        - eng-ml
-        - eng-perf
-        - eng-compliance
-    trigger_hook: "PostToolUse.Agent"
-
-  - name: e1_receipt_drift_reject
-    pattern: "(?i)(tool[_ -]?uses?|tool[_ -]?calls?|Bash\\s+\\d+\\s*\\+\\s*Read).*\\d+"
-    mode: deny
-    message: "E1 Receipt-Honesty REJECT: Sub-agent tool_uses claim drift >30% vs metadata. Over-claim = hallucination, under-claim = omission. CEO must re-dispatch with explicit re-receipt request. Per Board 2026-04-22 Wave-4: receipt-honesty non-negotiable."
-    rationale: "Board 2026-04-22 root cause analysis — E1 不收敛 (Wave-1 45% → Wave-3 47% → 全维度 42%). Wave-1.5 prompt template fix was reminder not enforce (no hook reject). This rule upgrades from warn to deny for >30% drift. Detector: scripts/hook_subagent_output_scan.py e1_receipt_honesty_check(). Cross-check: claim_mismatch.detect_tool_uses_mismatch(). Tiered: <10% allow, 10-30% warn, >30% deny."
-    dry_run_until: null  # Immediate enforce — E1 has had 6+ days of warn-only baseline
-    created_at: "2026-04-22T18:00:00Z"
-    validator: claim_mismatch.detect_tool_uses_mismatch
-    validator_kwargs:
-      reject_threshold_pct: 30
-      warn_threshold_pct: 10
-    scope:
-      agent_ids:
-        - eng-governance
-        - eng-platform
-        - eng-kernel
-        - eng-domains
-        - eng-data
-        - eng-security
-        - eng-ml
-        - eng-perf
-        - eng-compliance
-    trigger_hook: "PostToolUse.Agent"
-
-  - name: czl_termination_drift_reply_catch
-    pattern: "(?i)(session\\s*close|下\\s*session|认知预算跌了|建议\\s*close|明天新\\s*session|checkpoint|收工|close\\s*session|session\\s*结束|建议这里\\s*close)"
-    mode: deny
-    message: "CZL termination drift detected. Reply has session-close semantics while Rt+1 != 0 and no new dispatch. Must list open Rt+1 items, dispatch undispatched NOW, only close when empirical Rt+1=0."
-    rationale: "Board 2026-04-24 caught CEO 5x same session. CZL loop: Rt+1 != 0 means return to U. Rt+1=0 is ONLY valid stop. Fatigue and catch count are NOT stop signals."
-    dry_run_until: null
-    created_at: "2026-04-24T06:00:00Z"
-    cieu_event: CZL_TERMINATION_DRIFT_CAUGHT
-    severity: high
-    scope:
-      agent_ids:
-        - ceo
-        - ethan-cto
-    trigger_hook: "Stop.PostReply"
-    co_conditions:
-      - type: rt_not_zero
-        description: "Reply contains Rt+1 non-zero indicator"
-        pattern: "(?i)(Rt\\+1\\s*[=:]\\s*0\\.\\d|honest\\s+gap|\\d+/\\d+\\s*FAIL|gap\\s*[:=]|未完成|Rt\\+1\\s*!=\\s*0|Rt\\+1\\s*[>]\\s*0)"
-      - type: no_recent_dispatch
-        description: "Reply lacks dispatch evidence"
-        pattern_absent: "(?i)(Agent.*spawn|dispatch_board|派\\s*(Ethan|Maya|Leo|Ryan|Samantha|Sofia|Marco|Zara)|Agent\\s+tool|subagent_type)"
-
-# Whitelists — Files exempt from ForgetGuard checks (referenced by stem)
-whitelists:
-  - role_mandate
-  - inter_role_sop
-  - event_workflow
-  - escape_hatch
-  - project_procedure
-  - constitutional
-  - rapid_matrix
+    message: |
+      Artifact {path} written to archival scope but not in ARCHIVE_INDEX
+      after grace window. Consider registering it or explaining why ephemeral.
+    rationale: |
+      Improves cross-session discoverability without blocking legitimate work.
+      Audit-only mode: never blocks, never warns, just records for review.
+    created_at: "2026-04-25T07:40:00Z"

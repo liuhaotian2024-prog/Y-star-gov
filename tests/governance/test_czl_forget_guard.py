@@ -174,45 +174,95 @@ class TestCZLReceiptGate2:
         assert gap >= 1.0, f"Missing bash output should add ≥1.0 gap, got {gap}"
 
 
-class TestCZLRuleSchema:
-    """Validate ForgetGuard rule YAML schema matches czl_protocol."""
+class TestForgetGuardSchemaV05:
+    """Validate ForgetGuard rule YAML uses v0.5 structured-only schema.
 
-    def test_czl_rules_exist_in_yaml(self):
-        """Both czl_dispatch_missing_5tuple and czl_receipt_rt_not_zero must exist."""
+    Replaces the prior `TestCZLRuleSchema` class which asserted that specific
+    keyword-blacklist rules MUST exist in the YAML — those tests were locking
+    in the wrong design (speech-suppression rules). The v0.5 schema forbids
+    keyword/regex matching against payload text; CZL protocol validation
+    (validate_dispatch / validate_receipt) is now invoked at the dispatch /
+    return event boundary as a typed validator, not via text patterns in this
+    YAML file.
+
+    See ystar/governance/forget_guard.py module docstring for the full
+    rationale on speech-vs-behavior governance.
+    """
+
+    def test_yaml_loads_via_engine(self):
+        """The rules YAML must load through ForgetGuard without raising."""
+        from ystar.governance.forget_guard import ForgetGuard
+        guard = ForgetGuard()
+        assert isinstance(guard.rules, list)
+        assert len(guard.rules) >= 1, "Expected at least one structured rule"
+
+    def test_no_pattern_field_anywhere(self):
+        """No rule may contain a `pattern:` field (forbidden in v0.5)."""
+        import yaml as _yaml
         yaml_path = Path(__file__).parent.parent.parent / "ystar" / "governance" / "forget_guard_rules.yaml"
-        assert yaml_path.exists(), f"ForgetGuard rules YAML not found: {yaml_path}"
+        data = _yaml.safe_load(yaml_path.read_text()) or {}
+        for r in data.get("rules") or []:
+            name = r.get("name", "<unnamed>")
+            assert "pattern" not in r, (
+                f"Rule '{name}' contains forbidden `pattern:` field. "
+                f"Keyword/regex matching against text is not allowed in v0.5. "
+                f"Use `type: structured` + `conditions:` instead."
+            )
 
-        yaml_content = yaml_path.read_text()
-        assert "czl_dispatch_missing_5tuple" in yaml_content, \
-            "Missing czl_dispatch_missing_5tuple rule in ForgetGuard YAML"
-        assert "czl_receipt_rt_not_zero" in yaml_content, \
-            "Missing czl_receipt_rt_not_zero rule in ForgetGuard YAML"
-
-    def test_czl_rules_have_deny_action(self):
-        """CZL rules must use action: deny (not warn)."""
+    def test_all_rules_declare_structured_type(self):
+        """Every rule must declare type: structured and have a conditions dict."""
+        import yaml as _yaml
         yaml_path = Path(__file__).parent.parent.parent / "ystar" / "governance" / "forget_guard_rules.yaml"
-        yaml_content = yaml_path.read_text()
+        data = _yaml.safe_load(yaml_path.read_text()) or {}
+        for r in data.get("rules") or []:
+            name = r.get("name", "<unnamed>")
+            assert r.get("type") == "structured", (
+                f"Rule '{name}' missing `type: structured` declaration"
+            )
+            conds = r.get("conditions")
+            assert isinstance(conds, dict) and conds, (
+                f"Rule '{name}' missing or empty `conditions:` dict"
+            )
 
-        # Extract czl_dispatch rule section
-        dispatch_section_start = yaml_content.find("czl_dispatch_missing_5tuple")
-        receipt_section_start = yaml_content.find("czl_receipt_rt_not_zero")
-        assert dispatch_section_start != -1 and receipt_section_start != -1, \
-            "CZL rule sections not found in YAML"
+    def test_loader_rejects_pattern_rule(self):
+        """Schema enforcement: loader must raise on a rule with `pattern:`."""
+        import tempfile, os
+        from ystar.governance.forget_guard import ForgetGuard, ForgetGuardSchemaError
+        bad_yaml = """rules:
+  - name: bad_keyword_rule
+    pattern: "明日 稍后"
+    mode: deny
+    message: "x"
+"""
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(bad_yaml)
+            bad_path = f.name
+        try:
+            try:
+                ForgetGuard(rules_path=bad_path)
+                assert False, "Loader should have raised ForgetGuardSchemaError"
+            except ForgetGuardSchemaError as e:
+                assert "forbidden `pattern` field" in str(e)
+        finally:
+            os.unlink(bad_path)
 
-        dispatch_section = yaml_content[dispatch_section_start:dispatch_section_start + 500]
-        receipt_section = yaml_content[receipt_section_start:receipt_section_start + 500]
-
-        assert "mode: deny" in dispatch_section, \
-            "czl_dispatch_missing_5tuple must have mode: deny"
-        assert "mode: deny" in receipt_section, \
-            "czl_receipt_rt_not_zero must have mode: deny"
-
-    def test_czl_rules_call_validators(self):
-        """CZL rules should reference czl_protocol validators."""
+    def test_purged_keyword_rules_do_not_reappear(self):
+        """Sanity: a sample of purged v0.42 rule names must not be present."""
+        import yaml as _yaml
         yaml_path = Path(__file__).parent.parent.parent / "ystar" / "governance" / "forget_guard_rules.yaml"
-        yaml_content = yaml_path.read_text()
-
-        assert "czl_protocol.validate_dispatch" in yaml_content, \
-            "czl_dispatch rule should call validate_dispatch"
-        assert "czl_protocol.validate_receipt" in yaml_content, \
-            "czl_receipt rule should call validate_receipt"
+        data = _yaml.safe_load(yaml_path.read_text()) or {}
+        purged = {
+            "ceo_direct_engineer_dispatch", "defer_language",
+            "choice_question_to_board", "coordinator_summary_rt_audit",
+            "charter_drift_mid_session", "methodology_hardcoded_cadence",
+            "missing_l_tag", "czl_dispatch_missing_5tuple",
+            "czl_receipt_rt_not_zero", "czl_termination_drift_reply_catch",
+            "engineer_receipt_missing_8_module_header",
+        }
+        live = {r.get("name") for r in (data.get("rules") or [])}
+        leaked = purged & live
+        assert not leaked, (
+            f"Purged keyword-blacklist rules reappeared in YAML: {leaked}. "
+            f"These rules conflated speech with behavior and were removed in "
+            f"the 2026-04-25 purge. They must not be re-added."
+        )
