@@ -1,0 +1,44 @@
+[
+  {
+    "task_id": "ceo_campaign_v7_incomplete",
+    "violation_type": "rt_not_closed",
+    "details": "Task incomplete: Rt+1=2.5. Y*=Campaign v7 deployed + live traffic validated",
+    "rt_value": 2.5,
+    "timestamp": "2026-04-16T09:40:20.860902Z",
+    "agent_id": "cmo",
+    "role_tags": {
+      "producer": "cmo",
+      "executor": "cmo",
+      "governed": "cmo"
+    },
+    "processed_at": "2026-04-16T09:40:20.861345+00:00"
+  },
+  {
+    "task_id": "ceo_boundary_violation_pilot",
+    "violation_type": "3d_role_mismatch",
+    "details": "CEO acting as executor on engineering paths: write k9-rt integration plan to reports/ceo/ research k9 causal analyzer api draft integration plan ",
+    "rt_value": 1.0,
+    "timestamp": "2026-04-16T09:40:20.861027Z",
+    "agent_id": "ceo",
+    "role_tags": {
+      "producer": "ceo",
+      "executor": "ceo",
+      "governed": "ceo"
+    },
+    "processed_at": "2026-04-16T09:40:20.861345+00:00"
+  },
+  {
+    "task_id": "ceo_boundary_violation_pilot",
+    "violation_type": "rt_not_closed",
+    "details": "Task incomplete: Rt+1=1.0. Y*=Write K9-RT integration plan to reports/ceo/",
+    "rt_value": 1.0,
+    "timestamp": "2026-04-16T09:40:20.861029Z",
+    "agent_id": "ceo",
+    "role_tags": {
+      "producer": "ceo",
+      "executor": "ceo",
+      "governed": "ceo"
+    },
+    "processed_at": "2026-04-16T09:40:20.861345+00:00"
+  }
+]
