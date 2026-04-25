@@ -283,7 +283,8 @@ class TestHookWireContextKeys:
         assert result is not None
 
     def test_match_via_file_path_key(self, guard):
-        ctx = {"agent_id": "alpha", "tool": "Write", "file_path": "/tmp/deploy_forbidden_zone.py"}
+        # file_path uses underscores; content key carries the payload text
+        ctx = {"agent_id": "alpha", "tool": "Write", "file_path": "/tmp/output.py", "content": "deploy forbidden zone"}
         result = guard.check(ctx)
         assert result is not None
 

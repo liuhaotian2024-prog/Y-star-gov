@@ -3,18 +3,20 @@ U_v2 Cognitive Schema Validator
 ================================
 
 Validates sub-agent receipt text against the U_v2 schema v0.1 (5 required fields).
-Returns structured result indicating completeness, missing fields, and theater detection.
+Returns structured result indicating completeness, missing fields, theater detection,
+and redirect recipe for resubmission.
 
 Schema source: governance/schemas/u_v2_schema_v0.1.yaml
 Experiment: reports/experiments/exp_u_v2_schema_persistence_20260424.md
 
-Platform Engineer: eng-platform
+Kernel Engineer: eng-kernel (INC-2026-04-24 Phase 1 build)
+Original scaffold: eng-platform
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 # ── Schema field definitions ──────────────────────────────────────────────
@@ -28,6 +30,41 @@ M_TAG_ALLOWED = {"M-1", "M-2a", "M-2b", "M-3"}
 _MIN_COUNTERFACTUAL_LEN = 30
 _MIN_EMPIRICAL_REF_LEN = 3  # e.g. a file path or hash must be >=3 chars
 
+# Redirect recipes per field (from u_v2_schema_v0.1.yaml)
+_REDIRECT_RECIPES: Dict[str, str] = {
+    "m_tag": (
+        "Missing m_tag field. Pick one from [M-1, M-2a, M-2b, M-3]. "
+        "M-2a=governance rules, M-2b=obligation tracking, M-1=identity/continuity, M-3=product/sales/revenue."
+    ),
+    "empirical_basis": (
+        "Missing empirical_basis. Must cite >=1 verifiable artifact: "
+        "file_ref (/path/to/file.py:123), sql_query, cieu_event_id (uuid), "
+        "pytest (test_name PASS/FAIL), git_commit (hash), log_line."
+    ),
+    "counterfactual": (
+        "Missing counterfactual (P-3). Answer in >=30 chars: "
+        '"If NOT done: ___. If done wrong: ___."'
+    ),
+    "preexisting_search": (
+        "Missing preexisting_search (P-12). Must show: "
+        "glob_patterns: [list], results_count: int. If 0 results, state explicitly."
+    ),
+    "rt_plus_1_honest": (
+        "Missing rt_plus_1_honest. Answer: "
+        '"0 -- metric X met per artifact Y" (with ref) OR "non-zero: specific gap ___". '
+        "Per feedback_ship_neq_done_rt1_zero_discipline: ship != done."
+    ),
+}
+
+# Theater-specific recipes
+_THEATER_RECIPES: Dict[str, str] = {
+    "m_tag": "m_tag present but value not in [M-1, M-2a, M-2b, M-3]. Fix the enum value.",
+    "empirical_basis": "empirical_basis present but contains no recognizable artifact reference (file path, git hash, SQL, pytest result).",
+    "counterfactual": f"counterfactual present but too short (<{_MIN_COUNTERFACTUAL_LEN} chars). Expand the blast-radius analysis.",
+    "preexisting_search": "preexisting_search present but no glob/grep/results_count evidence found. Show actual search commands and counts.",
+    "rt_plus_1_honest": 'rt_plus_1_honest is bare "0" without artifact reference. Either cite the metric+artifact or state non-zero gap.',
+}
+
 
 @dataclass
 class ValidationResult:
@@ -36,6 +73,7 @@ class ValidationResult:
     missing_fields: List[str] = field(default_factory=list)
     theater_fields: List[str] = field(default_factory=list)
     event_type: str = ""  # U_V2_SCHEMA_COMPLETE | _INCOMPLETE_DENY | _THEATER_DETECTED
+    redirect_recipe: str = ""
     details: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -44,8 +82,13 @@ class ValidationResult:
             "missing_fields": self.missing_fields,
             "theater_fields": self.theater_fields,
             "event_type": self.event_type,
+            "redirect_recipe": self.redirect_recipe,
             "details": self.details,
         }
+
+    def as_tuple(self) -> tuple:
+        """Legacy tuple interface: (pass, missing_fields, theater_fields, redirect_recipe)."""
+        return (self.is_complete, self.missing_fields, self.theater_fields, self.redirect_recipe)
 
 
 # ── Field extraction from receipt text ────────────────────────────────────
