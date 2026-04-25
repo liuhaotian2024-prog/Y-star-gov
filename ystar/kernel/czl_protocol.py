@@ -112,13 +112,25 @@ def validate_dispatch(prompt: str, agent_id: str | None = None) -> list[str]:
         return []  # Pure ack, no 5-tuple required
 
     # §1 semantic check: if no action verbs AND no artifact references → conversational
+    #
+    # Important: CZL-labeled text must NOT be exempted merely because it lacks
+    # dispatch verbs. A partial envelope such as "Y*/Yt+1/Rt+1/Recipient" is
+    # an attempted CZL dispatch and must continue into Gate 1 validation so
+    # missing Xt/U can be rejected.
     import re
+    czl_marker_pattern = re.compile(
+        r"(\*\*Y\\?\*|\*\*Xt|\*\*X_t|\*\*U\b|\*\*Yt\+1|\*\*Y_t\+1|\*\*Rt\+1|rt_value|Recipient:|Task ID:)",
+        re.IGNORECASE,
+    )
+    has_czl_markers = bool(czl_marker_pattern.search(prompt))
+
     action_pattern = re.compile(
         r"(派|调起|执行|启动|spawn|dispatch|routing|calling|activating|NOW|landed|shipped|commit)",
         re.IGNORECASE
     )
-    if not action_pattern.search(prompt):
-        # No dispatch/receipt language detected → conversational, skip validation
+    if not action_pattern.search(prompt) and not has_czl_markers:
+        # No dispatch/receipt language and no CZL envelope markers detected
+        # → conversational, skip validation.
         return []
 
     # --- Stage 2: 5-Tuple Validation (apply STRICTNESS_MAP if agent_id provided) ---

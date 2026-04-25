@@ -2309,4 +2309,42 @@ def handle_hook_event(
     # Fall through to existing check_hook (Layer 2 + Layer 1)
     return check_hook(payload, policy=policy)
 
-_load_avoidance_phrases = _load_deny_phrases
+
+_avoidance_phrases_cache: list = None  # type: ignore[assignment]
+
+
+def _load_avoidance_phrases() -> list:
+    """Load avoidance-phrases from workspace yaml config.
+
+    This is intentionally separate from _load_deny_phrases():
+    - deny_phrases.yaml: explicit deploying-workspace hard deny list
+    - avoidance_phrases.yaml: softer legacy/config-driven phrase list
+
+    Returns empty list if workspace config is unavailable, workspace is None,
+    yaml file does not exist, or yaml parsing fails.
+    """
+    global _avoidance_phrases_cache
+    if _avoidance_phrases_cache is not None:
+        return _avoidance_phrases_cache
+
+    try:
+        from ystar.workspace_config import get_labs_workspace
+        ws = get_labs_workspace()
+        if ws is None:
+            _avoidance_phrases_cache = []
+            return _avoidance_phrases_cache
+
+        yaml_path = ws / "knowledge" / "shared" / "avoidance_phrases.yaml"
+        if not yaml_path.is_file():
+            yaml_path = ws / "governance" / "avoidance_phrases.yaml"
+        if not yaml_path.is_file():
+            _avoidance_phrases_cache = []
+            return _avoidance_phrases_cache
+
+        import yaml as _yaml
+        data = _yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        _avoidance_phrases_cache = data.get("phrases", []) if isinstance(data, dict) else []
+        return _avoidance_phrases_cache
+    except Exception:
+        _avoidance_phrases_cache = []
+        return _avoidance_phrases_cache

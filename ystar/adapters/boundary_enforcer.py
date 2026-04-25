@@ -1990,14 +1990,73 @@ def _check_board_approval_before_publish(
 
 def _run_per_rule_detectors(who: str, tool_name: str, params: dict) -> None:
     """
-    DEPRECATED (CZL-ARCH-3): Per-rule detectors migrated to RouterRegistry.
+    Backward-compatible per-rule detector runner.
 
-    Detectors now live in ystar.rules.per_rule_detectors and are evaluated
-    by RouterRegistry in handle_hook_event() Layer 3.  This stub is kept
-    for API compatibility only.
+    CZL-ARCH-3 moved detectors into RouterRegistry, but legacy tests and
+    callers still invoke this function directly. Keep the compatibility path:
+    run the pure detector functions and emit advisory CIEU telemetry events.
     """
-    # No-op: detectors run via RouterRegistry, not via direct import
-    return
+    try:
+        from ystar.rules import per_rule_detectors as prd
+        from ystar.governance.cieu_store import CIEUStore
+    except Exception as exc:
+        _log.warning("per-rule detector compatibility import failed: %s", exc)
+        return
+
+    payload = {
+        "agent_id": who,
+        "who": who,
+        "tool_name": tool_name,
+        "tool_input": params or {},
+        "params": params or {},
+        "ceo_mode": _get_current_mode(who).get("mode", "standard"),
+    }
+
+    detector_names = [
+        "_detect_dispatch_missing_5tuple",
+        "_detect_receipt_rt_not_zero",
+        "_detect_charter_drift_mid_session",
+        "_detect_wave_scope_undeclared",
+        "_detect_subagent_unauthorized_git_op",
+        "_detect_parallel_dispatch_required",
+        "_detect_realtime_artifact_archival",
+    ]
+
+    store = CIEUStore()
+
+    for name in detector_names:
+        detector = getattr(prd, name, None)
+        if detector is None:
+            continue
+        try:
+            result = detector(payload)
+        except Exception as exc:
+            _log.warning("per-rule detector %s failed: %s", name, exc)
+            continue
+
+        if not result:
+            continue
+
+        event_type = result.get("violation_type") or name.upper()
+        try:
+            store.write_dict({
+                "event_type": event_type,
+                "decision": "allow",
+                "evidence_grade": "telemetry",
+                "agent_id": who,
+                "task_description": result.get("evidence", ""),
+                "params": {
+                    "tool_name": tool_name,
+                    "tool_input": params or {},
+                    "detector": name,
+                    "detector_result": result,
+                },
+                "violations": [event_type],
+                "drift_detected": False,
+                "human_initiator": who,
+            })
+        except Exception as exc:
+            _log.warning("per-rule detector CIEU write failed: %s", exc)
 
 
 def _check_behavior_rules(

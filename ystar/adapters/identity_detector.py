@@ -60,6 +60,19 @@ _AGENT_TYPE_MAP = {
     "Agent-ML": "eng-ml",
     "Agent-Performance": "eng-perf",
     "Agent-Compliance": "eng-compliance",
+
+    # Y* Bridge Labs canonical staff aliases (backward compatibility)
+    "Samantha-Secretary": "secretary",
+    "Maya-Governance": "eng-governance",
+    "Ryan-Platform": "eng-platform",
+    "Ethan-CTO": "cto",
+    "Leo-Kernel": "eng-kernel",
+    "Jordan-Domains": "eng-domains",
+    "Alex-Security": "eng-security",
+    "Priya-ML": "eng-ml",
+    "Carlos-Performance": "eng-perf",
+    "Elena-Compliance": "eng-compliance",
+
     # Legacy format support (role IDs)
     "ystar-ceo": "ceo",
     "ystar-cto": "cto",

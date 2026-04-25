@@ -288,12 +288,18 @@ class CIEUStore:
     - [FIX-3] seal_session() — 基于 SHA-256 Merkle root 的密码学封印，形成哈希链
     """
 
-    def __init__(self, db_path: str = str(_DEFAULT_DB)):
-        self.db_path = Path(db_path)
+    def __init__(self, db_path: Optional[str] = None):
+        # Prefer explicit db_path, then test/runtime override, then default.
+        # This keeps product defaults stable while allowing tests and local
+        # runtimes to isolate CIEU stores via YSTAR_CIEU_DB.
+        import os as _os
+        resolved_db_path = db_path or _os.environ.get("YSTAR_CIEU_DB") or str(_DEFAULT_DB)
+
+        self.db_path = Path(resolved_db_path)
         # [FIX] SQLite :memory: creates a fresh empty DB for every new connection.
         # For in-memory databases we keep one persistent connection for the
         # lifetime of the store object; for file-backed DBs we open/close per op.
-        self._is_memory = (str(db_path) == ":memory:")
+        self._is_memory = (str(resolved_db_path) == ":memory:")
         self._mem_conn: Optional[sqlite3.Connection] = None
         if self._is_memory:
             import sqlite3 as _sq3

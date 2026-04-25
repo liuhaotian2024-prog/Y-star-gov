@@ -319,9 +319,18 @@ class TestRulesDirFiltering:
             with open(skip2, "w") as f:
                 f.write("not a rule file\n")
 
+            from ystar.governance.router_registry import reset_default_registry
+            reset_default_registry()
+
             _load_rules_from_dir(tmpdir)
 
             registry = get_default_registry()
             assert registry.get_rule("good_rule") is not None
-            # Only 1 rule should be registered
-            assert registry.rule_count == 1
+
+            # The default registry may auto-load built-in governance rules on
+            # first creation. This test only verifies directory filtering:
+            # good_rule.py is loaded, while _internal.py and non-.py files are skipped.
+            rule_ids = {rule.rule_id for rule in registry.all_rules()}
+            assert "good_rule" in rule_ids
+            assert "_internal" not in rule_ids
+            assert "readme" not in rule_ids
