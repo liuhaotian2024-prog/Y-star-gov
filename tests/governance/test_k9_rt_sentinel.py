@@ -1,3 +1,4 @@
+import os
 #!/usr/bin/env python3
 """
 K9-RT Sentinel Integration Tests
@@ -173,9 +174,26 @@ def test_reads_real_company_db():
     and verifies Sentinel can poll events from `events` table with `metadata` column.
     """
     import sys
-    company_root = os.environ.get('YSTAR_COMPANY_ROOT', os.getcwd())
-    sys.path.insert(0, f'{company_root}/scripts')
-    from _cieu_helpers import emit_rt_measurement
+    import ystar.governance.k9_rt_sentinel as sentinel
+
+    repo_root = Path(__file__).resolve().parents[2]
+    company_root = Path(
+        os.environ.get("YSTAR_COMPANY_ROOT", str(repo_root.parent / "ystar-company"))
+    )
+    helpers_dir = company_root / "scripts"
+    if not helpers_dir.exists():
+        pytest.skip(f"ystar-company scripts not found: {helpers_dir}")
+
+    sys.path.insert(0, str(helpers_dir))
+    try:
+        from _cieu_helpers import emit_rt_measurement
+    except ModuleNotFoundError:
+        pytest.skip(f"_cieu_helpers not found in {helpers_dir}")
+
+    # Ensure Sentinel polls the same DB that _cieu_helpers writes to.
+    sentinel.CIEU_DB_PATH = company_root / ".ystar_cieu.db"
+    if not sentinel.CIEU_DB_PATH.exists():
+        pytest.skip(f"CIEU DB not found: {sentinel.CIEU_DB_PATH}")
 
     # Emit test RT_MEASUREMENT to production DB
     task_id = f"test_sentinel_integration_{int(__import__('time').time() * 1000)}"

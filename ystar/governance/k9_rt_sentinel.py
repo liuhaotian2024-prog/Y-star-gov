@@ -140,11 +140,14 @@ def _emit_tick_event(scanned: int, warnings_emitted: int):
 def poll_rt_measurements(limit: int = 100, processed_ids: set = None) -> List[Dict]:
     """
     Batch poll CIEU DB for RT_MEASUREMENT events.
-    Returns list of event dicts (schema v1.0).
-    Filters out events with task_id in processed_ids (dedup).
 
-    Real CIEU DB schema uses `events` table with `metadata` column (JSON).
-    Test schema uses `cieu_events` table with `payload` column. Auto-detect.
+    Supports all schemas currently seen in the field:
+      1. events(event_type, metadata, timestamp)
+      2. legacy cieu_events(event_type, payload, created_at)
+      3. current cieu_events(event_type, task_description, params_json,
+         result_json, created_at)
+
+    Returns list of normalized RT measurement payload dicts.
     """
     if not CIEU_DB_PATH.exists():
         return []
@@ -152,61 +155,108 @@ def poll_rt_measurements(limit: int = 100, processed_ids: set = None) -> List[Di
     if processed_ids is None:
         processed_ids = set()
 
+    def _json_obj(raw: object) -> Dict:
+        if raw is None:
+            return {}
+        if isinstance(raw, dict):
+            return raw
+        if not isinstance(raw, str):
+            return {}
+        raw = raw.strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+
+    def _append_event(events: List[Dict], payload: Dict, timestamp: object) -> None:
+        if not isinstance(payload, dict):
+            return
+        payload.setdefault("timestamp", str(timestamp))
+        task_id = payload.get("task_id")
+        if task_id in processed_ids:
+            return
+        events.append(payload)
+
     try:
         conn = sqlite3.connect(CIEU_DB_PATH)
         conn.row_factory = sqlite3.Row
 
-        # Auto-detect schema: check for `events` table (production) vs `cieu_events` (test)
         tables_cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tables = [row[0] for row in tables_cursor.fetchall()]
+        tables = {row[0] for row in tables_cursor.fetchall()}
+        events: List[Dict] = []
 
+        # Schema 1: production events table.
         if "events" in tables:
-            # Production schema: events(event_type, metadata, timestamp)
-            cursor = conn.execute(
-                """
-                SELECT event_type, metadata, timestamp
-                FROM events
-                WHERE event_type = 'RT_MEASUREMENT'
-                ORDER BY timestamp DESC
-                LIMIT ?
-                """,
-                (limit,),
-            )
-            events = []
-            for row in cursor.fetchall():
-                metadata = json.loads(row["metadata"])
-                metadata["timestamp"] = metadata.get("timestamp", str(row["timestamp"]))
-                task_id = metadata.get("task_id")
-                if task_id not in processed_ids:
-                    events.append(metadata)
-        elif "cieu_events" in tables:
-            # Test schema: cieu_events(event_type, payload, created_at)
-            cursor = conn.execute(
-                """
-                SELECT event_type, payload, created_at
-                FROM cieu_events
-                WHERE event_type = 'RT_MEASUREMENT'
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                (limit,),
-            )
-            events = []
-            for row in cursor.fetchall():
-                payload = json.loads(row["payload"])
-                payload["timestamp"] = payload.get("timestamp", str(row["created_at"]))
-                task_id = payload.get("task_id")
-                if task_id not in processed_ids:
-                    events.append(payload)
-        else:
-            # No known table schema
-            conn.close()
-            return []
+            try:
+                cursor = conn.execute(
+                    """
+                    SELECT event_type, metadata, timestamp
+                    FROM events
+                    WHERE event_type = 'RT_MEASUREMENT'
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                )
+                for row in cursor.fetchall():
+                    _append_event(events, _json_obj(row["metadata"]), row["timestamp"])
+            except sqlite3.Error as e:
+                print(f"[K9-RT Sentinel] events schema read error: {e}", flush=True)
+
+        # Schema 2/3: CIEU durable backend table.
+        if "cieu_events" in tables and len(events) < limit:
+            col_rows = conn.execute("PRAGMA table_info(cieu_events)").fetchall()
+            cols = {row[1] for row in col_rows}
+
+            try:
+                if "payload" in cols:
+                    cursor = conn.execute(
+                        """
+                        SELECT event_type, payload, created_at
+                        FROM cieu_events
+                        WHERE event_type = 'RT_MEASUREMENT'
+                        ORDER BY created_at DESC
+                        LIMIT ?
+                        """,
+                        (limit - len(events),),
+                    )
+                    for row in cursor.fetchall():
+                        _append_event(events, _json_obj(row["payload"]), row["created_at"])
+
+                else:
+                    select_cols = ["event_type", "created_at"]
+                    for c in ("task_description", "params_json", "result_json"):
+                        if c in cols:
+                            select_cols.append(c)
+
+                    cursor = conn.execute(
+                        f"""
+                        SELECT {', '.join(select_cols)}
+                        FROM cieu_events
+                        WHERE event_type = 'RT_MEASUREMENT'
+                        ORDER BY created_at DESC
+                        LIMIT ?
+                        """,
+                        (limit - len(events),),
+                    )
+
+                    for row in cursor.fetchall():
+                        payload: Dict = {}
+                        for c in ("task_description", "params_json", "result_json"):
+                            if c in row.keys():
+                                payload.update(_json_obj(row[c]))
+                        _append_event(events, payload, row["created_at"])
+
+            except sqlite3.Error as e:
+                print(f"[K9-RT Sentinel] cieu_events schema read error: {e}", flush=True)
 
         conn.close()
-        return events
+        return events[:limit]
+
     except sqlite3.Error as e:
-        # Graceful degradation: log error, return empty (tests verify this)
         print(f"[K9-RT Sentinel] CIEU DB error: {e}", flush=True)
         return []
 

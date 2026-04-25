@@ -183,6 +183,23 @@ def start_subscriber_daemon() -> int:
     Returns:
         int: PID of daemon process
     """
+    # Seed subscriber state to current DB tail so tests do not replay the
+    # historical K9 backlog. Each test emits a fresh violation after startup;
+    # the subscriber should process only those new events.
+    try:
+        conn = sqlite3.connect(str(CIEU_DB), timeout=5.0)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COALESCE(MAX(seq_global), 0) FROM cieu_events")
+        current_tail = cursor.fetchone()[0]
+        conn.close()
+        STATE_FILE.write_text(json.dumps({
+            "last_seq_global": current_tail,
+            "updated_at": time.time(),
+            "test_seeded": True,
+        }, indent=2))
+    except Exception:
+        pass
+
     env = os.environ.copy()
     env["YSTAR_COMPANY_ROOT"] = str(COMPANY_ROOT)
     env["YSTAR_CIEU_DB"] = str(CIEU_DB)
@@ -414,12 +431,13 @@ def test_state_persistence(clean_state, cieu_conn):
 
 # ═══ SMOKE TEST (Manual Verification) ═══
 
-def test_smoke_cascade_manual():
+def test_smoke_cascade_manual(clean_state):
     """
-    Smoke test: Emit fake violation, verify cascade within 2s.
+    Smoke test: start subscriber, emit fake violation, verify cascade within 2s.
 
-    This is a simplified version of test_handler_dispatch_forget_guard
-    for manual verification during implementation.
+    This used to assume an external subscriber was already running, which made
+    the automated test flaky. Keep the manual smoke semantics but make it
+    hermetic like the other E2E routing tests.
     """
     if not CIEU_DB.exists():
         pytest.skip("CIEU DB not found")
@@ -432,24 +450,30 @@ def test_smoke_cascade_manual():
     baseline_seq = cursor.fetchone()[0]
     conn.close()
 
-    # Emit fake violation
-    emit_fake_violation("forget_guard", "warn", "smoke_test_violation")
+    try:
+        start_subscriber_daemon()
+        time.sleep(0.5)
 
-    print(f"\n[SMOKE] Emitted fake K9_VIOLATION_DETECTED event")
-    print(f"[SMOKE] Baseline seq_global: {baseline_seq}")
-    print(f"[SMOKE] Waiting 2s for subscriber to process...")
+        # Emit fake violation
+        emit_fake_violation("forget_guard", "warn", "smoke_test_violation")
 
-    # Wait 2s
-    time.sleep(2.0)
+        print(f"\n[SMOKE] Emitted fake K9_VIOLATION_DETECTED event")
+        print(f"[SMOKE] Baseline seq_global: {baseline_seq}")
+        print(f"[SMOKE] Waiting 2s for subscriber to process...")
 
-    # Check for FORGET_GUARD_K9_WARN event
-    events = get_cieu_events_after_seq(baseline_seq, "FORGET_GUARD_K9_WARN")
+        # Wait 2s
+        time.sleep(2.0)
 
-    print(f"[SMOKE] Found {len(events)} FORGET_GUARD_K9_WARN events after baseline")
+        # Check for FORGET_GUARD_K9_WARN event
+        events = get_cieu_events_after_seq(baseline_seq, "FORGET_GUARD_K9_WARN")
 
-    if len(events) >= 1:
-        print(f"[SMOKE] ✅ SMOKE CASCADE SUCCESS — handler responded within 2s")
-    else:
-        print(f"[SMOKE] ❌ SMOKE CASCADE FAIL — no handler event detected")
+        print(f"[SMOKE] Found {len(events)} FORGET_GUARD_K9_WARN events after baseline")
 
-    assert len(events) >= 1, "Smoke cascade failed — no handler event within 2s"
+        if len(events) >= 1:
+            print(f"[SMOKE] ✅ SMOKE CASCADE SUCCESS — handler responded within 2s")
+        else:
+            print(f"[SMOKE] ❌ SMOKE CASCADE FAIL — no handler event detected")
+
+        assert len(events) >= 1, "Smoke cascade failed — no handler event within 2s"
+    finally:
+        stop_subscriber_daemon()
