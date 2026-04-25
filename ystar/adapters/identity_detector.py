@@ -61,18 +61,6 @@ _AGENT_TYPE_MAP = {
     "Agent-Performance": "eng-perf",
     "Agent-Compliance": "eng-compliance",
 
-    # Y* Bridge Labs canonical staff aliases (backward compatibility)
-    "Samantha-Secretary": "secretary",
-    "Maya-Governance": "eng-governance",
-    "Ryan-Platform": "eng-platform",
-    "Ethan-CTO": "cto",
-    "Leo-Kernel": "eng-kernel",
-    "Jordan-Domains": "eng-domains",
-    "Alex-Security": "eng-security",
-    "Priya-ML": "eng-ml",
-    "Carlos-Performance": "eng-perf",
-    "Elena-Compliance": "eng-compliance",
-
     # Legacy format support (role IDs)
     "ystar-ceo": "ceo",
     "ystar-cto": "cto",
@@ -96,29 +84,74 @@ _AGENT_TYPE_MAP = {
 
 def _load_alias_map() -> Dict[str, str]:
     """
-    CZL-ARCH-1 (2026-04-18): Load agent aliases from .ystar_session.json.
+    CZL-ARCH-1 (2026-04-18): Load agent aliases.
 
-    Returns dict of custom_name -> canonical_id. Gracefully returns {} if
-    session file missing, unreadable, or lacks 'agent_aliases' field.
+    Product rule:
+      _AGENT_TYPE_MAP remains generic only. Organization-specific names such
+      as "Samantha-Secretary" or "Ethan-CTO" must come from configuration.
+
+    Isolation rule:
+      If YSTAR_REPO_ROOT is explicitly set, only that repo root is trusted.
+      Do not fallback to an adjacent dogfood ystar-company checkout. This keeps
+      tests and standalone product installs hermetic.
+
+    Sources:
+      1. .ystar_session.json "agent_aliases" near YSTAR_REPO_ROOT or cwd.
+      2. If YSTAR_REPO_ROOT is not set and no session aliases were found,
+         optionally read adjacent ystar-company/governance/agent_id_canonical.json.
     """
+    aliases_out: Dict[str, str] = {}
+
+    def _merge_aliases(candidate: Any) -> None:
+        if isinstance(candidate, dict):
+            for k, v in candidate.items():
+                if isinstance(k, str) and isinstance(v, str):
+                    aliases_out.setdefault(k, v)
+
+    repo_root = os.environ.get("YSTAR_REPO_ROOT", "")
+
+    # Source 1: session-local aliases.
     try:
-        repo_root = os.environ.get("YSTAR_REPO_ROOT", "")
         if repo_root:
             session_path = Path(repo_root) / ".ystar_session.json"
         else:
             session_path = Path(".ystar_session.json")
-        if not session_path.exists():
-            return {}
-        with open(session_path, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-        aliases = cfg.get("agent_aliases", {})
-        if isinstance(aliases, dict):
-            return aliases
-        _log.warning(".ystar_session.json agent_aliases is not a dict, ignoring")
-        return {}
+        if session_path.exists():
+            with open(session_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            aliases = cfg.get("agent_aliases", {})
+            if isinstance(aliases, dict):
+                _merge_aliases(aliases)
+            elif aliases:
+                _log.warning(".ystar_session.json agent_aliases is not a dict, ignoring")
     except Exception as e:
-        _log.debug("Failed to load agent_aliases: %s", e)
-        return {}
+        _log.debug("Failed to load .ystar_session.json agent_aliases: %s", e)
+
+    # Hermetic mode: explicit YSTAR_REPO_ROOT means no adjacent fallback.
+    if repo_root:
+        return aliases_out
+
+    # Source 2: optional adjacent ystar-company canonical registry.
+    # Only used for local dogfood convenience when no explicit repo root is set.
+    if aliases_out:
+        return aliases_out
+
+    try:
+        here = Path(__file__).resolve()
+        candidates = []
+        for parent in here.parents:
+            candidates.append(parent.parent / "ystar-company" / "governance" / "agent_id_canonical.json")
+        for registry_path in candidates:
+            if not registry_path.exists():
+                continue
+            with open(registry_path, "r", encoding="utf-8") as f:
+                registry = json.load(f)
+            _merge_aliases(registry.get("aliases", {}))
+            break
+    except Exception as e:
+        _log.debug("Failed to load adjacent agent_id_canonical aliases: %s", e)
+
+    return aliases_out
 
 
 def _map_agent_type(agent_type: str) -> str:

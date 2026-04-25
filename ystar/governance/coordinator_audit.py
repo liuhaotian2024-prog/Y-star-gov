@@ -381,8 +381,15 @@ def check_reply_5tuple_compliance(reply_text: str, strictness: str = "strict", a
     # Stage 1: Dispatch detection (per methodology §1-§2)
     is_dispatch, reason = is_dispatch_receipt(reply_text, agent_id or "unknown")
     if not is_dispatch:
-        # Conversational/exempt reply, 5-tuple optional → no violation
-        return None
+        # Partial CZL envelopes must not be exempted as conversational prose.
+        # If a long reply already contains any CZL 5-tuple label, treat it as
+        # an attempted structured receipt/dispatch and validate missing labels.
+        required_labels = ["Y*", "Xt", "U", "Yt+1", "Rt+1"]
+        has_any_czl_label = any(_label_present(label, reply_text) for label in required_labels)
+        if not has_any_czl_label:
+            # Conversational/exempt reply, 5-tuple optional → no violation
+            return None
+        reason = "trigger:partial_czl_envelope"
 
     # Stage 2: 5-tuple validation (per methodology §3 + primer §4)
     passed, missing_labels = validate_5tuple(reply_text, strictness)

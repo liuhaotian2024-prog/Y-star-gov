@@ -8,7 +8,36 @@ Universal audit batch (Board 2026-04-16):
 Ref: ystar/governance/forget_guard_rules.yaml lines 213-246
 """
 import pytest
+import yaml
+from pathlib import Path
+
 from ystar.governance.forget_guard import ForgetGuard
+
+
+RULES_PATH = Path(__file__).resolve().parents[2] / "ystar" / "governance" / "forget_guard_rules.yaml"
+
+
+def _q2_q7_rules_present() -> bool:
+    """Q2/Q7 were retired from ForgetGuard v0.5 structured runtime rules.
+
+    This legacy test module only applies to snapshots where those rules still
+    exist in forget_guard_rules.yaml. Current v0.5 ForgetGuard no longer scans
+    free-text action_payload for multi-task/task-card patterns.
+    """
+    if not RULES_PATH.exists():
+        return False
+    data = yaml.safe_load(RULES_PATH.read_text(encoding="utf-8")) or {}
+    names = {r.get("name") for r in data.get("rules", [])}
+    return {
+        "multi_task_dispatch_disguise",
+        "task_card_without_spawn",
+    }.issubset(names)
+
+
+pytestmark = pytest.mark.skipif(
+    not _q2_q7_rules_present(),
+    reason="Q2/Q7 retired from ForgetGuard v0.5 structured-only runtime rules.",
+)
 
 
 @pytest.fixture

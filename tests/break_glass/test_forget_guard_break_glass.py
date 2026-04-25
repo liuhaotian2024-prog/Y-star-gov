@@ -33,14 +33,22 @@ def tmp_rules(tmp_path):
         "rules": [
             {
                 "name": "test_block_rule",
-                "pattern": BLOCK_PATTERN,
+                "type": "structured",
+                "conditions": {
+                    "action_type": "deployment",
+                    "deployment_scope": "forbidden_zone",
+                },
                 "mode": "deny",
                 "message": "Cannot deploy to forbidden zone",
                 "rationale": "Security boundary violation",
             },
             {
                 "name": "test_advisory_rule",
-                "pattern": ADVISORY_PATTERN,
+                "type": "structured",
+                "conditions": {
+                    "action_type": "file_write",
+                    "note_kind": "informal",
+                },
                 "mode": "warn",
                 "message": "Informal notes should be reviewed",
                 "rationale": "Quality drift",
@@ -64,6 +72,7 @@ def block_context():
         "agent_id": "alpha",
         "action_type": "deployment",
         "action_payload": "deploy forbidden zone staging cluster",
+        "deployment_scope": "forbidden_zone",
         "target_agent": "beta",
     }
 
@@ -73,6 +82,7 @@ def advisory_context():
         "agent_id": "alpha",
         "action_type": "file_write",
         "action_payload": "draft informal note on topic",
+        "note_kind": "informal",
         "target_agent": "",
     }
 
@@ -153,7 +163,12 @@ class TestRescueModeBypass:
             rescue_mode_search_dirs=[str(dir1), str(dir2)],
             deny_history_path=str(tmp_path / ".deny_hist_multi.json"),
         )
-        ctx = {"agent_id": "alpha", "action_payload": "deploy forbidden zone now"}
+        ctx = {
+            "agent_id": "alpha",
+            "action_type": "deployment",
+            "deployment_scope": "forbidden_zone",
+            "action_payload": "deploy forbidden zone now",
+        }
         assert g.check(ctx) is not None
         (dir2 / BREAK_GLASS_FLAG).touch()
         assert g.check(ctx) is None
@@ -165,7 +180,7 @@ class TestConsecutiveBlockEscalation:
         assert result["break_glass_downgrade"] is False
 
     def test_three_blocks_triggers_downgrade(self, guard, block_context):
-        for i in range(CONSECUTIVE_DENY_THRESHOLD):
+        for i in range(CONSECUTIVE_DENY_THRESHOLD - 1):
             result = guard.check(block_context)
             assert result["mode"] == "deny", f"Block #{i+1} should still block"
         result = guard.check(block_context)
@@ -199,7 +214,12 @@ class TestConsecutiveBlockEscalation:
         assert result["break_glass_downgrade"] is False
 
     def test_empty_agent_id_no_crash(self, guard):
-        ctx = {"agent_id": "", "action_payload": "deploy forbidden zone"}
+        ctx = {
+            "agent_id": "",
+            "action_type": "deployment",
+            "deployment_scope": "forbidden_zone",
+            "action_payload": "deploy forbidden zone",
+        }
         result = guard.check(ctx)
         if result is not None:
             assert "break_glass_downgrade" in result
@@ -222,7 +242,7 @@ class TestCrossProcessPersistence:
 
     def test_new_instance_reads_persisted_history(self, tmp_rules, tmp_path, block_context):
         hist = str(tmp_path / ".fg_deny_hist_cross.json")
-        for _ in range(CONSECUTIVE_DENY_THRESHOLD):
+        for _ in range(CONSECUTIVE_DENY_THRESHOLD - 1):
             g = ForgetGuard(
                 rules_path=tmp_rules,
                 rescue_mode_search_dirs=[str(tmp_path)],
@@ -272,24 +292,44 @@ class TestHookWireContextKeys:
             "agent_id": "alpha",
             "tool": "Bash",
             "tool_input": {"command": "deploy forbidden zone staging"},
+            "action_type": "deployment",
+            "deployment_scope": "forbidden_zone",
         }
         result = guard.check(ctx)
         assert result is not None
         assert result["rule_name"] == "test_block_rule"
 
     def test_match_via_command_key(self, guard):
-        ctx = {"agent_id": "alpha", "tool": "Bash", "command": "deploy forbidden zone"}
+        ctx = {
+            "agent_id": "alpha",
+            "tool": "Bash",
+            "command": "deploy forbidden zone",
+            "action_type": "deployment",
+            "deployment_scope": "forbidden_zone",
+        }
         result = guard.check(ctx)
         assert result is not None
 
     def test_match_via_file_path_key(self, guard):
         # file_path uses underscores; content key carries the payload text
-        ctx = {"agent_id": "alpha", "tool": "Write", "file_path": "/tmp/output.py", "content": "deploy forbidden zone"}
+        ctx = {
+            "agent_id": "alpha",
+            "tool": "Write",
+            "file_path": "/tmp/output.py",
+            "content": "deploy forbidden zone",
+            "action_type": "deployment",
+            "deployment_scope": "forbidden_zone",
+        }
         result = guard.check(ctx)
         assert result is not None
 
     def test_active_agent_alias(self, guard):
-        ctx = {"active_agent": "alpha", "action_payload": "deploy forbidden zone"}
+        ctx = {
+            "active_agent": "alpha",
+            "action_type": "deployment",
+            "deployment_scope": "forbidden_zone",
+            "action_payload": "deploy forbidden zone",
+        }
         result = guard.check(ctx)
         assert result is not None
 

@@ -1997,7 +1997,8 @@ def _run_per_rule_detectors(who: str, tool_name: str, params: dict) -> None:
     run the pure detector functions and emit advisory CIEU telemetry events.
     """
     try:
-        from ystar.rules import per_rule_detectors as prd
+        import importlib
+        prd = importlib.import_module("ystar.rules.per_rule_detectors")
         from ystar.governance.cieu_store import CIEUStore
     except Exception as exc:
         _log.warning("per-rule detector compatibility import failed: %s", exc)
