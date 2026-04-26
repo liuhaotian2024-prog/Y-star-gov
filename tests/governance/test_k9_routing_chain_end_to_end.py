@@ -30,6 +30,7 @@ CIEU_DB = COMPANY_ROOT / ".ystar_cieu.db"
 STATE_FILE = COMPANY_ROOT / ".k9_subscriber_state.json"
 PID_FILE = Path("/tmp/k9_subscriber.pid")
 SUBSCRIBER_SCRIPT = REPO_ROOT / "ystar" / "governance" / "k9_routing_subscriber.py"
+_SUBSCRIBER_PROCS = {}
 
 # Add company scripts to path for CIEU helpers
 sys.path.insert(0, str(COMPANY_ROOT / "scripts"))
@@ -41,17 +42,7 @@ sys.path.insert(0, str(COMPANY_ROOT / "scripts"))
 def clean_state():
     """Clean up subscriber state before/after each test."""
     # Cleanup before
-    if PID_FILE.exists():
-        try:
-            pid = int(PID_FILE.read_text())
-            os.kill(pid, signal.SIGTERM)
-            time.sleep(0.5)
-        except Exception:
-            pass
-        try:
-            PID_FILE.unlink()
-        except FileNotFoundError:
-            pass
+    stop_subscriber_daemon()
 
     if STATE_FILE.exists():
         STATE_FILE.unlink()
@@ -59,17 +50,7 @@ def clean_state():
     yield
 
     # Cleanup after
-    if PID_FILE.exists():
-        try:
-            pid = int(PID_FILE.read_text())
-            os.kill(pid, signal.SIGTERM)
-            time.sleep(0.5)
-        except Exception:
-            pass
-        try:
-            PID_FILE.unlink()
-        except FileNotFoundError:
-            pass
+    stop_subscriber_daemon()
 
     if STATE_FILE.exists():
         try:
@@ -188,6 +169,35 @@ def wait_for_cieu_events(seq_global: int, event_type: str, *, min_count: int = 1
     return events
 
 
+def _close_proc_streams(proc: subprocess.Popen) -> None:
+    """Close Popen pipes if a future change starts capturing output."""
+    for stream in (proc.stdin, proc.stdout, proc.stderr):
+        if stream is not None:
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+
+def _process_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _wait_for_pid_exit(pid: int, timeout: float = 5.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not _process_exists(pid):
+            return True
+        time.sleep(0.1)
+    return not _process_exists(pid)
+
+
 def start_subscriber_daemon() -> int:
     """
     Start subscriber daemon in background.
@@ -222,28 +232,61 @@ def start_subscriber_daemon() -> int:
         stderr=subprocess.DEVNULL,
         env=env,
     )
+    _SUBSCRIBER_PROCS[proc.pid] = proc
 
     # Wait for PID file to appear
     for _ in range(20):  # 2s timeout
         if PID_FILE.exists():
             pid = int(PID_FILE.read_text())
+            _SUBSCRIBER_PROCS[pid] = proc
             return pid
         time.sleep(0.1)
 
+    stop_subscriber_daemon(proc.pid)
     raise TimeoutError("Subscriber daemon failed to start")
 
 
-def stop_subscriber_daemon():
+def stop_subscriber_daemon(pid: int = None):
     """Stop subscriber daemon."""
-    if not PID_FILE.exists():
+    if pid is None and PID_FILE.exists():
+        try:
+            pid = int(PID_FILE.read_text())
+        except Exception:
+            pid = None
+
+    if pid is None:
         return
 
+    proc = _SUBSCRIBER_PROCS.pop(pid, None)
     try:
-        pid = int(PID_FILE.read_text())
-        os.kill(pid, signal.SIGTERM)
-        time.sleep(0.5)
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5.0)
+        elif _process_exists(pid):
+            os.kill(pid, signal.SIGTERM)
+            if not _wait_for_pid_exit(pid):
+                os.kill(pid, signal.SIGKILL)
+                _wait_for_pid_exit(pid)
     except Exception:
         pass
+    finally:
+        if proc is not None:
+            _close_proc_streams(proc)
+        if PID_FILE.exists():
+            try:
+                current_pid = int(PID_FILE.read_text())
+            except Exception:
+                current_pid = pid
+            stopped = proc.poll() is not None if proc is not None else not _process_exists(pid)
+            if (current_pid == pid and stopped) or not _process_exists(current_pid):
+                try:
+                    PID_FILE.unlink()
+                except FileNotFoundError:
+                    pass
 
 
 # ═══ TESTS ═══
