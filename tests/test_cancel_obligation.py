@@ -8,6 +8,8 @@ Test graceful obligation cancellation mechanisms:
 - CIEU audit trail preservation
 """
 import time
+import pytest
+
 from ystar.governance.omission_engine import OmissionEngine
 from ystar.governance.omission_store import InMemoryOmissionStore
 from ystar.governance.omission_models import (
@@ -16,6 +18,8 @@ from ystar.governance.omission_models import (
     Severity,
 )
 from ystar.governance.cieu_store import NullCIEUStore
+
+pytestmark = pytest.mark.filterwarnings("ignore:NullCIEUStore is active:UserWarning")
 
 
 def make_engine():

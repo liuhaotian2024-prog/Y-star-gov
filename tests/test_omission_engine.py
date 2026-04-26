@@ -17,6 +17,8 @@ from ystar.governance.obligation_triggers import (
     ObligationTrigger, TriggerRegistry, reset_trigger_registry
 )
 
+pytestmark = pytest.mark.filterwarnings("ignore:NullCIEUStore is active:UserWarning")
+
 
 def make_obligation(overdue_secs=0, hard_overdue_secs=30.0,
                     pre_status=None) -> ObligationRecord:

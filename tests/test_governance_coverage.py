@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+pytestmark = pytest.mark.filterwarnings("ignore:NullCIEUStore is active:UserWarning")
+
 
 class TestCoverageBaseline:
     """测试coverage baseline创建逻辑"""

@@ -2093,7 +2093,8 @@ def _read_marker_fallback() -> Optional[str]:
                     continue
                 _path = os.path.join(base, f".ystar_active_agent.{_sanitized}")
                 try:
-                    content = open(_path, "r", encoding="utf-8").read().strip()
+                    with open(_path, "r", encoding="utf-8") as marker_file:
+                        content = marker_file.read().strip()
                     if content:
                         _log.debug("[marker-fallback] per-session (%s): '%s'", _sanitized, content)
                         return content
@@ -2113,7 +2114,8 @@ def _read_marker_fallback() -> Optional[str]:
                 continue
             _path = os.path.join(base, f".ystar_active_agent.ppid_{_ppid}")
             try:
-                content = open(_path, "r", encoding="utf-8").read().strip()
+                with open(_path, "r", encoding="utf-8") as marker_file:
+                    content = marker_file.read().strip()
                 if content:
                     _log.debug("[marker-fallback] per-ppid (%s): '%s'", _ppid, content)
                     return content
@@ -2128,7 +2130,8 @@ def _read_marker_fallback() -> Optional[str]:
         _path = os.path.join(base, ".ystar_active_agent")
         try:
             _st = os.stat(_path)
-            content = open(_path, "r", encoding="utf-8").read().strip()
+            with open(_path, "r", encoding="utf-8") as marker_file:
+                content = marker_file.read().strip()
             if content:
                 _candidates.append((_st.st_mtime, content))
         except FileNotFoundError:

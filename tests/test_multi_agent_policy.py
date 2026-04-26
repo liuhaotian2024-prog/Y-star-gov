@@ -128,7 +128,8 @@ class TestFromAgentsMdMulti:
         assert "billing" in deny_str or "admin_panel" in deny_str
 
     def test_missing_file_returns_fallback(self):
-        policy = Policy.from_agents_md_multi("/nonexistent/AGENTS.md")
+        with pytest.warns(UserWarning, match="AGENTS.md not found"):
+            policy = Policy.from_agents_md_multi("/nonexistent/AGENTS.md")
         assert "agent" in policy
 
     def test_env_denied_for_all(self, agents_md):

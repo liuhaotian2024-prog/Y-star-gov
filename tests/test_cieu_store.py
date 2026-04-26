@@ -105,11 +105,13 @@ class TestMerkleSealing:
 class TestNullCIEUStore:
 
     def test_write_dict_no_crash(self):
-        s = NullCIEUStore()
+        with pytest.warns(UserWarning, match="NullCIEUStore is active"):
+            s = NullCIEUStore()
         s.write_dict({"session_id": "x", "decision": "allow"})
 
     def test_stats_zero(self):
-        s = NullCIEUStore()
+        with pytest.warns(UserWarning, match="NullCIEUStore is active"):
+            s = NullCIEUStore()
         assert s.stats().get("total", 0) == 0
 
     def test_issues_user_warning(self):

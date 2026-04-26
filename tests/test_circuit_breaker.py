@@ -20,6 +20,8 @@ from ystar.governance.omission_models import (
 from ystar.governance.omission_store import InMemoryOmissionStore
 from ystar.governance.cieu_store import NullCIEUStore
 
+pytestmark = pytest.mark.filterwarnings("ignore:NullCIEUStore is active:UserWarning")
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 

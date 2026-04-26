@@ -460,7 +460,8 @@ def _cmd_trend(args: list) -> None:
     db_path = ".ystar_cieu.db"
 
     try:
-        cfg = json.load(open(".ystar_session.json", encoding="utf-8"))
+        with open(".ystar_session.json", encoding="utf-8") as session_file:
+            cfg = json.load(session_file)
         db_path = cfg.get("cieu_db", db_path)
     except Exception:
         pass

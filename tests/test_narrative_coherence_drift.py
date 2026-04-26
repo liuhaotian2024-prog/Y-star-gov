@@ -4,7 +4,15 @@ Verifies hybrid keyword + TF-IDF scoring has correct gradient.
 """
 import json
 import tempfile
+import warnings
 from pathlib import Path
+
+import pytest
+
+warnings.filterwarnings("ignore", message="urllib3 v2 only supports OpenSSL.*")
+
+pytestmark = pytest.mark.filterwarnings("ignore:urllib3 v2 only supports OpenSSL.*")
+
 from ystar.governance.narrative_coherence_detector import check_ceo_output_vs_subgoal
 
 

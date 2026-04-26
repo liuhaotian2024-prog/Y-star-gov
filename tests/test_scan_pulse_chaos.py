@@ -52,6 +52,8 @@ from ystar.governance.governance_loop import GovernanceLoop
 from ystar.domains.openclaw.accountability_pack import apply_openclaw_accountability_pack
 from ystar.kernel.dimensions import IntentContract
 
+pytestmark = pytest.mark.filterwarnings("ignore:NullCIEUStore is active:UserWarning")
+
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 

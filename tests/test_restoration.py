@@ -16,6 +16,8 @@ from ystar.governance.omission_store import InMemoryOmissionStore
 from ystar.governance.omission_rules import reset_registry
 from ystar.governance.cieu_store import NullCIEUStore
 
+pytestmark = pytest.mark.filterwarnings("ignore:NullCIEUStore is active:UserWarning")
+
 
 def make_test_engine():
     """创建测试用 OmissionEngine"""
