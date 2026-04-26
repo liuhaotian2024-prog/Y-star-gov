@@ -1,0 +1,74 @@
+{
+  "schema_name": "ystar.gov.pre_u_packet_validator.interface_index",
+  "schema_version": "v0",
+  "interface_name": "Pre-U Counterfactual Packet Validator Interface",
+  "interface_status": "spec_only",
+  "owned_by": "Y-star-gov",
+  "source_packet_schema_ref": "/Users/haotianliu/.openclaw/workspace/ystar-company/agent_brains/Aiden-CEO/pre_u_counterfactual/packet_schema.json",
+  "docs": [
+    "docs/pre_u_packet_validator/README.md",
+    "docs/pre_u_packet_validator/validator_interface_spec.md",
+    "docs/pre_u_packet_validator/validation_matrix.md",
+    "docs/pre_u_packet_validator/failure_actions.md",
+    "docs/pre_u_packet_validator/hook_contract.md",
+    "docs/pre_u_packet_validator/cieu_contract.md",
+    "docs/pre_u_packet_validator/non_goals.md",
+    "docs/pre_u_packet_validator/open_gaps.md"
+  ],
+  "validation_categories": [
+    "schema validity",
+    "packet_id presence",
+    "agent_id validity",
+    "agent_capsule_ref presence",
+    "task_id presence",
+    "Y* presence and grounding",
+    "m_functor presence and grounding",
+    "x_t_summary presence",
+    "candidate_actions non-empty",
+    "selected_action references existing candidate",
+    "predicted_r_t1 present",
+    "residual minimization rationale present",
+    "risk/high-risk review fields present",
+    "packet_status valid",
+    "no actual Yt+1 claim before action",
+    "no forbidden DB/log/runtime mutation hidden inside packet",
+    "CIEU linkage policy present",
+    "governance expectations present"
+  ],
+  "failure_actions": [
+    "allow",
+    "warn",
+    "require_revision",
+    "escalate",
+    "deny"
+  ],
+  "hook_contract_ref": "docs/pre_u_packet_validator/hook_contract.md",
+  "cieu_contract_ref": "docs/pre_u_packet_validator/cieu_contract.md",
+  "non_goals": [
+    "No validator implementation",
+    "No packet generation",
+    "No Aiden brain migration into Y-star-gov",
+    "No DB access",
+    "No hook runtime change",
+    "No CIEU schema change",
+    "No risk-tier enforcement",
+    "No Ethan/Samantha generalization"
+  ],
+  "open_gaps": [
+    "No JSON Schema loader/validator wired in Y-star-gov",
+    "No packet reference in CIEU event schema",
+    "No predicted-vs-actual delta metric",
+    "No hook enforcement",
+    "No risk-tier enforcement",
+    "No live RLE integration",
+    "No Goodhart semantic validator beyond existing field validator references",
+    "No multi-agent packet generalization"
+  ],
+  "implementation_status": {
+    "validator_code": "not_implemented",
+    "hook_integration": "not_implemented",
+    "cieu_event_schema": "not_implemented",
+    "risk_tier_enforcement": "not_implemented",
+    "brain_writeback_delta": "not_implemented"
+  }
+}
