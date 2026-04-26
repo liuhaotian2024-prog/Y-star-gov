@@ -40,6 +40,46 @@ _WORKER_THREAD: Optional[threading.Thread] = None
 _WORKER_LOCK = threading.Lock()
 
 
+def _close_memory_store(store) -> None:
+    """Best-effort close for MemoryStore-backed sqlite resources."""
+    for attr in ("close",):
+        fn = getattr(store, attr, None)
+        if callable(fn):
+            try:
+                fn()
+            except Exception:
+                pass
+            return
+
+    for attr in ("conn", "_conn", "connection", "_connection"):
+        conn = getattr(store, attr, None)
+        close = getattr(conn, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
+            return
+
+
+def flush_memory_ingest(timeout: float = 2.0) -> bool:
+    """
+    Wait until the async ingest queue is drained.
+
+    This is intentionally not used by hook-path enqueue(), which remains
+    fail-open and non-blocking. It exists for tests and controlled shutdown
+    paths that must release temporary sqlite files before cleanup.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        with _INGEST_QUEUE.mutex:
+            pending = _INGEST_QUEUE.unfinished_tasks
+        if pending == 0:
+            return True
+        time.sleep(0.01)
+    return False
+
+
 def should_ingest(event: dict) -> Tuple[bool, Optional[str]]:
     """
     Pure function determining whether a CIEU event should trigger memory ingest.
@@ -140,6 +180,7 @@ def _worker_loop(memory_db_path: str) -> None:
     _log.info("Worker loop started, memory_db=%s", memory_db_path)
 
     while True:
+        item = None
         try:
             item = _INGEST_QUEUE.get(timeout=1.0)
             event = item["event"]
@@ -149,29 +190,39 @@ def _worker_loop(memory_db_path: str) -> None:
             # Extract content from event
             content = _build_memory_content(event, memory_type)
 
-            # Write to memory store
+            # Write to memory store. Keep the store lifetime scoped to one
+            # queue item so temporary sqlite files can be released promptly.
             store = MemoryStore(db_path)
-            mem = Memory(
-                agent_id=event.get("agent_id", "unknown"),
-                memory_type=memory_type,
-                content=content,
-                initial_score=1.0,
-                context_tags=[event.get("event_type", "")],
-                source_cieu_ref=event.get("cieu_ref"),
-                metadata={
-                    "session_id": event.get("session_id"),
-                    "decision": event.get("decision"),
-                    "ingested_at": time.time(),
-                }
-            )
-            store.remember(mem)
+            try:
+                mem = Memory(
+                    agent_id=event.get("agent_id", "unknown"),
+                    memory_type=memory_type,
+                    content=content,
+                    initial_score=1.0,
+                    context_tags=[event.get("event_type", "")],
+                    source_cieu_ref=event.get("cieu_ref"),
+                    metadata={
+                        "session_id": event.get("session_id"),
+                        "decision": event.get("decision"),
+                        "ingested_at": time.time(),
+                    }
+                )
+                store.remember(mem)
+            finally:
+                _close_memory_store(store)
+
             _log.debug("Memory ingested: type=%s agent=%s", memory_type, mem.agent_id)
 
         except queue.Empty:
             continue
         except Exception as e:
             _log.error("Worker loop error (continuing): %s", e, exc_info=True)
-
+        finally:
+            if item is not None:
+                try:
+                    _INGEST_QUEUE.task_done()
+                except ValueError:
+                    pass
 
 def _build_memory_content(event: dict, memory_type: str) -> str:
     """
@@ -211,4 +262,5 @@ def _build_memory_content(event: dict, memory_type: str) -> str:
 __all__ = [
     "should_ingest",
     "enqueue",
+    "flush_memory_ingest",
 ]

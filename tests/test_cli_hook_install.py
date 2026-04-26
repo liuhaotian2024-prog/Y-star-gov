@@ -229,8 +229,9 @@ class TestHookInstallIntegration:
         out = capsys.readouterr().out
         # 验证自检执行
         assert "Self-test" in out or "self-test" in out.lower()
-        # 自检应该通过或跳过
-        assert ("passed" in out.lower() or "skipped" in out.lower())
+        # 自检应该通过或跳过，并且 CLI 必须给出清晰的人类可读状态。
+        out_l = out.lower()
+        assert ("passed" in out_l or "skipped" in out_l)
 
     def test_hook_install_multiple_candidate_paths(self, tmp_path):
         """测试在多个候选路径中找到配置文件"""

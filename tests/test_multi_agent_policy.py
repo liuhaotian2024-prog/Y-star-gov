@@ -271,7 +271,7 @@ class TestHookIntegration:
             "agent_id": "doctor",
         }
         response = check_hook(payload, policy)
-        assert response.get("action") == "block"
+        assert response.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
 
     def test_env_denied_all(self, policy):
         for agent in ["doctor", "nurse", "admin"]:
@@ -281,7 +281,7 @@ class TestHookIntegration:
                 "agent_id": agent,
             }
             response = check_hook(payload, policy)
-            assert response.get("action") == "block", f"{agent} should be denied .env"
+            assert response.get("hookSpecificOutput", {}).get("permissionDecision") == "deny", f"{agent} should be denied .env"
 
     def test_read_always_allowed(self, policy):
         payload = {
@@ -402,8 +402,9 @@ class TestBashHookIntegration:
             "agent_id": "doctor",
         }
         response = check_hook(payload, policy)
-        assert response.get("action") == "block"
-        assert "Write boundary violation" in response.get("message", "")
+        hook_output = response.get("hookSpecificOutput", {})
+        assert hook_output.get("permissionDecision") == "deny"
+        assert "Write boundary violation" in hook_output.get("permissionDecisionReason", "")
 
     def test_bash_tee_denied_path(self, policy):
         """Test Bash tee to denied path."""
@@ -416,7 +417,7 @@ class TestBashHookIntegration:
         }
         response = check_hook(payload, policy)
         # Should be blocked because billing/ is not in doctor's allowed paths
-        assert response.get("action") == "block"
+        assert response.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
 
     def test_bash_cp_to_immutable_path(self, policy):
         """Test Bash cp to immutable governance file."""
@@ -426,8 +427,9 @@ class TestBashHookIntegration:
             "agent_id": "admin",
         }
         response = check_hook(payload, policy)
-        assert response.get("action") == "block"
-        assert "Immutable path violation" in response.get("message", "")
+        hook_output = response.get("hookSpecificOutput", {})
+        assert hook_output.get("permissionDecision") == "deny"
+        assert "Immutable path violation" in hook_output.get("permissionDecisionReason", "")
 
     def test_bash_mv_allowed_paths(self, policy):
         """Test Bash mv between allowed paths."""
@@ -450,4 +452,4 @@ class TestBashHookIntegration:
         }
         response = check_hook(payload, policy)
         # Should be blocked on ./billing/invoice.txt
-        assert response.get("action") == "block"
+        assert response.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"

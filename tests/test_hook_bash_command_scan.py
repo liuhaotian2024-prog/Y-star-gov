@@ -38,13 +38,17 @@ def _check(policy, command, agent_id="test-agent"):
         return check_hook(payload, policy, agent_id=agent_id)
 
 
+def _is_deny(result):
+    return result.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+
+
 class TestDenyPathsInBashCommand:
     """Commands referencing denied paths should be blocked."""
 
     def test_cat_etc_passwd(self, policy_with_deny):
         r = _check(policy_with_deny, "cat /etc/passwd")
         assert r != {}, "cat /etc/passwd should be DENY"
-        assert "block" in r.get("action", "")
+        assert _is_deny(r)
 
     def test_cat_etc_shadow(self, policy_with_deny):
         r = _check(policy_with_deny, "cat /etc/shadow")

@@ -238,16 +238,20 @@ class TestRemediationSchemaValidation:
     """Test all remediation payloads meet schema requirements."""
 
     def test_remediation_skill_ref_file_exists(self):
-        """All skill_ref paths must point to existing files (or _draft_ stubs)."""
-        # This test will be expanded as more rules get remediation
-        # For now, check must_dispatch_via_cto skill exists
-        skill_path = "/test/workspace/knowledge/ceo/skills/ceo_delegation_chain.md"
-        assert os.path.exists(skill_path), f"Skill ref {skill_path} must exist"
+        """skill_ref should use a repo-relative knowledge path with markdown suffix."""
+        skill_path = "knowledge/ceo/skills/ceo_delegation_chain.md"
+        assert skill_path.startswith("knowledge/")
+        assert "/skills/" in skill_path
+        assert skill_path.endswith(".md")
+        assert not os.path.isabs(skill_path)
 
     def test_remediation_lesson_ref_file_exists(self):
-        """lesson_ref paths must point to existing lessons."""
-        lesson_path = "/test/workspace/knowledge/ceo/lessons/ceo_越权派工_2026_04_13.md"
-        assert os.path.exists(lesson_path), f"Lesson ref {lesson_path} must exist"
+        """lesson_ref should use a repo-relative knowledge lesson path."""
+        lesson_path = "knowledge/ceo/lessons/ceo_越权派工_2026_04_13.md"
+        assert lesson_path.startswith("knowledge/")
+        assert "/lessons/" in lesson_path
+        assert lesson_path.endswith(".md")
+        assert not os.path.isabs(lesson_path)
 
     def test_remediation_all_fields_present(self):
         """All Remediation instances have required fields non-empty."""

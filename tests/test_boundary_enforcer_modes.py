@@ -30,24 +30,11 @@ from ystar.session import PolicyResult
 
 
 @pytest.fixture
-def temp_mode_file(tmp_path):
-    """Create temporary mode file for testing"""
+def temp_mode_file(tmp_path, monkeypatch):
+    """Create temporary mode file for testing."""
     mode_file = tmp_path / ".ystar_ceo_mode.json"
-
-    # Patch the mode file location
-    with patch("ystar.adapters.boundary_enforcer.Path") as mock_path_cls:
-        # Make Path() constructor work normally for most paths
-        original_path = Path
-
-        def path_side_effect(*args, **kwargs):
-            # Intercept the specific mode file path
-            if len(args) == 1 and args[0] == "/test/workspace/.ystar_ceo_mode.json":
-                return mode_file
-            # Otherwise use original Path
-            return original_path(*args, **kwargs)
-
-        mock_path_cls.side_effect = path_side_effect
-        yield mode_file
+    monkeypatch.setenv("YSTAR_REPO_ROOT", str(tmp_path))
+    yield mode_file
 
 
 class TestStandardMode:

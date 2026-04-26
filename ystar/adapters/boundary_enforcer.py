@@ -1466,6 +1466,127 @@ def _check_parallel_dispatch_required(
     return None
 
 
+def _check_verification_before_assertion(
+    who: str, tool_name: str, params: dict, agent_rules: dict
+) -> Optional[PolicyResult]:
+    """WARNING-only: require verification before impossibility assertions."""
+    if not agent_rules.get("verification_before_assertion"):
+        return None
+    if tool_name not in ["Write", "Edit"]:
+        return None
+
+    content = (params.get("content", "") + params.get("new_string", "")).lower()
+    assertion_keywords = [
+        "impossible", "can't", "cannot", "not possible", "不可能", "做不到", "无法",
+    ]
+    if not any(kw in content for kw in assertion_keywords):
+        return None
+
+    recent_verifications = [
+        call for call in _SESSION_TOOL_CALLS[-20:]
+        if call["tool"] in ["Read", "Grep", "Bash", "Glob"]
+    ]
+    if recent_verifications:
+        return None
+
+    reason = (
+        f"Behavior rule warning: agent '{who}' asserted impossibility without prior "
+        f"verification attempts. Consider using Read/Grep/Bash before making assertions."
+    )
+    _record_behavior_rule_cieu(
+        who=who,
+        rule_name="verification_before_assertion",
+        event_type="BEHAVIOR_RULE_WARNING",
+        decision="WARNING",
+        passed=False,
+        reason=reason,
+        params={"content_snippet": content[:200]},
+    )
+    _log.warning(reason)
+    return None
+
+
+def _check_no_fabrication(
+    who: str, tool_name: str, params: dict, agent_rules: dict
+) -> Optional[PolicyResult]:
+    """WARNING-only: require verification before citing statistics/data."""
+    if not agent_rules.get("no_fabrication"):
+        return None
+    if tool_name not in ["Write", "Edit"]:
+        return None
+
+    content = params.get("content", "") + params.get("new_string", "")
+    has_stats = (
+        re.search(r"\d+%", content)
+        or re.search(r"\$\d+", content)
+        or re.search(r"\d+\s*(users|customers|records|events|revenue)", content, re.IGNORECASE)
+    )
+    if not has_stats:
+        return None
+
+    recent_data_queries = [
+        call for call in _SESSION_TOOL_CALLS[-20:]
+        if call["tool"] in ["Read", "Grep", "Bash", "Glob"]
+    ]
+    if recent_data_queries:
+        return None
+
+    reason = (
+        f"Behavior rule warning: agent '{who}' included statistics/data without prior "
+        f"verification queries. Verify data before citing it."
+    )
+    _record_behavior_rule_cieu(
+        who=who,
+        rule_name="no_fabrication",
+        event_type="BEHAVIOR_RULE_WARNING",
+        decision="WARNING",
+        passed=False,
+        reason=reason,
+        params={"content_snippet": content[:200]},
+    )
+    _log.warning(reason)
+    return None
+
+
+def _check_counterfactual_before_major_decision(
+    who: str, tool_name: str, params: dict, agent_rules: dict
+) -> Optional[PolicyResult]:
+    """WARNING-only: major decisions should reference alternatives/counterfactuals."""
+    if not agent_rules.get("counterfactual_before_major_decision"):
+        return None
+
+    task = params.get("task", "")
+    is_major_decision = (
+        (tool_name == "Agent" and ("Level 2" in task or "Level 3" in task))
+        or (tool_name in ["Write", "Edit"] and "decision" in params.get("file_path", "").lower())
+    )
+    if not is_major_decision:
+        return None
+
+    counterfactual_keywords = [
+        "what if", "counterfactual", "alternative", "instead", "如果", "假设", "反事实",
+    ]
+    for call in _SESSION_TOOL_CALLS[-30:]:
+        call_params = call.get("params", {})
+        content = str(call_params.get("content", "")) + str(call_params.get("new_string", ""))
+        if any(kw in content.lower() for kw in counterfactual_keywords):
+            return None
+
+    reason = (
+        f"Behavior rule warning: agent '{who}' is making a major decision without "
+        f"counterfactual analysis. Consider exploring alternatives first."
+    )
+    _record_behavior_rule_cieu(
+        who=who,
+        rule_name="counterfactual_before_major_decision",
+        event_type="BEHAVIOR_RULE_WARNING",
+        decision="WARNING",
+        passed=False,
+        reason=reason,
+        params={"tool": tool_name, "task": task[:200]},
+    )
+    _log.warning(reason)
+    return None
 
 
 def _check_root_cause_fix_required(
@@ -1986,6 +2107,95 @@ def _check_board_approval_before_publish(
     return None
 
 
+def _check_real_conversation_count_required(
+    who: str, tool_name: str, params: dict, agent_rules: dict
+) -> Optional[PolicyResult]:
+    """WARNING-only: CSO reports should include conversation counts."""
+    if not agent_rules.get("real_conversation_count_required"):
+        return None
+    if tool_name not in ["Write", "Edit"]:
+        return None
+
+    file_path = params.get("file_path", "")
+    norm_path = os.path.normpath(file_path).replace("\\", "/")
+    if not any(pattern in norm_path for pattern in ["reports/daily/", "reports/cso/", "reports/autonomous/"]):
+        return None
+
+    content = params.get("content", "") + params.get("new_string", "")
+    conversation_patterns = [
+        r"conversations?:\s*\d+",
+        r"real conversations?:\s*\d+",
+        r"talked to \d+ (people|users|customers)",
+        r"外部对话:\s*\d+",
+        r"与\s*\d+\s*(人|用户|客户)",
+    ]
+    if any(re.search(pattern, content, re.IGNORECASE) for pattern in conversation_patterns):
+        return None
+
+    reason = (
+        f"Behavior rule warning: agent '{who}' wrote report '{file_path}' without a "
+        f"real conversation count. Include 'conversations: N' to track external engagement."
+    )
+    _record_behavior_rule_cieu(
+        who=who,
+        rule_name="real_conversation_count_required",
+        event_type="BEHAVIOR_RULE_WARNING",
+        decision="WARNING",
+        passed=False,
+        reason=reason,
+        params={"file_path": file_path},
+    )
+    _log.warning(reason)
+    return None
+
+
+def _check_ceo_substantive_response_requires_article_11_trace(
+    who: str, tool_name: str, params: dict, agent_rules: dict
+) -> Optional[PolicyResult]:
+    """Emit WARN/PASS telemetry for substantive CEO reports needing an L0 marker."""
+    if not agent_rules.get("article_11_always_on_substantive"):
+        return None
+    if who.lower() not in ("ceo", "aiden-ceo", "aiden"):
+        return None
+    if tool_name not in ["Write", "Edit"]:
+        return None
+
+    content = params.get("content", "") + params.get("new_string", "")
+    strategic_keywords = ["decide", "decision", "strategy", "strategic", "build", "plan", "should", "决定", "战略"]
+    is_substantive = len(content) >= 500 or any(kw in content.lower() for kw in strategic_keywords)
+    if not is_substantive:
+        return None
+
+    rule_name = "ceo_substantive_response_requires_article_11_trace"
+    file_path = params.get("file_path", "")
+    has_l0_marker = any(marker in content for marker in ["L0 Intent:", "L0:", "Layer 0", "第0层"])
+    if has_l0_marker:
+        _record_behavior_rule_cieu(
+            who=who,
+            rule_name=rule_name,
+            event_type="BEHAVIOR_RULE_PASS",
+            decision="PASS",
+            passed=True,
+            reason="Substantive CEO response includes an Article 11 L0 trace marker.",
+            params={"file_path": file_path, "marker": "L0"},
+        )
+        return None
+
+    reason = (
+        f"Behavior rule warning: substantive CEO response in '{file_path}' is missing an "
+        f"Article 11 L0 intent marker."
+    )
+    _record_behavior_rule_cieu(
+        who=who,
+        rule_name=rule_name,
+        event_type="BEHAVIOR_RULE_WARNING",
+        decision="WARN",
+        passed=False,
+        reason=reason,
+        params={"file_path": file_path, "content_length": len(content)},
+    )
+    _log.warning(reason)
+    return None
 
 
 def _run_per_rule_detectors(who: str, tool_name: str, params: dict) -> None:
@@ -2182,12 +2392,17 @@ def _check_behavior_rules(
         return deny_result
 
     # WARNING rules (log but don't block)
+    _check_verification_before_assertion(who, tool_name, params, agent_rules)
     _check_root_cause_fix_required(who, tool_name, params, agent_rules)
     _check_document_requires_execution_plan(who, tool_name, params, agent_rules)
+    _check_no_fabrication(who, tool_name, params, agent_rules)
+    _check_counterfactual_before_major_decision(who, tool_name, params, agent_rules)
     _check_must_check_health_on_session_start(who, tool_name, params, agent_rules)
     _check_completion_requires_cieu_audit(who, tool_name, params, agent_rules)
     _check_directive_decompose_timeout(who, tool_name, params, agent_rules)
     _check_content_length_check(who, tool_name, params, agent_rules)
+    _check_real_conversation_count_required(who, tool_name, params, agent_rules)
+    _check_ceo_substantive_response_requires_article_11_trace(who, tool_name, params, agent_rules)
 
     # Per-rule detectors (CZL-78 P1) migrated to RouterRegistry (CZL-ARCH-3).
     # They now run via ystar.rules.per_rule_detectors RouterRules in

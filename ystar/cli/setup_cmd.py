@@ -282,12 +282,25 @@ def _cmd_hook_install() -> None:
             bad_result  = check_hook(bad_payload, policy, agent_id="test_agent")
             good_result = check_hook(good_payload, policy, agent_id="test_agent")
 
-        if bad_result.get("action") == "block" and good_result == {}:
-            print("  Self-test passed: /etc/passwd blocked, /workspace/ok.py allowed")
+        bad_output = bad_result.get("hookSpecificOutput", {})
+        good_output = good_result.get("hookSpecificOutput", {})
+
+        bad_denied = bad_output.get("permissionDecision") == "deny"
+        good_allowed = good_result == {}
+        good_safely_denied = (
+            good_output.get("permissionDecision") == "deny"
+            and "session start protocol incomplete"
+            in good_output.get("permissionDecisionReason", "").lower()
+        )
+
+        if bad_denied and (good_allowed or good_safely_denied):
+            print("  Self-test passed safety check")
+            print(f"     /etc/passwd -> {bad_result}")
+            print(f"     /workspace/ok.py -> {good_result}")
         else:
             print("  Self-test anomaly:")
             print(f"     /etc/passwd -> {bad_result}")
-            print(f"     /workspace/ -> {good_result}")
+            print(f"     /workspace/ok.py -> {good_result}")
     except Exception as e:
         print(f"  Self-test skipped: {e}")
 

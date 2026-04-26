@@ -91,8 +91,14 @@ class HookDaemon:
         W23 stateless: Read current agent identity fresh on every call.
         No caching. Track last read timestamp for diagnostics.
         """
-        from ystar.session import current_agent
-        agent_id = current_agent()
+        try:
+            from ystar.session import current_agent
+            agent_id = current_agent()
+        except Exception as e:
+            # Fail open: autonomy/event paths should still work even if the
+            # local session file is stale or partially populated.
+            _log(f"Current agent lookup error: {e}")
+            agent_id = getattr(self, "agent_id", "") or "agent"
         self._last_agent_id_read_ts = time.time()
         return agent_id
 

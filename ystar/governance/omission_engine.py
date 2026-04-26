@@ -45,12 +45,13 @@ from ystar.governance.omission_models import (
 )
 from ystar.governance.omission_store import InMemoryOmissionStore, OmissionStore
 from ystar.governance.omission_rules import RuleRegistry, get_registry
-from ystar.governance.cieu_store import NullCIEUStore
+from ystar.governance.cieu_store import CIEUStore, NullCIEUStore
 
 _log = logging.getLogger(__name__)
 
 # 类型别名：支持两种 store
 AnyStore = Union[InMemoryOmissionStore, OmissionStore]
+_DEFAULT_CIEU_STORE = object()
 
 
 # ── 引擎输出 ─────────────────────────────────────────────────────────────────
@@ -102,7 +103,7 @@ class OmissionEngine:
         self,
         store: AnyStore = None,
         registry: Optional[RuleRegistry] = None,
-        cieu_store: Any = None,          # CIEUStore | NullCIEUStore | None
+        cieu_store: Any = _DEFAULT_CIEU_STORE,  # CIEUStore | NullCIEUStore | None
         now_fn: Optional[Any] = None,    # Callable[[], float]
         causal_notify_fn: Optional[Any] = None,  # GAP 5: Callable[[dict], None]
         trigger_registry: Any = None,    # TriggerRegistry | None
@@ -114,14 +115,14 @@ class OmissionEngine:
             store = OmissionStore(db_path=".ystar_omission.db")
         self.store    = store
         self.registry = registry or get_registry()
-        # [CZL-NULL-CIEU-STORE-FIX] Default to a real CIEUStore so omission
-        # CIEU events are persisted to .ystar_cieu_omission.db.
-        # NullCIEUStore is still honoured when passed explicitly (e.g. tests).
-        if cieu_store is not None:
+        # Default constructor path should persist omission evidence. Explicit
+        # None remains the legacy "no persistence" signal used by some unit tests.
+        if cieu_store is _DEFAULT_CIEU_STORE:
+            self.cieu_store = CIEUStore(db_path=".ystar_cieu_omission.db")
+        elif cieu_store is not None:
             self.cieu_store = cieu_store
         else:
-            from ystar.governance.cieu_store import CIEUStore
-            self.cieu_store = CIEUStore(db_path=".ystar_cieu_omission.db")
+            self.cieu_store = NullCIEUStore()
         self._now     = now_fn or time.time
         # GAP 5 FIX: Push model — notify causal engine of violations
         self._causal_notify_fn = causal_notify_fn
@@ -152,6 +153,11 @@ class OmissionEngine:
 
         # 1. 持久化事件
         self.store.add_event(ev)
+        entity = self.store.get_entity(ev.entity_id)
+        if entity is not None:
+            entity.last_event_at = ev.ts
+            entity.updated_at = max(entity.updated_at, ev.ts)
+            self.store.upsert_entity(entity)
 
         # 2. 尝试 fulfill pending obligations
         fulfilled = self._try_fulfill(ev)
@@ -844,11 +850,14 @@ class OmissionEngine:
         """
         entity = self.store.get_entity(entity_id)
         if entity is None:
-            return False
+            return True
 
-        # Check last_event_at timestamp
+        # For active entities created in-memory without a separate event trail,
+        # treat the entity itself as the source of truth instead of suppressing
+        # all violations. This keeps the anti-noise gate while preserving
+        # legitimate scan semantics in tests and adapter-driven flows.
         if entity.last_event_at is None:
-            return False
+            return entity.status == EntityStatus.ACTIVE
 
         return (now - entity.last_event_at) <= window_secs
 

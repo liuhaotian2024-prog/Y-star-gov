@@ -1324,6 +1324,9 @@ class TestParallelDispatchRequired:
 
     def test_serial_dispatch_denied(self):
         """CEO dispatching 2 engineers serially (5s gap) → DENY"""
+        from ystar.adapters.boundary_enforcer import _AGENT_DISPATCH_HISTORY
+        _AGENT_DISPATCH_HISTORY.clear()
+
         config = {
             "agent_behavior_rules": {
                 "ceo": {"parallel_dispatch_required": True}
@@ -1358,6 +1361,9 @@ class TestParallelDispatchRequired:
 
     def test_parallel_dispatch_allowed(self):
         """CEO dispatching 2 engineers in same batch (<1s gap) → ALLOW"""
+        from ystar.adapters.boundary_enforcer import _AGENT_DISPATCH_HISTORY
+        _AGENT_DISPATCH_HISTORY.clear()
+
         config = {
             "agent_behavior_rules": {
                 "ceo": {"parallel_dispatch_required": True}
@@ -1386,6 +1392,9 @@ class TestParallelDispatchRequired:
 
     def test_large_gap_allowed(self):
         """CEO dispatching with >30s gap → ALLOW (different context)"""
+        from ystar.adapters.boundary_enforcer import _AGENT_DISPATCH_HISTORY
+        _AGENT_DISPATCH_HISTORY.clear()
+
         config = {
             "agent_behavior_rules": {
                 "ceo": {"parallel_dispatch_required": True}

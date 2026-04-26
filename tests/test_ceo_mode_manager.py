@@ -309,8 +309,9 @@ class TestTriggerDetection:
         """T5: gov-mcp or hook daemon not running"""
         manager, mode_file, last_board_msg = temp_workspace
 
-        with patch.object(manager, "_check_processes_running", return_value=False):
-            trigger_id, evidence = manager.evaluate_triggers()
+        with patch.object(manager, "_check_cto_subagent_exists", return_value=True):
+            with patch.object(manager, "_check_processes_running", return_value=False):
+                trigger_id, evidence = manager.evaluate_triggers()
 
         assert trigger_id == "T5"
         assert "not running" in evidence["reason"]

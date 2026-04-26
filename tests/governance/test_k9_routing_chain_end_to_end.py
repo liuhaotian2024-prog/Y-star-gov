@@ -176,6 +176,18 @@ def get_cieu_events_after_seq(seq_global: int, event_type: str) -> list:
     return events
 
 
+def wait_for_cieu_events(seq_global: int, event_type: str, *, min_count: int = 1, timeout: float = 4.0) -> list:
+    """Poll until enough matching CIEU events appear or timeout expires."""
+    deadline = time.time() + timeout
+    events = []
+    while time.time() < deadline:
+        events = get_cieu_events_after_seq(seq_global, event_type)
+        if len(events) >= min_count:
+            return events
+        time.sleep(0.2)
+    return events
+
+
 def start_subscriber_daemon() -> int:
     """
     Start subscriber daemon in background.
@@ -393,12 +405,10 @@ def test_multiple_handlers_parallel(clean_state, cieu_conn):
     emit_fake_violation("czl_protocol", "warn", "dispatch_missing_5tuple")
     emit_fake_violation("agent_registry", "warn", "agent_id_unidentified")
 
-    time.sleep(2.0)
-
     # Check all 3 handler events emitted
-    forget_guard_events = get_cieu_events_after_seq(baseline_seq, "FORGET_GUARD_K9_WARN")
-    czl_events = get_cieu_events_after_seq(baseline_seq, "CZL_K9_WARN")
-    registry_events = get_cieu_events_after_seq(baseline_seq, "AGENT_REGISTRY_K9_WARN")
+    forget_guard_events = wait_for_cieu_events(baseline_seq, "FORGET_GUARD_K9_WARN")
+    czl_events = wait_for_cieu_events(baseline_seq, "CZL_K9_WARN")
+    registry_events = wait_for_cieu_events(baseline_seq, "AGENT_REGISTRY_K9_WARN")
 
     assert len(forget_guard_events) >= 1, "ForgetGuard handler not dispatched"
     assert len(czl_events) >= 1, "CZL handler not dispatched"

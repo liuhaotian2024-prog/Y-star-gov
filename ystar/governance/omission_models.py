@@ -313,6 +313,11 @@ class ObligationRecord:
     cancellation_reason: Optional[str] = None    # Why cancelled (session_ended, user_requested, etc.)
 
     @property
+    def triggered_by_event_id(self) -> Optional[str]:
+        """Backward-compatible alias for trigger provenance."""
+        return self.trigger_event_id
+
+    @property
     def effective_due_at(self) -> Optional[float]:
         """考虑宽限期之后的实际判定截止时间。"""
         if self.due_at is None:

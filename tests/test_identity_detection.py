@@ -59,14 +59,14 @@ class TestAgentIdentityDetection:
         assert result == "file_agent"
 
     def test_priority_5_fallback(self, monkeypatch, tmp_path):
-        """Priority 5: Fallback to 'agent' when all else fails."""
+        """Priority 5: Fallback to read-only 'guest' when all else fails."""
         # Clear all hints
         monkeypatch.delenv("YSTAR_AGENT_ID", raising=False)
         monkeypatch.delenv("CLAUDE_AGENT_NAME", raising=False)
         monkeypatch.chdir(tmp_path)  # No marker file
 
         result = _detect_agent_id({})
-        assert result == "agent"
+        assert result == "guest"
 
     def test_env_priority_order(self, monkeypatch, tmp_path):
         """YSTAR_AGENT_ID should beat CLAUDE_AGENT_NAME."""
@@ -98,7 +98,7 @@ class TestAgentIdentityDetection:
         assert result == "env_wins"
 
     def test_marker_file_read_error_falls_back(self, monkeypatch, tmp_path):
-        """If marker file exists but can't be read, fall back to 'agent'."""
+        """If marker file exists but can't be read, fall back to read-only 'guest'."""
         monkeypatch.delenv("YSTAR_AGENT_ID", raising=False)
         monkeypatch.delenv("CLAUDE_AGENT_NAME", raising=False)
 
@@ -108,8 +108,8 @@ class TestAgentIdentityDetection:
 
         monkeypatch.chdir(tmp_path)
         result = _detect_agent_id({})
-        # Should fall back to "agent" due to read error
-        assert result == "agent"
+        # Should fall back to "guest" due to read error
+        assert result == "guest"
 
     def test_cross_repo_identity_isolation(self, monkeypatch, tmp_path):
         """
@@ -121,7 +121,7 @@ class TestAgentIdentityDetection:
         """
         # Set up "company" repo with marker
         company_repo = tmp_path / "ystar-company"
-        company_repo.mkdir()
+        company_repo.mkdir(exist_ok=True)
         (company_repo / ".ystar_active_agent").write_text("ystar-cfo", encoding="utf-8")
 
         # Set up "gov" repo without marker
@@ -132,7 +132,7 @@ class TestAgentIdentityDetection:
         monkeypatch.delenv("YSTAR_AGENT_ID", raising=False)
         monkeypatch.delenv("CLAUDE_AGENT_NAME", raising=False)
 
-        # Operating in gov repo should fall back to "agent"
+        # Operating in gov repo should fall back to read-only "guest"
         monkeypatch.chdir(gov_repo)
         result = _detect_agent_id({})
-        assert result == "agent", "Should not leak identity from other repo"
+        assert result == "guest", "Should not leak identity from other repo"

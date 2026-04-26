@@ -13,7 +13,7 @@ import time
 import tempfile
 from pathlib import Path
 
-from ystar.memory.ingest import should_ingest, enqueue, _INGEST_QUEUE
+from ystar.memory.ingest import should_ingest, enqueue, flush_memory_ingest, _INGEST_QUEUE
 from ystar.memory.store import MemoryStore
 
 
@@ -154,8 +154,10 @@ def test_enqueue_nonblocking_when_full():
             enqueue(event, db_path)
         elapsed = time.time() - start
 
-        # All calls should complete in well under 10ms total
+        # All calls should complete in well under 10ms total.
+        # Then drain worker before TemporaryDirectory cleanup releases sqlite files.
         assert elapsed < 0.1, f"enqueue took {elapsed*1000:.1f}ms, expected <100ms"
+        assert flush_memory_ingest(timeout=2.0)
 
 
 # ── Test 8: Worker writes to MemoryStore ───────────────────────────────────
@@ -183,8 +185,8 @@ def test_worker_writes_memory():
 
         enqueue(event, db_path)
 
-        # Wait for worker to process (generous timeout)
-        time.sleep(0.5)
+        # Wait for worker to process without relying on arbitrary sleep.
+        assert flush_memory_ingest(timeout=2.0)
 
         # Query memory store (use memory_types plural, as a list)
         memories = store.recall(agent_id="test-worker", memory_types=["lesson"], limit=10)
