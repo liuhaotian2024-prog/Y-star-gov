@@ -8,9 +8,11 @@ It checks the L2.8 and L2.9 deterministic validator skeletons:
 - governance validator imports from `ystar.governance`
 - `py_compile` for `pre_u_packet_validator.py`
 - `py_compile` for `cieu_prediction_delta.py`
+- `py_compile` for `contract_dry_run.py`
 - targeted Pre-U packet validator tests
 - targeted CIEU prediction-delta validator tests
-- combined targeted governance tests for both validator modules
+- targeted governance contract dry-run harness tests
+- combined targeted governance tests for the validator and dry-run modules
 
 Run from the repository root:
 
@@ -39,5 +41,5 @@ so compile/import checks do not need repo-local bytecode writes.
 ## Relationship To L2.8 And L2.9
 
 L2.8 added the deterministic Pre-U packet validator skeleton. L2.9 added the
-CIEU prediction-delta schema validator. This wrapper verifies those two local
-governance surfaces together without expanding their runtime scope.
+CIEU prediction-delta schema validator. L2.11 adds a dry-run harness connecting
+them without expanding their runtime scope.

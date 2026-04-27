@@ -31,3 +31,7 @@ non-goals.
 Post-action prediction-vs-actual delta record structure is defined separately in
 `docs/cieu_prediction_delta/schema_v0.md`. That schema is still validation-only:
 it does not write CIEU events or perform brain writeback.
+
+`docs/governance_contract_dry_run.md` describes the deterministic local dry-run
+harness that connects this validator to the CIEU prediction-delta validator
+without executing actions or hooks.

@@ -106,6 +106,12 @@ from ystar.governance.cieu_prediction_delta import (
     DeltaValidationSeverity,
     validate_prediction_delta,
 )
+from ystar.governance.contract_dry_run import (
+    DryRunDecision,
+    DryRunIssue,
+    DryRunResult,
+    run_governance_contract_dry_run,
+)
 
 __all__ = [
     # Omission
@@ -148,6 +154,9 @@ __all__ = [
     # CIEU prediction-delta validation
     "DeltaValidationDecision", "DeltaValidationIssue", "DeltaValidationResult",
     "DeltaValidationSeverity", "validate_prediction_delta",
+    # Governance contract dry-run
+    "DryRunDecision", "DryRunIssue", "DryRunResult",
+    "run_governance_contract_dry_run",
     # Amendment
     "AmendmentEngine", "AmendmentProposal",
     # Contract Lifecycle

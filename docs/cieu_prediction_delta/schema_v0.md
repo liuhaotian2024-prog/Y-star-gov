@@ -69,6 +69,9 @@ connect predictions to actual outcomes.
 This milestone defines record structure only. It does not write CIEU events,
 change CIEU DB schema, or query any database.
 
+`docs/governance_contract_dry_run.md` describes the local dry-run harness that
+constructs dry-run-only delta records and validates them without writing CIEU.
+
 ## Relationship To Brain Nutrition
 
 Prediction deltas may become future brain nutrition only after evidence-backed
