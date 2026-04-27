@@ -105,6 +105,9 @@ expected exit code.
 `examples/external_adapter_sdk/` shows how a generic external runtime can
 normalize its own request shape into this contract before invoking the CLI.
 
+`tools/run_governance_endpoint_acceptance.py` runs the compatibility checker as
+part of endpoint-level acceptance.
+
 ## Non-Goals
 
 - No real hook integration.

@@ -74,6 +74,10 @@ CHECKS = [
         ["python3", "-m", "py_compile", "examples/external_adapter_sdk/run_sample_adapter.py"],
     ),
     Check(
+        "Compile governance endpoint acceptance runner",
+        ["python3", "-m", "py_compile", "tools/run_governance_endpoint_acceptance.py"],
+    ),
+    Check(
         "Test pre-U packet validator",
         ["python3", "-m", "pytest", "tests/governance/test_pre_u_packet_validator.py", "-q"],
     ),
@@ -104,6 +108,10 @@ CHECKS = [
     Check(
         "Test external adapter SDK",
         ["python3", "-m", "pytest", "tests/governance/test_external_adapter_sdk.py", "-q"],
+    ),
+    Check(
+        "Test governance endpoint acceptance",
+        ["python3", "-m", "pytest", "tests/governance/test_governance_endpoint_acceptance.py", "-q"],
     ),
     Check(
         "Run hook adapter fixture matrix",

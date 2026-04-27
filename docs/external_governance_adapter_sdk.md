@@ -42,6 +42,12 @@ external request
 python3 examples/external_adapter_sdk/run_sample_adapter.py --pretty
 ```
 
+The endpoint acceptance runner also includes this sample as its first check:
+
+```bash
+python3 tools/run_governance_endpoint_acceptance.py
+```
+
 ## Non-Execution Guarantee
 
 The SDK sample does not execute the requested action, call external APIs, write
