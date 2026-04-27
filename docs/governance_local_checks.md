@@ -9,10 +9,13 @@ It checks the L2.8 and L2.9 deterministic validator skeletons:
 - `py_compile` for `pre_u_packet_validator.py`
 - `py_compile` for `cieu_prediction_delta.py`
 - `py_compile` for `contract_dry_run.py`
+- `py_compile` for `hook_contract_adapter.py`
 - targeted Pre-U packet validator tests
 - targeted CIEU prediction-delta validator tests
 - targeted governance contract dry-run harness tests
-- combined targeted governance tests for the validator and dry-run modules
+- targeted hook contract adapter tests
+- combined targeted governance tests for the validator, dry-run, and adapter
+  modules
 
 Run from the repository root:
 
@@ -43,3 +46,6 @@ so compile/import checks do not need repo-local bytecode writes.
 L2.8 added the deterministic Pre-U packet validator skeleton. L2.9 added the
 CIEU prediction-delta schema validator. L2.11 adds a dry-run harness connecting
 them without expanding their runtime scope.
+
+L2.12 adds a hook contract dry-run adapter that models the future hook boundary
+without calling a real hook or executing actions.

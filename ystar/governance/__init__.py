@@ -112,6 +112,12 @@ from ystar.governance.contract_dry_run import (
     DryRunResult,
     run_governance_contract_dry_run,
 )
+from ystar.governance.hook_contract_adapter import (
+    HookAdapterDecision,
+    HookAdapterIssue,
+    HookAdapterResult,
+    run_hook_contract_dry_run,
+)
 
 __all__ = [
     # Omission
@@ -157,6 +163,9 @@ __all__ = [
     # Governance contract dry-run
     "DryRunDecision", "DryRunIssue", "DryRunResult",
     "run_governance_contract_dry_run",
+    # Hook contract dry-run adapter
+    "HookAdapterDecision", "HookAdapterIssue", "HookAdapterResult",
+    "run_hook_contract_dry_run",
     # Amendment
     "AmendmentEngine", "AmendmentProposal",
     # Contract Lifecycle

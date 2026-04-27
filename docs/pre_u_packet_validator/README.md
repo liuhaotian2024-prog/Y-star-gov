@@ -35,3 +35,7 @@ it does not write CIEU events or perform brain writeback.
 `docs/governance_contract_dry_run.md` describes the deterministic local dry-run
 harness that connects this validator to the CIEU prediction-delta validator
 without executing actions or hooks.
+
+`docs/hook_contract_adapter_dry_run.md` describes the hook-like dry-run adapter
+that normalizes future hook envelopes into this Pre-U packet shape without
+running real hooks.

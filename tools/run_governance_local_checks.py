@@ -31,7 +31,8 @@ CHECKS = [
                 "from ystar.governance import "
                 "validate_pre_u_packet, ValidationDecision, "
                 "validate_prediction_delta, DeltaValidationDecision, "
-                "run_governance_contract_dry_run, DryRunDecision; "
+                "run_governance_contract_dry_run, DryRunDecision, "
+                "run_hook_contract_dry_run, HookAdapterDecision; "
                 "print('import ok')"
             ),
         ],
@@ -49,6 +50,10 @@ CHECKS = [
         ["python3", "-m", "py_compile", "ystar/governance/contract_dry_run.py"],
     ),
     Check(
+        "Compile hook contract adapter",
+        ["python3", "-m", "py_compile", "ystar/governance/hook_contract_adapter.py"],
+    ),
+    Check(
         "Test pre-U packet validator",
         ["python3", "-m", "pytest", "tests/governance/test_pre_u_packet_validator.py", "-q"],
     ),
@@ -61,6 +66,10 @@ CHECKS = [
         ["python3", "-m", "pytest", "tests/governance/test_contract_dry_run.py", "-q"],
     ),
     Check(
+        "Test hook contract adapter",
+        ["python3", "-m", "pytest", "tests/governance/test_hook_contract_adapter.py", "-q"],
+    ),
+    Check(
         "Combined targeted governance tests",
         [
             "python3",
@@ -69,6 +78,7 @@ CHECKS = [
             "tests/governance/test_pre_u_packet_validator.py",
             "tests/governance/test_cieu_prediction_delta.py",
             "tests/governance/test_contract_dry_run.py",
+            "tests/governance/test_hook_contract_adapter.py",
             "-q",
         ],
     ),

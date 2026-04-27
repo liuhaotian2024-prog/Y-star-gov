@@ -17,6 +17,10 @@ Pre-U packet
   -> dry-run report
 ```
 
+`docs/hook_contract_adapter_dry_run.md` describes the next boundary shim that
+normalizes a hook-like envelope into this dry-run flow and returns a hook-like
+decision envelope.
+
 ## Public API
 
 - `DryRunDecision`
