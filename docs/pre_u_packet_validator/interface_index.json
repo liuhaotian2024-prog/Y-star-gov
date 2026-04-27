@@ -2,7 +2,7 @@
   "schema_name": "ystar.gov.pre_u_packet_validator.interface_index",
   "schema_version": "v0",
   "interface_name": "Pre-U Counterfactual Packet Validator Interface",
-  "interface_status": "spec_only",
+  "interface_status": "skeleton_v0",
   "owned_by": "Y-star-gov",
   "source_packet_schema_ref": "/Users/haotianliu/.openclaw/workspace/ystar-company/agent_brains/Aiden-CEO/pre_u_counterfactual/packet_schema.json",
   "docs": [
@@ -13,7 +13,8 @@
     "docs/pre_u_packet_validator/hook_contract.md",
     "docs/pre_u_packet_validator/cieu_contract.md",
     "docs/pre_u_packet_validator/non_goals.md",
-    "docs/pre_u_packet_validator/open_gaps.md"
+    "docs/pre_u_packet_validator/open_gaps.md",
+    "docs/pre_u_packet_validator/skeleton_v0.md"
   ],
   "validation_categories": [
     "schema validity",
@@ -45,7 +46,7 @@
   "hook_contract_ref": "docs/pre_u_packet_validator/hook_contract.md",
   "cieu_contract_ref": "docs/pre_u_packet_validator/cieu_contract.md",
   "non_goals": [
-    "No validator implementation",
+    "No hook-integrated validator implementation",
     "No packet generation",
     "No Aiden brain migration into Y-star-gov",
     "No DB access",
@@ -65,7 +66,7 @@
     "No multi-agent packet generalization"
   ],
   "implementation_status": {
-    "validator_code": "not_implemented",
+    "validator_code": "deterministic_skeleton_v0",
     "hook_integration": "not_implemented",
     "cieu_event_schema": "not_implemented",
     "risk_tier_enforcement": "not_implemented",

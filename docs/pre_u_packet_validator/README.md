@@ -1,10 +1,11 @@
 # Pre-U Counterfactual Packet Validator Interface
 
-This directory defines the Y-star-gov-side validator interface for
-labs-generated Pre-U Counterfactual Packets.
+This directory defines the Y-star-gov-side validator interface and v0
+deterministic skeleton for labs-generated Pre-U Counterfactual Packets.
 
-It is not an implementation. It does not generate packets, execute hooks, write
-CIEU events, open DBs, or move Aiden's brain into Y-star-gov.
+The v0 skeleton lives at `ystar/governance/pre_u_packet_validator.py`. It
+validates packet structure only. It does not generate packets, execute hooks,
+write CIEU events, open DBs, or move Aiden's brain into Y-star-gov.
 
 Boundary preserved:
 
@@ -23,3 +24,6 @@ This spec prepares a future deterministic validation interface around schema,
 agent identity, Y*, m_functor grounding, candidate actions, selected action
 consistency, residual logic, risk tier, CIEU linkage, and forbidden mutation
 checks.
+
+See `skeleton_v0.md` for the implemented structural checks and remaining
+non-goals.

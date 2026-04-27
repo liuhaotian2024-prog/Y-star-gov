@@ -91,6 +91,15 @@ from ystar.governance.auto_configure import (
     AUTO_CONFIGURE_FLOOR_SECS,
 )
 
+# Pre-U packet validation
+from ystar.governance.pre_u_packet_validator import (
+    ValidationDecision,
+    ValidationIssue,
+    ValidationResult,
+    ValidationSeverity,
+    validate_pre_u_packet,
+)
+
 __all__ = [
     # Omission
     "TrackedEntity", "ObligationRecord", "GovernanceEvent",
@@ -126,6 +135,9 @@ __all__ = [
     # Auto-configure
     "run_governance_auto_configure", "GovernanceAutoConfigureScheduler",
     "AUTO_CONFIGURE_FLOOR_SECS",
+    # Pre-U packet validation
+    "ValidationDecision", "ValidationIssue", "ValidationResult",
+    "ValidationSeverity", "validate_pre_u_packet",
     # Amendment
     "AmendmentEngine", "AmendmentProposal",
     # Contract Lifecycle

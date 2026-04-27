@@ -1,6 +1,7 @@
 # Non-Goals
 
-- Not implementing validator code.
+- Not implementing hook-integrated or semantic validator code beyond the v0
+  deterministic skeleton.
 - Not generating packets.
 - Not adding an LLM reflection calculator.
 - Not moving Aiden brain into Y-star-gov.
