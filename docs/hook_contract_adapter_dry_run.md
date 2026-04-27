@@ -65,6 +65,10 @@ The returned hook-like envelope includes:
 
 `allow_execution` is only a dry-run decision hint. No action is executed.
 
+`docs/hook_contract_adapter_fixture_matrix.md` records the fixture pack that
+locks the expected `allow`, `warn`, `require_revision`, `deny`, and `escalate`
+decision behavior.
+
 ## Decision Mapping
 
 - dry-run `pass` -> hook adapter `allow`

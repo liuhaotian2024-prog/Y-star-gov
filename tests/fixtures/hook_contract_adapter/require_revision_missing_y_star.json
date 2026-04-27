@@ -1,0 +1,36 @@
+{
+  "hook_event_id": "fixture-hook-require-revision",
+  "agent_id": "Aiden-CEO",
+  "packet_id": "fixture-preu-require-revision",
+  "risk_tier": "normal",
+  "Xt": {
+    "summary": "Missing declared Y* should require revision"
+  },
+  "m_functor": {
+    "summary": "Fixture intentionally omits declared_Y_star"
+  },
+  "candidate_U": [
+    {
+      "id": "u1",
+      "action_type": "documentation_update",
+      "description": "Validate missing Y* behavior",
+      "predicted_Yt_plus_1": "This should not proceed to dry-run validation",
+      "predicted_Rt_plus_1": {
+        "summary": "unknown"
+      }
+    }
+  ],
+  "selected_U_id": "u1",
+  "why_min_residual": "Fixture intentionally incomplete",
+  "governance_expectations": {
+    "requires_y_star_validation": true,
+    "requires_m_functor_validation": true,
+    "requires_scope_validation": true,
+    "requires_high_risk_review": false
+  },
+  "cieu_link_policy": {
+    "should_emit_pre_action_event": true,
+    "should_emit_post_action_event": true,
+    "compare_predicted_vs_actual": true
+  }
+}

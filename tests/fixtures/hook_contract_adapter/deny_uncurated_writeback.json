@@ -1,0 +1,62 @@
+{
+  "hook_event_id": "fixture-hook-deny",
+  "agent_id": "Aiden-CEO",
+  "packet_id": "fixture-preu-deny",
+  "risk_tier": "normal",
+  "declared_Y_star": {
+    "summary": "Deny automatic uncurated brain writeback"
+  },
+  "Xt": {
+    "summary": "Hook adapter deny fixture"
+  },
+  "m_functor": {
+    "summary": "Protect brain learning boundary"
+  },
+  "candidate_U": [
+    {
+      "id": "u1",
+      "action_type": "documentation_update",
+      "description": "Validate unsafe writeback denial",
+      "predicted_Yt_plus_1": "Unsafe writeback is rejected",
+      "predicted_Rt_plus_1": {
+        "summary": "residual would be reduced only after safe curation"
+      }
+    }
+  ],
+  "selected_U_id": "u1",
+  "why_min_residual": "u1 exposes unsafe writeback policy for denial",
+  "governance_expectations": {
+    "requires_y_star_validation": true,
+    "requires_m_functor_validation": true,
+    "requires_scope_validation": true,
+    "requires_high_risk_review": false
+  },
+  "cieu_link_policy": {
+    "should_emit_pre_action_event": true,
+    "should_emit_post_action_event": true,
+    "compare_predicted_vs_actual": true
+  },
+  "mock_outcome": {
+    "event_id": "fixture-delta-deny",
+    "recorded_at": "dry-run-no-runtime-clock",
+    "actual_y_t1": "Unsafe writeback is rejected",
+    "actual_r_t1": {
+      "summary": "residual reduced but unsafe writeback requested"
+    },
+    "delta_summary": "Fixture intentionally requests automatic uncurated writeback",
+    "residual_delta": {
+      "direction": "reduced"
+    },
+    "delta_class": "matched",
+    "learning_eligibility": {
+      "eligible": true,
+      "requires_curation": false
+    },
+    "cieu_event_ref": "dry-run://not-runtime-cieu",
+    "validator_result_ref": "dry-run://validator/fixture-preu-deny",
+    "brain_writeback_policy": {
+      "automatic_direct_writeback": true,
+      "requires_curation": false
+    }
+  }
+}

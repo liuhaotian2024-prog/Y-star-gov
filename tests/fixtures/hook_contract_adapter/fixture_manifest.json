@@ -1,0 +1,56 @@
+{
+  "schema_name": "hook_contract_adapter_fixture_manifest",
+  "schema_version": "v0",
+  "fixtures": [
+    {
+      "fixture_name": "allow_valid_envelope",
+      "file": "allow_valid_envelope.json",
+      "expected_decision": "allow",
+      "expected_allow_execution": true,
+      "expected_require_revision": false,
+      "expected_deny": false,
+      "expected_escalate": false,
+      "notes": "Valid low-risk envelope should allow in dry-run decision envelope."
+    },
+    {
+      "fixture_name": "warn_valid_with_warning_envelope",
+      "file": "warn_valid_with_warning_envelope.json",
+      "expected_decision": "warn",
+      "expected_allow_execution": true,
+      "expected_require_revision": false,
+      "expected_deny": false,
+      "expected_escalate": false,
+      "notes": "Valid envelope with optional delta_class warning should warn but keep allow_execution true."
+    },
+    {
+      "fixture_name": "require_revision_missing_y_star",
+      "file": "require_revision_missing_y_star.json",
+      "expected_decision": "require_revision",
+      "expected_allow_execution": false,
+      "expected_require_revision": true,
+      "expected_deny": false,
+      "expected_escalate": false,
+      "notes": "Missing declared_Y_star should fail envelope adaptation before dry-run harness."
+    },
+    {
+      "fixture_name": "deny_uncurated_writeback",
+      "file": "deny_uncurated_writeback.json",
+      "expected_decision": "deny",
+      "expected_allow_execution": false,
+      "expected_require_revision": false,
+      "expected_deny": true,
+      "expected_escalate": false,
+      "notes": "Unsafe automatic uncurated brain writeback should be denied."
+    },
+    {
+      "fixture_name": "escalate_high_risk_envelope",
+      "file": "escalate_high_risk_envelope.json",
+      "expected_decision": "escalate",
+      "expected_allow_execution": false,
+      "expected_require_revision": false,
+      "expected_deny": false,
+      "expected_escalate": true,
+      "notes": "High-risk envelope should escalate."
+    }
+  ]
+}
