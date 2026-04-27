@@ -54,6 +54,9 @@ The runner loads the manifest, runs each fixture through
 `run_hook_contract_dry_run`, compares actual decisions and hook booleans to the
 manifest expectations, and exits non-zero on mismatch.
 
+The same fixtures are also usable with the CLI dry-run entrypoint documented in
+`docs/hook_contract_cli_dry_run.md`.
+
 ## Non-Execution Guarantee
 
 The matrix runner uses only committed local JSON fixtures and the deterministic

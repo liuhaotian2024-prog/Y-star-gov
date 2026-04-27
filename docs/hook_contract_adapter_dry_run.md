@@ -69,6 +69,10 @@ The returned hook-like envelope includes:
 locks the expected `allow`, `warn`, `require_revision`, `deny`, and `escalate`
 decision behavior.
 
+`docs/hook_contract_cli_dry_run.md` describes the local CLI entrypoint that
+loads a hook-like envelope JSON file and emits a machine-readable decision
+envelope.
+
 ## Decision Mapping
 
 - dry-run `pass` -> hook adapter `allow`
