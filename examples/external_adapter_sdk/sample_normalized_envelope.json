@@ -1,0 +1,42 @@
+{
+  "hook_event_id": "example-runtime-event-1",
+  "agent_id": "Example-Agent",
+  "packet_id": "external-adapter-example-action-1",
+  "agent_capsule_ref": "external-adapter://generic-agent",
+  "task_id": "example-action-1",
+  "risk_tier": "normal",
+  "declared_Y_star": {
+    "summary": "Validate a generic external adapter request"
+  },
+  "Xt": {
+    "summary": "An external system wants a governance dry-run before a safe action"
+  },
+  "m_functor": {
+    "summary": "External request remains inside declared objective and governance scope"
+  },
+  "candidate_U": [
+    {
+      "id": "u1",
+      "action_type": "generic_safe_update",
+      "description": "Produce a compatible dry-run envelope",
+      "predicted_Yt_plus_1": "Y-star-gov CLI returns an allow decision for the sample",
+      "predicted_Rt_plus_1": {
+        "summary": "residual reduced"
+      }
+    }
+  ],
+  "selected_U_id": "u1",
+  "why_min_residual": "Selected action is the adapter-provided path with lowest declared residual.",
+  "governance_expectations": {
+    "requires_y_star_validation": true,
+    "requires_m_functor_validation": true,
+    "requires_scope_validation": true,
+    "requires_high_risk_review": false
+  },
+  "cieu_link_policy": {
+    "should_emit_pre_action_event": true,
+    "should_emit_post_action_event": true,
+    "compare_predicted_vs_actual": true
+  },
+  "packet_status": "ready_for_validation"
+}

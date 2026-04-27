@@ -102,6 +102,9 @@ The checker runs each example input through `tools/run_hook_contract_dry_run.py`
 compares stable fields against the expected output examples, and verifies the
 expected exit code.
 
+`examples/external_adapter_sdk/` shows how a generic external runtime can
+normalize its own request shape into this contract before invoking the CLI.
+
 ## Non-Goals
 
 - No real hook integration.

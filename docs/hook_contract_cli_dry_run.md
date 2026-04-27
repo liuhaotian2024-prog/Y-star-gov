@@ -66,6 +66,7 @@ Errors are emitted to stderr.
 python3 tools/run_hook_contract_dry_run.py --input tests/fixtures/hook_contract_adapter/allow_valid_envelope.json
 python3 tools/run_hook_contract_dry_run.py --input tests/fixtures/hook_contract_adapter/deny_uncurated_writeback.json
 python3 tools/check_hook_cli_contract_compatibility.py
+python3 examples/external_adapter_sdk/run_sample_adapter.py --pretty
 ```
 
 ## Non-Execution Guarantee

@@ -66,6 +66,14 @@ CHECKS = [
         ["python3", "-m", "py_compile", "tools/check_hook_cli_contract_compatibility.py"],
     ),
     Check(
+        "Compile external adapter SDK normalizer",
+        ["python3", "-m", "py_compile", "examples/external_adapter_sdk/external_request_to_envelope.py"],
+    ),
+    Check(
+        "Compile external adapter SDK sample runner",
+        ["python3", "-m", "py_compile", "examples/external_adapter_sdk/run_sample_adapter.py"],
+    ),
+    Check(
         "Test pre-U packet validator",
         ["python3", "-m", "pytest", "tests/governance/test_pre_u_packet_validator.py", "-q"],
     ),
@@ -94,6 +102,10 @@ CHECKS = [
         ["python3", "-m", "pytest", "tests/governance/test_hook_cli_contract_compatibility.py", "-q"],
     ),
     Check(
+        "Test external adapter SDK",
+        ["python3", "-m", "pytest", "tests/governance/test_external_adapter_sdk.py", "-q"],
+    ),
+    Check(
         "Run hook adapter fixture matrix",
         ["python3", "tools/run_hook_adapter_fixture_matrix.py"],
     ),
@@ -111,6 +123,10 @@ CHECKS = [
         ["python3", "tools/check_hook_cli_contract_compatibility.py"],
     ),
     Check(
+        "Smoke: external adapter SDK sample",
+        ["python3", "examples/external_adapter_sdk/run_sample_adapter.py"],
+    ),
+    Check(
         "Combined targeted governance tests",
         [
             "python3",
@@ -123,6 +139,7 @@ CHECKS = [
             "tests/governance/test_hook_adapter_fixtures.py",
             "tests/governance/test_hook_contract_cli.py",
             "tests/governance/test_hook_cli_contract_compatibility.py",
+            "tests/governance/test_external_adapter_sdk.py",
             "-q",
         ],
     ),

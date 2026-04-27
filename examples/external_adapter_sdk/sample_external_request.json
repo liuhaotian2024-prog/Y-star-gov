@@ -1,0 +1,36 @@
+{
+  "external_event_id": "example-runtime-event-1",
+  "runtime_name": "Example-Runtime",
+  "agent_id": "Example-Agent",
+  "action_request_id": "example-action-1",
+  "declared_objective": {
+    "summary": "Validate a generic external adapter request"
+  },
+  "context": {
+    "summary": "An external system wants a governance dry-run before a safe action"
+  },
+  "proposed_actions": [
+    {
+      "id": "u1",
+      "action_type": "generic_safe_update",
+      "description": "Produce a compatible dry-run envelope"
+    }
+  ],
+  "selected_action_id": "u1",
+  "predicted_outcome": "Y-star-gov CLI returns an allow decision for the sample",
+  "predicted_residual": {
+    "summary": "residual reduced"
+  },
+  "risk_tier": "normal",
+  "governance_expectations": {
+    "requires_y_star_validation": true,
+    "requires_m_functor_validation": true,
+    "requires_scope_validation": true,
+    "requires_high_risk_review": false
+  },
+  "cieu_link_policy": {
+    "should_emit_pre_action_event": true,
+    "should_emit_post_action_event": true,
+    "compare_predicted_vs_actual": true
+  }
+}

@@ -13,6 +13,7 @@ It checks the L2.8 and L2.9 deterministic validator skeletons:
 - `py_compile` for `run_hook_adapter_fixture_matrix.py`
 - `py_compile` for `run_hook_contract_dry_run.py`
 - `py_compile` for `check_hook_cli_contract_compatibility.py`
+- `py_compile` for the external adapter SDK normalizer and sample runner
 - targeted Pre-U packet validator tests
 - targeted CIEU prediction-delta validator tests
 - targeted governance contract dry-run harness tests
@@ -23,6 +24,7 @@ It checks the L2.8 and L2.9 deterministic validator skeletons:
 - hook adapter fixture matrix runner
 - hook contract CLI smoke check with allow fixture
 - hook CLI contract compatibility checker
+- external adapter SDK sample smoke check
 - combined targeted governance tests for the validator, dry-run, and adapter
   modules
 
@@ -67,3 +69,7 @@ envelopes and deterministic exit codes from hook-like envelope files.
 
 L2.15 adds a runtime-agnostic CLI compatibility contract, generic example
 inputs/outputs, and a compatibility checker for external integrators.
+
+L2.16 adds a generic external adapter SDK/template showing how external systems
+can normalize requests into hook-like envelopes without coupling Y-star-gov to a
+runtime.

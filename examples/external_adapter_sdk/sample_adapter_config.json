@@ -1,0 +1,10 @@
+{
+  "schema_name": "external_adapter_sdk_sample_config",
+  "schema_version": "v0",
+  "default_packet_prefix": "external-adapter",
+  "default_agent_capsule_ref": "external-adapter://generic-agent",
+  "m_functor_template": {
+    "summary": "External request remains inside declared objective and governance scope"
+  },
+  "packet_status": "ready_for_validation"
+}
