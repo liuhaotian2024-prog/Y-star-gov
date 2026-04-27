@@ -1,0 +1,36 @@
+{
+  "hook_event_id": "compat-hook-require-revision",
+  "agent_id": "Example-Agent",
+  "packet_id": "compat-preu-require-revision",
+  "risk_tier": "normal",
+  "Xt": {
+    "summary": "External envelope intentionally omits declared_Y_star"
+  },
+  "m_functor": {
+    "summary": "Generic incomplete envelope"
+  },
+  "candidate_U": [
+    {
+      "id": "u1",
+      "action_type": "generic_safe_update",
+      "description": "Validate require revision path",
+      "predicted_Yt_plus_1": "Envelope should require revision",
+      "predicted_Rt_plus_1": {
+        "summary": "unknown until Y* is declared"
+      }
+    }
+  ],
+  "selected_U_id": "u1",
+  "why_min_residual": "Fixture intentionally lacks declared_Y_star",
+  "governance_expectations": {
+    "requires_y_star_validation": true,
+    "requires_m_functor_validation": true,
+    "requires_scope_validation": true,
+    "requires_high_risk_review": false
+  },
+  "cieu_link_policy": {
+    "should_emit_pre_action_event": true,
+    "should_emit_post_action_event": true,
+    "compare_predicted_vs_actual": true
+  }
+}

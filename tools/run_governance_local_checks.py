@@ -62,6 +62,10 @@ CHECKS = [
         ["python3", "-m", "py_compile", "tools/run_hook_contract_dry_run.py"],
     ),
     Check(
+        "Compile hook CLI compatibility checker",
+        ["python3", "-m", "py_compile", "tools/check_hook_cli_contract_compatibility.py"],
+    ),
+    Check(
         "Test pre-U packet validator",
         ["python3", "-m", "pytest", "tests/governance/test_pre_u_packet_validator.py", "-q"],
     ),
@@ -86,6 +90,10 @@ CHECKS = [
         ["python3", "-m", "pytest", "tests/governance/test_hook_contract_cli.py", "-q"],
     ),
     Check(
+        "Test hook CLI contract compatibility",
+        ["python3", "-m", "pytest", "tests/governance/test_hook_cli_contract_compatibility.py", "-q"],
+    ),
+    Check(
         "Run hook adapter fixture matrix",
         ["python3", "tools/run_hook_adapter_fixture_matrix.py"],
     ),
@@ -99,6 +107,10 @@ CHECKS = [
         ],
     ),
     Check(
+        "Check hook CLI contract compatibility",
+        ["python3", "tools/check_hook_cli_contract_compatibility.py"],
+    ),
+    Check(
         "Combined targeted governance tests",
         [
             "python3",
@@ -110,6 +122,7 @@ CHECKS = [
             "tests/governance/test_hook_contract_adapter.py",
             "tests/governance/test_hook_adapter_fixtures.py",
             "tests/governance/test_hook_contract_cli.py",
+            "tests/governance/test_hook_cli_contract_compatibility.py",
             "-q",
         ],
     ),

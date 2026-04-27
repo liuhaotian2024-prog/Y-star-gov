@@ -12,14 +12,17 @@ It checks the L2.8 and L2.9 deterministic validator skeletons:
 - `py_compile` for `hook_contract_adapter.py`
 - `py_compile` for `run_hook_adapter_fixture_matrix.py`
 - `py_compile` for `run_hook_contract_dry_run.py`
+- `py_compile` for `check_hook_cli_contract_compatibility.py`
 - targeted Pre-U packet validator tests
 - targeted CIEU prediction-delta validator tests
 - targeted governance contract dry-run harness tests
 - targeted hook contract adapter tests
 - targeted hook adapter fixture tests
 - targeted hook contract CLI tests
+- targeted hook CLI contract compatibility tests
 - hook adapter fixture matrix runner
 - hook contract CLI smoke check with allow fixture
+- hook CLI contract compatibility checker
 - combined targeted governance tests for the validator, dry-run, and adapter
   modules
 
@@ -61,3 +64,6 @@ expected outcomes: allow, warn, require revision, deny, and escalate.
 
 L2.14 adds a CLI dry-run entrypoint that emits machine-readable JSON decision
 envelopes and deterministic exit codes from hook-like envelope files.
+
+L2.15 adds a runtime-agnostic CLI compatibility contract, generic example
+inputs/outputs, and a compatibility checker for external integrators.

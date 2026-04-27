@@ -73,6 +73,10 @@ decision behavior.
 loads a hook-like envelope JSON file and emits a machine-readable decision
 envelope.
 
+`docs/hook_cli_contract_compatibility.md` documents how external systems can
+integrate at the envelope boundary without coupling Y-star-gov to any specific
+runtime.
+
 ## Decision Mapping
 
 - dry-run `pass` -> hook adapter `allow`

@@ -1,0 +1,24 @@
+{
+  "agent_id": "Example-Agent",
+  "allow_execution": true,
+  "decision": "allow",
+  "deny": false,
+  "dry_run_only": true,
+  "escalate": false,
+  "governance_result_summary": {
+    "delta_validation_status": "valid",
+    "dry_run_decision": "pass",
+    "pre_u_validation_status": "valid"
+  },
+  "hook_event_id": "compat-hook-allow",
+  "issues": [],
+  "non_execution_confirmation": true,
+  "packet_id": "compat-preu-allow",
+  "require_revision": false,
+  "safety_notes": [
+    "Hook adapter dry-run only: no real hook is called.",
+    "Selected_U is never executed, even when the decision envelope says allow_execution=true.",
+    "No CIEU write, DB/log/runtime read, brain/memory mutation, or external tool call occurs."
+  ],
+  "tool": "hook_contract_dry_run"
+}

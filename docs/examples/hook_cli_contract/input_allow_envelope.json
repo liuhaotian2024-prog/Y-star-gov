@@ -1,0 +1,39 @@
+{
+  "hook_event_id": "compat-hook-allow",
+  "agent_id": "Example-Agent",
+  "packet_id": "compat-preu-allow",
+  "risk_tier": "normal",
+  "declared_Y_star": {
+    "summary": "Allow a generic compatible dry-run envelope"
+  },
+  "Xt": {
+    "summary": "External system produced a compatible envelope"
+  },
+  "m_functor": {
+    "summary": "Generic action remains inside declared mission boundary"
+  },
+  "candidate_U": [
+    {
+      "id": "u1",
+      "action_type": "generic_safe_update",
+      "description": "Validate compatible allow path",
+      "predicted_Yt_plus_1": "Compatible dry-run allow path succeeds",
+      "predicted_Rt_plus_1": {
+        "summary": "residual reduced"
+      }
+    }
+  ],
+  "selected_U_id": "u1",
+  "why_min_residual": "u1 is the lowest residual generic path",
+  "governance_expectations": {
+    "requires_y_star_validation": true,
+    "requires_m_functor_validation": true,
+    "requires_scope_validation": true,
+    "requires_high_risk_review": false
+  },
+  "cieu_link_policy": {
+    "should_emit_pre_action_event": true,
+    "should_emit_post_action_event": true,
+    "compare_predicted_vs_actual": true
+  }
+}

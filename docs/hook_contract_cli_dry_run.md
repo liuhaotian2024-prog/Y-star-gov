@@ -3,6 +3,10 @@
 `tools/run_hook_contract_dry_run.py` exposes the hook contract dry-run adapter as
 a deterministic local CLI.
 
+`docs/hook_cli_contract_compatibility.md` defines the runtime-agnostic
+compatibility contract for external systems that want to produce compatible
+hook-like envelope JSON and consume the CLI decision envelope.
+
 ## Usage
 
 ```bash
@@ -61,6 +65,7 @@ Errors are emitted to stderr.
 ```bash
 python3 tools/run_hook_contract_dry_run.py --input tests/fixtures/hook_contract_adapter/allow_valid_envelope.json
 python3 tools/run_hook_contract_dry_run.py --input tests/fixtures/hook_contract_adapter/deny_uncurated_writeback.json
+python3 tools/check_hook_cli_contract_compatibility.py
 ```
 
 ## Non-Execution Guarantee

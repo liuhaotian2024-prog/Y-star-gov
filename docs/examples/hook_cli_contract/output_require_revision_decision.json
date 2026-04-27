@@ -1,0 +1,30 @@
+{
+  "agent_id": "Example-Agent",
+  "allow_execution": false,
+  "decision": "require_revision",
+  "deny": false,
+  "dry_run_only": true,
+  "escalate": false,
+  "governance_result_summary": {
+    "delta_validation_status": null,
+    "dry_run_decision": null,
+    "pre_u_validation_status": null
+  },
+  "hook_event_id": "compat-hook-require-revision",
+  "issues": [
+    {
+      "code": "HOOK-ADAPTER-MISSING-FIELD",
+      "field": "declared_Y_star",
+      "message": "declared_Y_star is missing or empty."
+    }
+  ],
+  "non_execution_confirmation": true,
+  "packet_id": "compat-preu-require-revision",
+  "require_revision": true,
+  "safety_notes": [
+    "Hook adapter dry-run only: no real hook is called.",
+    "Selected_U is never executed, even when the decision envelope says allow_execution=true.",
+    "No CIEU write, DB/log/runtime read, brain/memory mutation, or external tool call occurs."
+  ],
+  "tool": "hook_contract_dry_run"
+}

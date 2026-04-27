@@ -57,6 +57,10 @@ manifest expectations, and exits non-zero on mismatch.
 The same fixtures are also usable with the CLI dry-run entrypoint documented in
 `docs/hook_contract_cli_dry_run.md`.
 
+Generic runtime-agnostic compatibility examples live under
+`docs/examples/hook_cli_contract/` and are checked by
+`tools/check_hook_cli_contract_compatibility.py`.
+
 ## Non-Execution Guarantee
 
 The matrix runner uses only committed local JSON fixtures and the deterministic
