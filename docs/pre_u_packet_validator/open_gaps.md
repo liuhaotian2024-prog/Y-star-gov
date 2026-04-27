@@ -2,8 +2,9 @@
 
 - No full validator implementation beyond the deterministic skeleton.
 - No JSON Schema loader/validator wired in Y-star-gov.
-- No packet reference in CIEU event schema.
-- No predicted-vs-actual delta metric.
+- No runtime packet reference in CIEU event schema; L2.9 adds structural
+  prediction-delta record validation only.
+- No predicted-vs-actual numeric delta metric.
 - No hook enforcement.
 - No risk-tier enforcement.
 - No live RLE integration.

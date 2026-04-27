@@ -27,3 +27,7 @@ checks.
 
 See `skeleton_v0.md` for the implemented structural checks and remaining
 non-goals.
+
+Post-action prediction-vs-actual delta record structure is defined separately in
+`docs/cieu_prediction_delta/schema_v0.md`. That schema is still validation-only:
+it does not write CIEU events or perform brain writeback.

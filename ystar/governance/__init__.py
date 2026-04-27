@@ -99,6 +99,13 @@ from ystar.governance.pre_u_packet_validator import (
     ValidationSeverity,
     validate_pre_u_packet,
 )
+from ystar.governance.cieu_prediction_delta import (
+    DeltaValidationDecision,
+    DeltaValidationIssue,
+    DeltaValidationResult,
+    DeltaValidationSeverity,
+    validate_prediction_delta,
+)
 
 __all__ = [
     # Omission
@@ -138,6 +145,9 @@ __all__ = [
     # Pre-U packet validation
     "ValidationDecision", "ValidationIssue", "ValidationResult",
     "ValidationSeverity", "validate_pre_u_packet",
+    # CIEU prediction-delta validation
+    "DeltaValidationDecision", "DeltaValidationIssue", "DeltaValidationResult",
+    "DeltaValidationSeverity", "validate_prediction_delta",
     # Amendment
     "AmendmentEngine", "AmendmentProposal",
     # Contract Lifecycle
