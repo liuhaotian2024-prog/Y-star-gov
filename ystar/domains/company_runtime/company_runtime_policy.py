@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from .admin_rationalization import classify_admin_rule, classify_stale_directive
 from .company_action_classifier import classify_company_action
 from .delegated_mission_contract import DelegatedMissionContract
 from .escalation_contract import build_escalation_decision
+from .mission_alignment import classify_m_triangle_alignment, value_production_relevance
 from .permission_tiers import CompanyActionDecision, get_permission_tier
 
 
@@ -44,5 +46,36 @@ def mission_permission_check(mission_dict: Dict[str, Any], action_dict: Dict[str
         "reason_codes": classification["reason_codes"],
         "owner_visible_explanation": classification["owner_visible_explanation"],
         "escalation": escalation,
+        "executes_action": False,
+    }
+
+
+def mission_action_preflight(mission_dict: Dict[str, Any], action_dict: Dict[str, Any]) -> Dict[str, Any]:
+    permission = mission_permission_check(mission_dict, action_dict)
+    admin = None
+    stale_directive = None
+    action_text = " ".join(str(value).lower() for value in action_dict.values())
+
+    if any(keyword in action_text for keyword in ["daily report", "weekly report", "nightly report", "content calendar", "hacker news", "linkedin", "admin", "cadence"]):
+        admin = classify_admin_rule(action_dict)
+    if any(keyword in action_text for keyword in ["directive", "tracker", "stale", "not started", "未追踪", "❌"]):
+        stale_directive = classify_stale_directive(action_dict)
+
+    alignment = classify_m_triangle_alignment(action_dict)
+    value = value_production_relevance(action_dict)
+
+    recommended_priority = "normal"
+    if value["relevance"] == "HIGH":
+        recommended_priority = "raise_if_no_m1_m2_incident"
+    elif admin and admin["decision"] in {"ARCHIVE_LEGACY", "SIMPLIFY_ACTIVE"} and value["relevance"] in {"LOW", "UNKNOWN"}:
+        recommended_priority = "simplify_or_archive"
+
+    return {
+        "permission": permission,
+        "admin_rule": admin,
+        "stale_directive": stale_directive,
+        "m_triangle_alignment": alignment,
+        "value_production_relevance": value,
+        "recommended_priority": recommended_priority,
         "executes_action": False,
     }
