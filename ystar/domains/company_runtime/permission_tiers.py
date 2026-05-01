@@ -10,6 +10,8 @@ class CompanyActionDecision(str, Enum):
     NEEDS_OWNER_APPROVAL = "NEEDS_OWNER_APPROVAL"
     BLOCKED = "BLOCKED"
     REVIEW_GATED = "REVIEW_GATED"
+    SIMPLIFY_OR_ARCHIVE = "SIMPLIFY_OR_ARCHIVE"
+    OWNER_DECISION_REQUIRED = "OWNER_DECISION_REQUIRED"
 
 
 class ActionClass(str, Enum):
@@ -18,6 +20,11 @@ class ActionClass(str, Enum):
     PREPARATION_ONLY = "preparation_only_owner_approved_execution"
     CONSTRAINED_EXTERNAL = "pre_approved_constrained_external_action"
     HIGH_RISK = "high_risk_review_gated"
+    ADMINISTRATIVE_ACTION = "administrative_action"
+    REPORTING_OBLIGATION = "reporting_obligation"
+    STALE_LEGACY_DIRECTIVE = "stale_legacy_directive"
+    OWNER_DECISION_REQUIRED = "owner_decision_required"
+    MISSION_BOUND_OBLIGATION = "mission_bound_obligation"
 
 
 @dataclass(frozen=True)
