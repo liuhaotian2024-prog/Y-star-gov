@@ -38,3 +38,9 @@ def test_mission_bound_report_can_be_active_non_mission_report_archived():
     assert active["decision"] == "SIMPLIFY_ACTIVE"
     assert archived["decision"] == "ARCHIVE_LEGACY"
 
+
+def test_mission_spine_preflight_never_executes_action():
+    mission = {"mission_id": "m3", "allowed_permission_tier": 1, "research_budget": {"max_pages_read": 5}}
+    result = mission_action_preflight(mission, {"action": "contact customer by email"})
+    assert result["executes_action"] is False
+    assert result["permission"]["executes_action"] is False
