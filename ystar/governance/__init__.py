@@ -190,3 +190,15 @@ from .runtime_linkage import (
     classify_stale_readers,
     validate_future_milestone_closure_packet,
 )
+
+
+# Capability centerline binding governance (E51 Phase 2.5)
+from .capability_centerline_binding import (
+    CapabilityBindingRecord,
+    CapabilityCenterlineContract,
+    CapabilityBindingGateResult,
+    validate_capability_binding,
+    validate_capability_centerline_contract,
+    classify_wrong_centerline,
+    evaluate_capability_binding_gate,
+)
