@@ -171,3 +171,22 @@ __all__ = [
     # Contract Lifecycle
     "ContractLifecycle", "ContractDraft",
 ]
+
+
+# Runtime linkage anti-drift governance (E51)
+from .runtime_linkage import (
+    RuntimeArtifact,
+    RuntimeLinkageGraph,
+    CenterlineStage,
+    CenterlineContract,
+    ReadbackProof,
+    AntiDriftGateResult,
+    validate_runtime_artifact,
+    validate_runtime_linkage_graph,
+    validate_centerline_contract,
+    validate_readback_proof,
+    evaluate_anti_drift_gate,
+    classify_orphan_artifacts,
+    classify_stale_readers,
+    validate_future_milestone_closure_packet,
+)
