@@ -17,6 +17,7 @@ class CEOCognitiveOSDecisionValue(str, Enum):
     """Governance decisions for CEO Cognitive OS packets."""
 
     ALLOW = "ALLOW"
+    REQUIRE_REVISION = "REQUIRE_REVISION"
     DENY = "DENY"
     ESCALATE = "ESCALATE"
 
@@ -57,6 +58,9 @@ class CEOCognitiveOSDecision:
     reason: str
     failed_stage: Optional[str] = None
     violations: list[str] = field(default_factory=list)
+    guidance: dict[str, Any] = field(default_factory=dict)
+    correct_path: list[str] = field(default_factory=list)
+    requires_owner_decision: bool = False
     cieu_validation_record: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -70,6 +74,9 @@ class CEOCognitiveOSDecision:
             "reason": self.reason,
             "failed_stage": self.failed_stage,
             "violations": list(self.violations),
+            "guidance": dict(self.guidance),
+            "correct_path": list(self.correct_path),
+            "requires_owner_decision": self.requires_owner_decision,
             "cieu_validation_record": dict(self.cieu_validation_record),
         }
 
@@ -207,61 +214,146 @@ def validate_ceo_pre_action_packet(
 
     missing = [field for field in contract.required_pre_action_fields if field not in packet]
     if missing:
-        return _decision("DENY", f"missing required fields: {', '.join(missing)}", packet, "schema", missing)
+        return _revision_decision(
+            f"missing required fields: {', '.join(missing)}",
+            packet,
+            "schema",
+            missing,
+            missing_fields=missing,
+        )
 
     if packet.get("bypass_attempt") is not False:
         return _decision("DENY", "bypass_attempt must be false", packet, "bypass_policy", ["bypass_attempt"])
 
     missing_stages = _missing_loop_stages(packet, contract)
     if missing_stages:
-        return _decision(
-            "DENY",
+        return _revision_decision(
             f"missing mandatory loop stages: {', '.join(missing_stages[:6])}",
             packet,
             "cognitive_os_loop",
             missing_stages,
+            missing_loop_stages=missing_stages,
         )
 
     cap_violation = _capability_evidence_violation(packet)
     if cap_violation:
-        return _decision("DENY", cap_violation, packet, "repository_evidence", [cap_violation])
+        if "unverified runtime-active capability claim" in cap_violation:
+            return _decision("DENY", cap_violation, packet, "repository_evidence", [cap_violation])
+        return _revision_decision(
+            cap_violation,
+            packet,
+            "repository_evidence",
+            [cap_violation],
+            required_evidence=["add repository evidence paths for every claimed capability"],
+        )
 
     if packet.get("current_mission_context", {}).get("reasoning_scope") == "recent_memory_only":
-        return _decision(
-            "DENY",
+        return _revision_decision(
             "recent-memory-only reasoning is not accepted",
             packet,
             "full_capability_inventory_recall",
             ["recent_memory_only"],
+            required_packet_changes=[
+                "rerun full repository-evidenced capability recall before selecting the action",
+                "replace recent-memory-only context with discovered capability and historical asset evidence",
+            ],
         )
 
     if len(_as_list(packet.get("candidate_actions"))) < 2:
-        return _decision("DENY", "at least two candidate actions are required", packet, "counterfactual_action_comparison")
+        return _revision_decision(
+            "at least two candidate actions are required",
+            packet,
+            "counterfactual_action_comparison",
+            ["candidate_actions"],
+            required_packet_changes=["add at least two plausible candidate actions"],
+        )
     if len(_as_list(packet.get("counterfactual_comparison"))) < 2:
-        return _decision("DENY", "at least two counterfactual comparisons are required", packet, "counterfactual_action_comparison")
+        return _revision_decision(
+            "at least two counterfactual comparisons are required",
+            packet,
+            "counterfactual_action_comparison",
+            ["counterfactual_comparison"],
+            required_packet_changes=["compare at least two candidate actions before selecting one"],
+        )
 
     prediction_violation = _prediction_violation(packet, contract)
     if prediction_violation:
-        return _decision("DENY", prediction_violation, packet, "pre_action_CIEU_residual_prediction", [prediction_violation])
+        return _revision_decision(
+            prediction_violation,
+            packet,
+            "pre_action_CIEU_residual_prediction",
+            [prediction_violation],
+            required_packet_changes=["complete pre-action CIEU prediction fields before revalidation"],
+        )
 
     if not _present(packet.get("adversarial_critique")):
-        return _decision("DENY", "adversarial critique is required", packet, "adversarial_critique")
+        return _revision_decision(
+            "adversarial critique is required",
+            packet,
+            "adversarial_critique",
+            ["adversarial_critique"],
+            required_packet_changes=["add an adversarial critique of why the selected action could be wrong"],
+        )
     if not _present(packet.get("what_not_to_do")):
-        return _decision("DENY", "what-not-to-do declaration is required", packet, "what_not_to_do")
+        return _revision_decision(
+            "what-not-to-do declaration is required",
+            packet,
+            "what_not_to_do",
+            ["what_not_to_do"],
+            required_packet_changes=["add explicit what-not-to-do constraints"],
+        )
 
     if _is_construction_action(packet) and not _non_duplication_proven(packet.get("no_new_wheel_decision")):
-        return _decision("DENY", "construction action lacks no-new-wheel proof", packet, "no_new_wheel_gate")
+        if _explicit_duplicate_core_mechanism(packet):
+            return _decision(
+                "DENY",
+                "construction action proposes a duplicate core governance/audit/provider mechanism",
+                packet,
+                "no_new_wheel_gate",
+                ["duplicate_core_mechanism"],
+            )
+        return _revision_decision(
+            "construction action lacks no-new-wheel proof",
+            packet,
+            "no_new_wheel_gate",
+            ["no_new_wheel_decision"],
+            required_packet_changes=[
+                "prove the action reuses, wraps, or extends the canonical owner instead of duplicating it"
+            ],
+        )
 
     owner_approval_state = packet.get("owner_approval_state")
     if owner_approval_state not in contract.allowed_owner_approval_states:
-        return _decision("DENY", "owner approval state is invalid", packet, "owner_approval_gate")
-
-    if _is_external_or_l4_execution(packet) and owner_approval_state != "approved":
-        return _decision("DENY", "L4/external execution requires explicit owner approval", packet, "owner_approval_gate")
+        return _revision_decision(
+            "owner approval state is invalid",
+            packet,
+            "owner_approval_gate",
+            ["owner_approval_state"],
+            required_packet_changes=[
+                "set owner_approval_state to one of: "
+                + ", ".join(contract.allowed_owner_approval_states)
+            ],
+        )
 
     forbidden = _forbidden_claim_violation(packet.get("overclaim_boundary"), contract)
     if forbidden:
         return _decision("DENY", f"forbidden claim present: {forbidden}", packet, "overclaim_boundary", [forbidden])
+
+    if _is_external_or_l4_execution(packet) and owner_approval_state != "approved":
+        return _decision(
+            "ESCALATE",
+            "L4/external execution requires explicit owner approval",
+            packet,
+            "owner_approval_gate",
+            ["owner_approval_required"],
+            guidance=_owner_decision_guidance(packet),
+            correct_path=[
+                "prepare or present an owner decision packet for the scoped L4/external action",
+                "do not execute until owner_approval_state is approved",
+                "rerun CEO Cognitive OS validation after approval is recorded",
+            ],
+            requires_owner_decision=True,
+        )
 
     return _decision("ALLOW", "CEO pre-action packet satisfies CEO Cognitive OS contract", packet)
 
@@ -278,28 +370,52 @@ def validate_ceo_post_action_residual(
 
     missing = [field for field in contract.required_post_action_fields if field not in residual]
     if missing:
-        return _decision("DENY", f"missing post-action fields: {', '.join(missing)}", residual, "post_action_schema", missing)
+        return _revision_decision(
+            f"missing post-action fields: {', '.join(missing)}",
+            residual,
+            "post_action_schema",
+            missing,
+            missing_fields=missing,
+        )
 
     cieu = residual.get("CIEU_record")
     if not isinstance(cieu, Mapping):
-        return _decision("DENY", "CIEU_record must be a mapping", residual, "post_action_CIEU_residual")
+        return _revision_decision(
+            "CIEU_record must be a mapping",
+            residual,
+            "post_action_CIEU_residual",
+            ["CIEU_record"],
+            required_packet_changes=["add a post-action CIEU_record mapping"],
+        )
     missing_cieu = [field for field in contract.required_post_cieu_fields if not _present(cieu.get(field))]
     if missing_cieu:
-        return _decision(
-            "DENY",
+        return _revision_decision(
             f"missing CIEU fields: {', '.join(missing_cieu)}",
             residual,
             "post_action_CIEU_residual",
             missing_cieu,
+            missing_fields=missing_cieu,
         )
 
     forbidden = _forbidden_claim_violation(residual.get("overclaim_check"), contract)
     if forbidden:
         return _decision("DENY", f"forbidden post-action claim present: {forbidden}", residual, "post_action_overclaim_check", [forbidden])
     if residual.get("no_new_wheel_check", {}).get("passed") is not True:
-        return _decision("DENY", "no-new-wheel check failed", residual, "post_action_no_new_wheel_check")
+        return _revision_decision(
+            "no-new-wheel check failed",
+            residual,
+            "post_action_no_new_wheel_check",
+            ["no_new_wheel_check"],
+            required_packet_changes=["repair the residual with no-new-wheel evidence or record the violation"],
+        )
     if residual.get("intelligence_gate_result", {}).get("passed") is not True:
-        return _decision("DENY", "intelligence gate failed", residual, "post_action_intelligence_gate")
+        return _revision_decision(
+            "intelligence gate failed",
+            residual,
+            "post_action_intelligence_gate",
+            ["intelligence_gate_result"],
+            required_packet_changes=["revise the output or route back to internal strategy before acceptance"],
+        )
 
     return _decision("ALLOW", "CEO post-action residual satisfies CEO Cognitive OS contract", residual)
 
@@ -312,6 +428,12 @@ def build_ceo_cognitive_os_cieu_record(
 
     decision_value = decision.decision.value if isinstance(decision, CEOCognitiveOSDecision) else str(decision.get("decision"))
     reason = decision.reason if isinstance(decision, CEOCognitiveOSDecision) else str(decision.get("reason", ""))
+    guidance = decision.guidance if isinstance(decision, CEOCognitiveOSDecision) else dict(decision.get("guidance", {}))
+    correct_path = (
+        decision.correct_path
+        if isinstance(decision, CEOCognitiveOSDecision)
+        else list(decision.get("correct_path", []))
+    )
     packet_id = packet_or_residual.get("packet_id") if isinstance(packet_or_residual, Mapping) else None
     return {
         "X_t": {
@@ -321,8 +443,25 @@ def build_ceo_cognitive_os_cieu_record(
         },
         "U_t": "Y-star-gov CEO Cognitive OS validation",
         "Y_star_t": "CEO major action must pass mandatory cognitive loop before acceptance",
-        "Y_t_plus_1": {"decision": decision_value, "reason": reason},
-        "R_t_plus_1": "none" if decision_value == "ALLOW" else f"blocked residual: {reason}",
+        "Y_t_plus_1": {
+            "decision": decision_value,
+            "reason": reason,
+            "guidance": guidance,
+            "correct_path": correct_path,
+        },
+        "R_t_plus_1": (
+            "none"
+            if decision_value == "ALLOW"
+            else {
+                "residual": reason,
+                "guidance_path": correct_path,
+                "requires_owner_decision": (
+                    decision.requires_owner_decision
+                    if isinstance(decision, CEOCognitiveOSDecision)
+                    else bool(decision.get("requires_owner_decision", False))
+                ),
+            }
+        ),
     }
 
 
@@ -332,6 +471,9 @@ def _decision(
     packet_or_residual: Mapping[str, Any],
     failed_stage: str | None = None,
     violations: list[str] | None = None,
+    guidance: dict[str, Any] | None = None,
+    correct_path: list[str] | None = None,
+    requires_owner_decision: bool = False,
 ) -> CEOCognitiveOSDecision:
     decision_value = CEOCognitiveOSDecisionValue(value)
     provisional = CEOCognitiveOSDecision(
@@ -339,14 +481,101 @@ def _decision(
         reason=reason,
         failed_stage=failed_stage,
         violations=violations or [],
+        guidance=guidance or {},
+        correct_path=correct_path or [],
+        requires_owner_decision=requires_owner_decision,
     )
     return CEOCognitiveOSDecision(
         decision=decision_value,
         reason=reason,
         failed_stage=failed_stage,
         violations=violations or [],
+        guidance=guidance or {},
+        correct_path=correct_path or [],
+        requires_owner_decision=requires_owner_decision,
         cieu_validation_record=build_ceo_cognitive_os_cieu_record(packet_or_residual, provisional),
     )
+
+
+def _revision_decision(
+    reason: str,
+    packet_or_residual: Mapping[str, Any],
+    failed_stage: str,
+    violations: list[str] | None = None,
+    *,
+    missing_fields: list[str] | None = None,
+    missing_loop_stages: list[str] | None = None,
+    required_evidence: list[str] | None = None,
+    required_packet_changes: list[str] | None = None,
+) -> CEOCognitiveOSDecision:
+    guidance = _revision_guidance(
+        failed_stage=failed_stage,
+        missing_fields=missing_fields,
+        missing_loop_stages=missing_loop_stages,
+        required_evidence=required_evidence,
+        required_packet_changes=required_packet_changes,
+    )
+    return _decision(
+        "REQUIRE_REVISION",
+        reason,
+        packet_or_residual,
+        failed_stage,
+        violations,
+        guidance=guidance,
+        correct_path=guidance["correct_path"],
+    )
+
+
+def _revision_guidance(
+    *,
+    failed_stage: str,
+    missing_fields: list[str] | None = None,
+    missing_loop_stages: list[str] | None = None,
+    required_evidence: list[str] | None = None,
+    required_packet_changes: list[str] | None = None,
+) -> dict[str, Any]:
+    missing_fields = missing_fields or []
+    missing_loop_stages = missing_loop_stages or []
+    required_evidence = required_evidence or []
+    required_packet_changes = required_packet_changes or []
+    correct_path = [
+        "repair the CEO Cognitive OS packet before execution",
+        "do not execute the proposed action while decision is REQUIRE_REVISION",
+        "rerun validate_ceo_pre_action_packet or validate_ceo_post_action_residual after repair",
+    ]
+    if missing_fields:
+        correct_path.append("fill missing fields: " + ", ".join(missing_fields))
+    if missing_loop_stages:
+        correct_path.append("complete missing loop stages: " + ", ".join(missing_loop_stages[:8]))
+    if required_evidence:
+        correct_path.extend(required_evidence)
+    if required_packet_changes:
+        correct_path.extend(required_packet_changes)
+    return {
+        "guidance_type": "require_revision",
+        "failed_stage": failed_stage,
+        "missing_fields": list(missing_fields),
+        "missing_loop_stages": list(missing_loop_stages),
+        "required_evidence": list(required_evidence),
+        "required_packet_changes": list(required_packet_changes),
+        "revalidate_after_revision": True,
+        "execution_allowed_before_revision": False,
+        "correct_path": correct_path,
+    }
+
+
+def _owner_decision_guidance(packet: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "guidance_type": "owner_decision_required",
+        "approval_required": True,
+        "owner_approval_state": packet.get("owner_approval_state"),
+        "required_packet_changes": [
+            "record explicit owner approval before any L4/external execution",
+            "keep outreach/publication/payment/login/mass-action boundaries denied unless separately approved",
+        ],
+        "revalidate_after_owner_decision": True,
+        "execution_allowed_before_owner_decision": False,
+    }
 
 
 def _missing_loop_stages(packet: Mapping[str, Any], contract: CEOCognitiveOSContract) -> list[str]:
@@ -433,6 +662,32 @@ def _is_external_or_l4_execution(packet: Mapping[str, Any]) -> bool:
 
 def _non_duplication_proven(value: Any) -> bool:
     return isinstance(value, Mapping) and _present(value.get("non_duplication_proof"))
+
+
+def _explicit_duplicate_core_mechanism(packet: Mapping[str, Any]) -> bool:
+    text = " ".join(
+        str(packet.get(field, ""))
+        for field in (
+            "proposed_action",
+            "selected_action",
+            "why_this_action",
+            "why_not_other_actions",
+        )
+    ).lower()
+    no_new_wheel = str(packet.get("no_new_wheel_decision", "")).lower()
+    duplicate_terms = ("duplicate", "reimplement", "parallel", "clone")
+    owner_terms = (
+        "y-star-gov",
+        "ystar-gov",
+        "governance engine",
+        "k9audit",
+        "ledger",
+        "verifier",
+        "gov-mcp",
+        "provider executor",
+    )
+    combined = f"{text} {no_new_wheel}"
+    return any(term in combined for term in duplicate_terms) and any(term in combined for term in owner_terms)
 
 
 def _as_list(value: Any) -> list[Any]:
