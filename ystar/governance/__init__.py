@@ -134,6 +134,13 @@ from ystar.governance.ceo_cognitive_os_runtime_hook import (
     classify_ceo_major_action,
     validate_ceo_runtime_envelope,
 )
+from ystar.governance.ceo_cognitive_os_cieu_log import (
+    CEO_COGNITIVE_OS_CIEU_EVENT_TYPE,
+    FORMAL_CIEU_LOG_PATH,
+    build_ceo_cognitive_os_cieu_log_record,
+    validate_and_write_ceo_runtime_envelope,
+    write_ceo_cognitive_os_cieu_log_record,
+)
 
 __all__ = [
     # Omission
@@ -190,6 +197,10 @@ __all__ = [
     "CEOCognitiveOSRuntimeDecisionValue", "CEOCognitiveOSRuntimeResult",
     "CEOMajorActionClassification", "classify_ceo_major_action",
     "validate_ceo_runtime_envelope",
+    "CEO_COGNITIVE_OS_CIEU_EVENT_TYPE", "FORMAL_CIEU_LOG_PATH",
+    "build_ceo_cognitive_os_cieu_log_record",
+    "validate_and_write_ceo_runtime_envelope",
+    "write_ceo_cognitive_os_cieu_log_record",
     # Amendment
     "AmendmentEngine", "AmendmentProposal",
     # Contract Lifecycle
