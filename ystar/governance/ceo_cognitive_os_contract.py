@@ -424,7 +424,7 @@ def build_ceo_cognitive_os_cieu_record(
     packet_or_residual: Mapping[str, Any],
     decision: CEOCognitiveOSDecision | Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Build a CIEU-style validation record without writing it anywhere."""
+    """Build a CIEU validation record candidate without writing it anywhere."""
 
     decision_value = decision.decision.value if isinstance(decision, CEOCognitiveOSDecision) else str(decision.get("decision"))
     reason = decision.reason if isinstance(decision, CEOCognitiveOSDecision) else str(decision.get("reason", ""))

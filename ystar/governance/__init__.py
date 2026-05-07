@@ -127,6 +127,13 @@ from ystar.governance.ceo_cognitive_os_contract import (
     validate_ceo_post_action_residual,
     validate_ceo_pre_action_packet,
 )
+from ystar.governance.ceo_cognitive_os_runtime_hook import (
+    CEOCognitiveOSRuntimeDecisionValue,
+    CEOCognitiveOSRuntimeResult,
+    CEOMajorActionClassification,
+    classify_ceo_major_action,
+    validate_ceo_runtime_envelope,
+)
 
 __all__ = [
     # Omission
@@ -180,6 +187,9 @@ __all__ = [
     "CEOCognitiveOSDecisionValue", "build_ceo_cognitive_os_cieu_record",
     "build_ceo_cognitive_os_contract", "validate_ceo_post_action_residual",
     "validate_ceo_pre_action_packet",
+    "CEOCognitiveOSRuntimeDecisionValue", "CEOCognitiveOSRuntimeResult",
+    "CEOMajorActionClassification", "classify_ceo_major_action",
+    "validate_ceo_runtime_envelope",
     # Amendment
     "AmendmentEngine", "AmendmentProposal",
     # Contract Lifecycle
