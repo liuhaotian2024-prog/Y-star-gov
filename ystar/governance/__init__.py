@@ -118,6 +118,15 @@ from ystar.governance.hook_contract_adapter import (
     HookAdapterResult,
     run_hook_contract_dry_run,
 )
+from ystar.governance.ceo_cognitive_os_contract import (
+    CEOCognitiveOSContract,
+    CEOCognitiveOSDecision,
+    CEOCognitiveOSDecisionValue,
+    build_ceo_cognitive_os_cieu_record,
+    build_ceo_cognitive_os_contract,
+    validate_ceo_post_action_residual,
+    validate_ceo_pre_action_packet,
+)
 
 __all__ = [
     # Omission
@@ -166,6 +175,11 @@ __all__ = [
     # Hook contract dry-run adapter
     "HookAdapterDecision", "HookAdapterIssue", "HookAdapterResult",
     "run_hook_contract_dry_run",
+    # CEO Cognitive OS contract validation
+    "CEOCognitiveOSContract", "CEOCognitiveOSDecision",
+    "CEOCognitiveOSDecisionValue", "build_ceo_cognitive_os_cieu_record",
+    "build_ceo_cognitive_os_contract", "validate_ceo_post_action_residual",
+    "validate_ceo_pre_action_packet",
     # Amendment
     "AmendmentEngine", "AmendmentProposal",
     # Contract Lifecycle
