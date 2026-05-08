@@ -242,6 +242,17 @@ from ystar.governance.ceo_open_world_strategy_contract import (
     validate_ceo_open_world_strategy,
     write_ceo_open_world_strategy_cieu_record,
 )
+from ystar.governance.ceo_strategy_process_integrity_contract import (
+    CEO_STRATEGY_PROCESS_INTEGRITY_CIEU_EVENT_TYPE,
+    CEOStrategyProcessIntegrityDecision,
+    CEOStrategyProcessIntegrityDecisionValue,
+    REQUIRED_STRATEGY_PHASES,
+    build_ceo_strategy_process_integrity_contract,
+    build_ceo_strategy_process_integrity_cieu_record,
+    validate_and_write_ceo_strategy_process_integrity,
+    validate_ceo_strategy_process_integrity,
+    write_ceo_strategy_process_integrity_cieu_record,
+)
 
 __all__ = [
     # Omission
@@ -384,6 +395,15 @@ __all__ = [
     "validate_and_write_ceo_open_world_strategy",
     "validate_ceo_open_world_strategy",
     "write_ceo_open_world_strategy_cieu_record",
+    "CEO_STRATEGY_PROCESS_INTEGRITY_CIEU_EVENT_TYPE",
+    "CEOStrategyProcessIntegrityDecision",
+    "CEOStrategyProcessIntegrityDecisionValue",
+    "REQUIRED_STRATEGY_PHASES",
+    "build_ceo_strategy_process_integrity_contract",
+    "build_ceo_strategy_process_integrity_cieu_record",
+    "validate_and_write_ceo_strategy_process_integrity",
+    "validate_ceo_strategy_process_integrity",
+    "write_ceo_strategy_process_integrity_cieu_record",
     # Amendment
     "AmendmentEngine", "AmendmentProposal",
     # Contract Lifecycle
