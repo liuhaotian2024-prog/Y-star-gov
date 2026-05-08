@@ -21,6 +21,7 @@ from ystar.governance.cieu_store import CIEUStore
 
 CEO_IMPLEMENTATION_ORDER_EVENT_TYPE = "CEO_IMPLEMENTATION_ORDER_DECISION"
 CODEX_EXECUTION_RECEIPT_EVENT_TYPE = "CODEX_EXECUTION_RECEIPT_DECISION"
+CODEX_HANDOFF_PROMPT_EVENT_TYPE = "CODEX_HANDOFF_PROMPT_DECISION"
 CEO_POST_CODEX_RESIDUAL_EVENT_TYPE = "CEO_POST_CODEX_RESIDUAL_DECISION"
 FORMAL_CIEU_LOG_PATH = "ystar.governance.cieu_store.CIEUStore.write_dict"
 
@@ -125,6 +126,17 @@ POST_CODEX_RESIDUAL_REQUIRED_FIELDS: tuple[str, ...] = (
     "no_customer_revenue_payment_claim",
 )
 
+PROMPT_GENERATION_REQUIRED_FIELDS: tuple[str, ...] = (
+    "prompt_request_id",
+    "linked_order_id",
+    "source_prompt_type",
+    "order_validation_result",
+    "YstarGov_order_validation_required",
+    "CIEUStore_order_write_required",
+    "prompt_generation_after_cieu_write_required",
+    "raw_natural_language_prompt_used",
+)
+
 FORBIDDEN_CLAIM_KEYS: tuple[str, ...] = (
     "customer_validation_claim",
     "revenue_claim",
@@ -147,6 +159,7 @@ def build_ceo_codex_executor_contract() -> dict[str, Any]:
         "event_types": [
             CEO_IMPLEMENTATION_ORDER_EVENT_TYPE,
             CODEX_EXECUTION_RECEIPT_EVENT_TYPE,
+            CODEX_HANDOFF_PROMPT_EVENT_TYPE,
             CEO_POST_CODEX_RESIDUAL_EVENT_TYPE,
         ],
         "formal_CIEU_log_path": FORMAL_CIEU_LOG_PATH,
@@ -213,6 +226,99 @@ def validate_codex_execution_receipt(receipt: Mapping[str, Any]) -> CEOCodexExec
     if receipt.get("execution_status") == "completed" and not _as_list(receipt.get("commits")):
         return _revision("completed Codex receipt requires commit evidence", receipt, "commits", ["commit canonical repo changes or mark status blocked/partial"])
     return _decision("ALLOW", "CodexExecutionReceipt satisfies executor boundary contract", receipt)
+
+
+def validate_codex_handoff_prompt_generation(prompt_request: Mapping[str, Any]) -> CEOCodexExecutorDecision:
+    if not isinstance(prompt_request, Mapping):
+        return _decision("DENY", "Codex handoff prompt generation request must be a mapping", {}, "prompt_request_schema")
+    if prompt_request.get("raw_natural_language_prompt_used") is True:
+        return _decision(
+            "DENY",
+            "raw natural-language prompt cannot authorize governed Codex execution",
+            prompt_request,
+            "raw_natural_language_prompt_used",
+            ["raw_prompt_without_governed_order"],
+        )
+    if not _present(prompt_request.get("linked_order_id")):
+        return _decision(
+            "DENY",
+            "Codex handoff prompt generation requires a linked CEOImplementationOrder",
+            prompt_request,
+            "linked_order_id",
+            ["linked_order_id_missing"],
+        )
+    missing = [field for field in PROMPT_GENERATION_REQUIRED_FIELDS if field not in prompt_request]
+    if missing:
+        return _revision(
+            "Codex handoff prompt generation is missing required governance fields",
+            prompt_request,
+            missing[0],
+            [f"fill prompt governance fields: {', '.join(missing[:12])}"],
+        )
+    if prompt_request.get("source_prompt_type") != "CEOImplementationOrder":
+        return _decision(
+            "DENY",
+            "Codex prompt source must be CEOImplementationOrder, not raw owner text",
+            prompt_request,
+            "source_prompt_type",
+            ["invalid_prompt_source"],
+        )
+    if prompt_request.get("YstarGov_order_validation_required") is not True:
+        return _revision(
+            "YstarGov order validation must be required before Codex prompt generation",
+            prompt_request,
+            "YstarGov_order_validation_required",
+            ["set YstarGov_order_validation_required=true"],
+        )
+    if prompt_request.get("CIEUStore_order_write_required") is not True:
+        return _revision(
+            "CIEUStore order write must be required before Codex prompt generation",
+            prompt_request,
+            "CIEUStore_order_write_required",
+            ["set CIEUStore_order_write_required=true"],
+        )
+    if prompt_request.get("prompt_generation_after_cieu_write_required") is not True:
+        return _revision(
+            "prompt generation must occur after CEOImplementationOrder CIEUStore write",
+            prompt_request,
+            "prompt_generation_after_cieu_write_required",
+            ["set prompt_generation_after_cieu_write_required=true"],
+        )
+
+    order_validation = prompt_request.get("order_validation_result")
+    if not isinstance(order_validation, Mapping):
+        return _revision(
+            "Codex prompt generation requires Y-star-gov order validation result",
+            prompt_request,
+            "order_validation_result",
+            ["validate CEOImplementationOrder through Y-star-gov before prompt generation"],
+        )
+    decision = _nested_decision(order_validation)
+    if decision != "ALLOW":
+        return _revision(
+            "CEOImplementationOrder must be ALLOW before Codex prompt generation",
+            prompt_request,
+            "order_validation_result",
+            ["revise order until Y-star-gov returns ALLOW"],
+        )
+    if order_validation.get("formal_CIEU_log_written") is not True:
+        return _revision(
+            "CEOImplementationOrder must be written to CIEUStore before Codex prompt generation",
+            prompt_request,
+            "formal_CIEU_log_written",
+            ["write CEOImplementationOrder decision to CIEUStore before prompt generation"],
+        )
+    write_result = order_validation.get("CIEU_write_result")
+    if isinstance(write_result, Mapping):
+        event_type = write_result.get("event_type") or write_result.get("CIEU_record", {}).get("event_type")
+        if event_type and event_type != CEO_IMPLEMENTATION_ORDER_EVENT_TYPE:
+            return _revision(
+                "prompt generation proof must reference CEO_IMPLEMENTATION_ORDER_DECISION CIEU event",
+                prompt_request,
+                "CIEU_write_result.event_type",
+                ["link prompt generation to CEOImplementationOrder CIEUStore write"],
+            )
+    return _decision("ALLOW", "Codex handoff prompt generation is governed by validated CEOImplementationOrder", prompt_request)
 
 
 def validate_ceo_post_codex_residual(residual: Mapping[str, Any]) -> CEOCodexExecutorDecision:
@@ -354,6 +460,25 @@ def validate_and_write_codex_execution_receipt(
         seal_session=seal_session,
     )
     return _validate_write_result("codex_execution_receipt_validate_and_write_result", decision, write_result)
+
+
+def validate_and_write_codex_handoff_prompt_generation(
+    prompt_request: Mapping[str, Any],
+    *,
+    cieu_db: str,
+    session_id: Optional[str] = None,
+    seal_session: bool = False,
+) -> dict[str, Any]:
+    decision = validate_codex_handoff_prompt_generation(prompt_request)
+    write_result = write_ceo_codex_executor_cieu_record(
+        prompt_request,
+        decision,
+        cieu_db=cieu_db,
+        event_type=CODEX_HANDOFF_PROMPT_EVENT_TYPE,
+        session_id=session_id,
+        seal_session=seal_session,
+    )
+    return _validate_write_result("codex_handoff_prompt_validate_and_write_result", decision, write_result)
 
 
 def validate_and_write_ceo_post_codex_residual(
@@ -499,6 +624,13 @@ def _decision_to_cieu_decision(value: str) -> str:
     }.get(value, "unknown")
 
 
+def _nested_decision(value: Mapping[str, Any]) -> str:
+    decision = value.get("governance_decision")
+    if isinstance(decision, Mapping):
+        return str(decision.get("decision") or "")
+    return str(value.get("decision") or "")
+
+
 def _text(value: Any) -> str:
     try:
         return str(value).lower()
@@ -509,6 +641,7 @@ def _text(value: Any) -> str:
 __all__ = [
     "CEO_IMPLEMENTATION_ORDER_EVENT_TYPE",
     "CODEX_EXECUTION_RECEIPT_EVENT_TYPE",
+    "CODEX_HANDOFF_PROMPT_EVENT_TYPE",
     "CEO_POST_CODEX_RESIDUAL_EVENT_TYPE",
     "CEOCodexExecutorDecision",
     "CEOCodexExecutorDecisionValue",
@@ -516,9 +649,11 @@ __all__ = [
     "build_ceo_codex_executor_contract",
     "validate_and_write_ceo_implementation_order",
     "validate_and_write_ceo_post_codex_residual",
+    "validate_and_write_codex_handoff_prompt_generation",
     "validate_and_write_codex_execution_receipt",
     "validate_ceo_implementation_order",
     "validate_ceo_post_codex_residual",
+    "validate_codex_handoff_prompt_generation",
     "validate_codex_execution_receipt",
     "write_ceo_codex_executor_cieu_record",
 ]

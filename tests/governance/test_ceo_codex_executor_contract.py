@@ -3,9 +3,13 @@ from __future__ import annotations
 import sqlite3
 
 from ystar.governance.ceo_codex_executor_contract import (
+    CODEX_HANDOFF_PROMPT_EVENT_TYPE,
+    CEO_IMPLEMENTATION_ORDER_EVENT_TYPE,
+    validate_and_write_codex_handoff_prompt_generation,
     validate_and_write_ceo_implementation_order,
     validate_and_write_ceo_post_codex_residual,
     validate_and_write_codex_execution_receipt,
+    validate_codex_handoff_prompt_generation,
     validate_ceo_implementation_order,
     validate_codex_execution_receipt,
 )
@@ -96,6 +100,29 @@ def _valid_residual() -> dict:
     }
 
 
+def _valid_prompt_request(order_write: dict | None = None) -> dict:
+    if order_write is None:
+        order_write = {
+            "governance_decision": {"decision": "ALLOW"},
+            "formal_CIEU_log_written": True,
+            "CIEU_write_result": {
+                "event_type": CEO_IMPLEMENTATION_ORDER_EVENT_TYPE,
+                "event_id": "event_order_prompt_test",
+            },
+        }
+    return {
+        "artifact_id": "CodexHandoffPromptGenerationRequest",
+        "prompt_request_id": "prompt_request_e92_test",
+        "linked_order_id": "order_e92_test",
+        "source_prompt_type": "CEOImplementationOrder",
+        "order_validation_result": order_write,
+        "YstarGov_order_validation_required": True,
+        "CIEUStore_order_write_required": True,
+        "prompt_generation_after_cieu_write_required": True,
+        "raw_natural_language_prompt_used": False,
+    }
+
+
 def test_valid_ceo_implementation_order_allow():
     assert validate_ceo_implementation_order(_valid_order()).to_dict()["decision"] == "ALLOW"
 
@@ -146,6 +173,53 @@ def test_false_revenue_customer_payment_claim_denies():
 
 def test_valid_receipt_allow():
     assert validate_codex_execution_receipt(_valid_receipt()).to_dict()["decision"] == "ALLOW"
+
+
+def test_valid_codex_prompt_generation_requires_validated_written_order():
+    decision = validate_codex_handoff_prompt_generation(_valid_prompt_request()).to_dict()
+
+    assert decision["decision"] == "ALLOW"
+
+
+def test_raw_natural_language_prompt_without_order_denies():
+    request = {
+        "artifact_id": "CodexHandoffPromptGenerationRequest",
+        "prompt_request_id": "raw_prompt",
+        "source_prompt_type": "raw_natural_language",
+        "raw_natural_language_prompt_used": True,
+    }
+
+    decision = validate_codex_handoff_prompt_generation(request).to_dict()
+    assert decision["decision"] == "DENY"
+    assert decision["failed_field"] == "raw_natural_language_prompt_used"
+
+
+def test_prompt_generation_without_cieustore_order_write_requires_revision():
+    request = _valid_prompt_request(
+        {
+            "governance_decision": {"decision": "ALLOW"},
+            "formal_CIEU_log_written": False,
+            "CIEU_write_result": {"event_type": CEO_IMPLEMENTATION_ORDER_EVENT_TYPE},
+        }
+    )
+
+    decision = validate_codex_handoff_prompt_generation(request).to_dict()
+    assert decision["decision"] == "REQUIRE_REVISION"
+    assert decision["failed_field"] == "formal_CIEU_log_written"
+
+
+def test_prompt_generation_decision_writes_cieustore_record(tmp_path):
+    db = str(tmp_path / "e92_prompt_governance.db")
+    order_write = validate_and_write_ceo_implementation_order(_valid_order(), cieu_db=db, session_id="e92_prompt_test")
+    prompt_write = validate_and_write_codex_handoff_prompt_generation(
+        _valid_prompt_request(order_write),
+        cieu_db=db,
+        session_id="e92_prompt_test",
+    )
+
+    assert prompt_write["governance_decision"]["decision"] == "ALLOW"
+    assert prompt_write["formal_CIEU_log_written"] is True
+    assert prompt_write["CIEU_write_result"]["event_type"] == CODEX_HANDOFF_PROMPT_EVENT_TYPE
 
 
 def test_cieustore_writer_works_for_order_receipt_and_residual(tmp_path):
