@@ -162,6 +162,19 @@ from ystar.governance.ceo_strategic_intelligence_benchmark import (
     validate_ceo_strategic_intelligence_strategy,
     write_ceo_strategic_benchmark_cieu_record,
 )
+from ystar.governance.ceo_operating_doctrine_contract import (
+    CEO_OPERATING_DOCTRINE_CIEU_EVENT_TYPE,
+    CEODoctrineDecision,
+    CEODoctrineDecisionValue,
+    build_ceo_doctrine_cieu_record,
+    build_ceo_operating_doctrine_contract,
+    required_doctrines_for_action_context,
+    validate_and_write_ceo_doctrine_invocation_plan,
+    validate_and_write_ceo_doctrine_invocation_proof,
+    validate_ceo_doctrine_invocation_plan,
+    validate_ceo_doctrine_invocation_proof,
+    write_ceo_doctrine_cieu_record,
+)
 
 __all__ = [
     # Omission
@@ -239,6 +252,17 @@ __all__ = [
     "validate_and_write_ceo_strategic_intelligence_strategy",
     "validate_ceo_strategic_intelligence_strategy",
     "write_ceo_strategic_benchmark_cieu_record",
+    "CEO_OPERATING_DOCTRINE_CIEU_EVENT_TYPE",
+    "CEODoctrineDecision",
+    "CEODoctrineDecisionValue",
+    "build_ceo_doctrine_cieu_record",
+    "build_ceo_operating_doctrine_contract",
+    "required_doctrines_for_action_context",
+    "validate_and_write_ceo_doctrine_invocation_plan",
+    "validate_and_write_ceo_doctrine_invocation_proof",
+    "validate_ceo_doctrine_invocation_plan",
+    "validate_ceo_doctrine_invocation_proof",
+    "write_ceo_doctrine_cieu_record",
     # Amendment
     "AmendmentEngine", "AmendmentProposal",
     # Contract Lifecycle
