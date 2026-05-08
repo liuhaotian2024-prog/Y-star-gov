@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ceo_adaptive_governance_contract import (
+from ystar.governance.ceo_adaptive_governance_contract import (
     CEOAdaptiveGovernanceDecisionValue,
     validate_ceo_adaptive_governance_result,
 )
