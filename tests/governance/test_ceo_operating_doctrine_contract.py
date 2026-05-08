@@ -134,6 +134,42 @@ def test_missing_external_observation_for_market_strategy_requires_revision():
     assert decision.failed_doctrine == "external_observation_public_read_model"
 
 
+def test_open_world_external_observation_historical_only_requires_revision_when_live_required():
+    plan = _valid_plan(live_external_observation_required=True)
+    plan["required_doctrines"] = ["external_observation_public_read_evidence"]
+    plan["planned_invocations"] = [
+        _invocation(
+            "external_observation_public_read_evidence",
+            runtime_status="callable_but_not_live",
+            invocation_status="historical_public_read_wrapper_invoked",
+        )
+    ]
+
+    decision = validate_ceo_doctrine_invocation_plan(plan)
+
+    assert decision.decision.value == "REQUIRE_REVISION"
+    assert decision.failed_doctrine == "external_observation_public_read_evidence"
+
+
+def test_open_world_gov_mcp_doctrine_requires_no_send_invariant():
+    plan = _valid_plan(provider_tool_boundary=True)
+    plan["required_doctrines"] = ["gov_mcp_dry_run_provider_boundary"]
+    plan["planned_invocations"] = [
+        _invocation(
+            "gov_mcp_dry_run_provider_boundary",
+            invocation_status="dry_run_invoked",
+            no_send_invariant=False,
+            provider_action_executed=False,
+            external_side_effect=False,
+        )
+    ]
+
+    decision = validate_ceo_doctrine_invocation_plan(plan)
+
+    assert decision.decision.value == "REQUIRE_REVISION"
+    assert decision.failed_doctrine == "gov_mcp_dry_run_provider_boundary"
+
+
 def test_static_template_non_test_market_strategy_requires_revision():
     plan = _valid_plan(generation_mode="static_template", test_mode=False)
 

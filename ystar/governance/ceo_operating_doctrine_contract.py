@@ -383,7 +383,7 @@ def _validate_plan_or_proof(payload: Mapping[str, Any], *, proof_mode: bool) -> 
                 doctrine_id,
                 [f"attach evidence_refs for {doctrine_id}"],
             )
-        if doctrine_id == "gov_mcp_dry_run_preflight" and context.get("provider_tool_boundary") is True:
+        if _is_gov_mcp_doctrine(doctrine_id) and context.get("provider_tool_boundary") is True:
             if invocation.get("provider_action_executed") is True or invocation.get("external_side_effect") is True:
                 return _decision("DENY", "gov-mcp doctrine proof may not execute provider action", payload, doctrine_id, ["provider_execution_forbidden"])
             if invocation.get("no_send_invariant") is not True:
@@ -434,7 +434,7 @@ def _invocation_satisfies(invocation: Mapping[str, Any], context: Mapping[str, A
     if runtime_status in UNSATISFACTORY_STATUSES or invocation_status in UNSATISFACTORY_STATUSES:
         return False
     doctrine_id = str(invocation.get("doctrine_id") or "")
-    if doctrine_id == "external_observation_public_read_model":
+    if _is_external_observation_doctrine(doctrine_id):
         if context.get("live_external_observation_required") is True:
             return invocation_status in {"runtime_invoked", "live_public_read_invoked"}
         return invocation_status in REPAIRABLE_EXTERNAL_OBSERVATION_STATUSES
@@ -449,6 +449,14 @@ def _invocation_satisfies(invocation: Mapping[str, Any], context: Mapping[str, A
         "owner_packet_prepared",
         "cieustore_recorded",
     }
+
+
+def _is_external_observation_doctrine(doctrine_id: str) -> bool:
+    return "external_observation" in doctrine_id or "public_read" in doctrine_id or "public-read" in doctrine_id
+
+
+def _is_gov_mcp_doctrine(doctrine_id: str) -> bool:
+    return "gov_mcp" in doctrine_id or "gov-mcp" in doctrine_id
 
 
 def _forbidden_claim(payload: Mapping[str, Any]) -> str:
