@@ -53,6 +53,8 @@ CEO_STRATEGIC_BENCHMARK_CIEU_EVENT_TYPE = "CEO_STRATEGIC_INTELLIGENCE_BENCHMARK_
 FORMAL_CIEU_LOG_PATH = "ystar.governance.cieu_store.CIEUStore.write_dict"
 
 REQUIRED_STRATEGY_SECTIONS: tuple[str, ...] = (
+    "brain_provenance",
+    "six_d_brain_review",
     "internal_capability_map",
     "external_market_evidence_map",
     "route_candidates",
@@ -73,6 +75,27 @@ REQUIRED_CIEU_PREDICTION_FIELDS: tuple[str, ...] = (
     "predicted_R_t_plus_1",
     "residual_severity",
     "falsification_condition",
+)
+
+REQUIRED_BRAIN_PROVENANCE_FIELDS: tuple[str, ...] = (
+    "brain_db",
+    "total_activations",
+    "unique_nodes",
+)
+
+REQUIRED_SIX_D_BRAIN_STAGE_FIELDS: tuple[str, ...] = (
+    "dimension_id",
+    "brain_stage_id",
+    "evidence_refs",
+    "output_summary",
+    "brain_activation_count",
+)
+
+STATIC_OR_UNGROUNDED_GENERATION_MODES: tuple[str, ...] = (
+    "static_template",
+    "deterministic_fixture",
+    "cash_first_global_money_map_structured_output",
+    "unanchored_runtime_structured_output",
 )
 
 FORBIDDEN_COMPLETION_CLAIMS: tuple[str, ...] = (
@@ -114,6 +137,10 @@ def validate_ceo_strategic_intelligence_strategy(
             "strategy_schema",
             missing_sections,
         )
+
+    brain_lock_decision = _validate_strategy_brain_requirement(strategy)
+    if brain_lock_decision is not None:
+        return brain_lock_decision
 
     routes = _as_list(strategy.get("route_candidates"))
     if len(routes) < 5:
@@ -308,6 +335,9 @@ def build_ceo_strategic_benchmark_cieu_record(
         "contract_hash": "ceo-strategic-intelligence-benchmark-v1",
         "params": {
             "strategy_run_id": strategy.get("strategy_run_id"),
+            "brain_unique_nodes": _brain_unique_nodes(strategy),
+            "brain_total_activations": _brain_total_activations(strategy),
+            "six_d_brain_review_count": len(_as_list(strategy.get("six_d_brain_review"))),
             "route_count": len(_as_list(strategy.get("route_candidates"))),
             "external_evidence_count": len(_as_list((strategy.get("external_market_evidence_map") or {}).get("evidence_items") if isinstance(strategy.get("external_market_evidence_map"), Mapping) else [])),
             "external_evidence_freshness": (strategy.get("external_market_evidence_map") or {}).get("freshness_status") if isinstance(strategy.get("external_market_evidence_map"), Mapping) else None,
@@ -322,6 +352,9 @@ def build_ceo_strategic_benchmark_cieu_record(
             "failed_dimensions": list(benchmark.get("failed_dimensions") or []),
             "correct_path": list(decision_data.get("correct_path") or [])[:8],
             "formal_CIEU_log_path": FORMAL_CIEU_LOG_PATH,
+            "brain_required_for_strategy": True,
+            "brain_unique_nodes": _brain_unique_nodes(strategy),
+            "six_d_brain_review_count": len(_as_list(strategy.get("six_d_brain_review"))),
             "no_customer_revenue_payment_claim": True,
         },
         "human_initiator": strategy.get("human_initiator") or "owner",
@@ -456,6 +489,106 @@ def _revision(
         },
         correct_path=correct_path,
     )
+
+
+def _validate_strategy_brain_requirement(
+    strategy: Mapping[str, Any],
+) -> CEOStrategicBenchmarkDecision | None:
+    """Require CEO strategy artifacts to pass through 6D brain provenance.
+
+    This governance-side lock prevents future market strategy work from being
+    accepted as a raw prompt, static template, or recent-memory summary. Missing
+    brain data is repairable, so it returns REQUIRE_REVISION.
+    """
+
+    generation_mode = str(strategy.get("generation_mode") or "")
+    if generation_mode in STATIC_OR_UNGROUNDED_GENERATION_MODES:
+        return _revision(
+            "CEO strategy generation mode is not brain-grounded",
+            strategy,
+            "generation_mode",
+            [
+                "call bridge-labs CEO brain runtime before strategy validation",
+                "set generation_mode to a brain-grounded structured output mode",
+                "attach brain_provenance and six_d_brain_review",
+            ],
+        )
+
+    truth = strategy.get("truth_constraints") if isinstance(strategy.get("truth_constraints"), Mapping) else {}
+    if truth.get("brain_grounded") is not True:
+        return _revision(
+            "CEO strategy must declare brain_grounded=true",
+            strategy,
+            "truth_constraints",
+            ["set truth_constraints.brain_grounded=true after real brain activation"],
+        )
+
+    brain = strategy.get("brain_provenance")
+    if not isinstance(brain, Mapping):
+        return _revision(
+            "brain_provenance is required for CEO strategy acceptance",
+            strategy,
+            "brain_provenance",
+            ["attach brain_provenance with brain_db, total_activations, and unique_nodes"],
+        )
+    missing = [field for field in REQUIRED_BRAIN_PROVENANCE_FIELDS if not _present(brain.get(field))]
+    if missing:
+        return _revision(
+            "brain_provenance is missing required fields",
+            strategy,
+            "brain_provenance",
+            ["fill brain_provenance fields: " + ", ".join(missing)],
+        )
+    if int(brain.get("total_activations") or 0) < 6 or int(brain.get("unique_nodes") or 0) < 3:
+        return _revision(
+            "CEO strategy requires real multi-node brain activation",
+            strategy,
+            "brain_provenance",
+            ["run 6D brain activation and attach at least 6 activations across at least 3 unique nodes"],
+        )
+
+    six_d = _as_list(strategy.get("six_d_brain_review"))
+    if len(six_d) < 6:
+        return _revision(
+            "six_d_brain_review must cover all six CEO strategy dimensions",
+            strategy,
+            "six_d_brain_review",
+            ["attach six brain-grounded strategy dimensions before governance validation"],
+        )
+    for index, stage in enumerate(six_d):
+        if not isinstance(stage, Mapping):
+            return _revision(
+                "six_d_brain_review entries must be structured mappings",
+                strategy,
+                "six_d_brain_review",
+                [f"replace six_d_brain_review[{index}] with a structured stage mapping"],
+            )
+        stage_missing = [field for field in REQUIRED_SIX_D_BRAIN_STAGE_FIELDS if not _present(stage.get(field))]
+        if stage_missing:
+            return _revision(
+                "six_d_brain_review stage is missing required fields",
+                strategy,
+                "six_d_brain_review",
+                [f"fill six_d_brain_review[{index}] fields: {', '.join(stage_missing)}"],
+            )
+        if int(stage.get("brain_activation_count") or 0) < 1:
+            return _revision(
+                "each six_d_brain_review stage requires at least one brain activation",
+                strategy,
+                "six_d_brain_review",
+                [f"rerun brain activation for six_d_brain_review[{index}]"],
+            )
+    return None
+
+
+def _brain_unique_nodes(strategy: Mapping[str, Any]) -> int:
+    brain = strategy.get("brain_provenance") if isinstance(strategy.get("brain_provenance"), Mapping) else {}
+    return int(brain.get("unique_nodes") or 0)
+
+
+def _brain_total_activations(strategy: Mapping[str, Any]) -> int:
+    brain = strategy.get("brain_provenance") if isinstance(strategy.get("brain_provenance"), Mapping) else {}
+    return int(brain.get("total_activations") or 0)
 
 
 def _validation_candidate(strategy: Mapping[str, Any], decision: CEOStrategicBenchmarkDecision) -> dict[str, Any]:
