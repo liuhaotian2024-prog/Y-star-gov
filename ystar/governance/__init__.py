@@ -141,6 +141,18 @@ from ystar.governance.ceo_cognitive_os_cieu_log import (
     validate_and_write_ceo_runtime_envelope,
     write_ceo_cognitive_os_cieu_log_record,
 )
+from ystar.governance.ceo_intelligence_loop_contract import (
+    CEO_INTELLIGENCE_LOOP_CIEU_EVENT_TYPE,
+    CEOIntelligenceLoopDecision,
+    CEOIntelligenceLoopDecisionValue,
+    REQUIRED_INTELLIGENCE_STAGE_IDS,
+    build_ceo_intelligence_loop_cieu_record,
+    build_ceo_intelligence_operation_registry,
+    validate_and_write_ceo_intelligence_loop_packet,
+    validate_ceo_cognitive_operation_stage,
+    validate_ceo_intelligence_loop_packet,
+    write_ceo_intelligence_loop_cieu_record,
+)
 
 __all__ = [
     # Omission
@@ -201,6 +213,16 @@ __all__ = [
     "build_ceo_cognitive_os_cieu_log_record",
     "validate_and_write_ceo_runtime_envelope",
     "write_ceo_cognitive_os_cieu_log_record",
+    "CEO_INTELLIGENCE_LOOP_CIEU_EVENT_TYPE",
+    "CEOIntelligenceLoopDecision",
+    "CEOIntelligenceLoopDecisionValue",
+    "REQUIRED_INTELLIGENCE_STAGE_IDS",
+    "build_ceo_intelligence_loop_cieu_record",
+    "build_ceo_intelligence_operation_registry",
+    "validate_and_write_ceo_intelligence_loop_packet",
+    "validate_ceo_cognitive_operation_stage",
+    "validate_ceo_intelligence_loop_packet",
+    "write_ceo_intelligence_loop_cieu_record",
     # Amendment
     "AmendmentEngine", "AmendmentProposal",
     # Contract Lifecycle
