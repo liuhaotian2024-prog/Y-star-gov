@@ -153,6 +153,15 @@ from ystar.governance.ceo_intelligence_loop_contract import (
     validate_ceo_intelligence_loop_packet,
     write_ceo_intelligence_loop_cieu_record,
 )
+from ystar.governance.ceo_strategic_intelligence_benchmark import (
+    CEO_STRATEGIC_BENCHMARK_CIEU_EVENT_TYPE,
+    CEOStrategicBenchmarkDecision,
+    CEOStrategicBenchmarkDecisionValue,
+    build_ceo_strategic_benchmark_cieu_record,
+    validate_and_write_ceo_strategic_intelligence_strategy,
+    validate_ceo_strategic_intelligence_strategy,
+    write_ceo_strategic_benchmark_cieu_record,
+)
 
 __all__ = [
     # Omission
@@ -223,6 +232,13 @@ __all__ = [
     "validate_ceo_cognitive_operation_stage",
     "validate_ceo_intelligence_loop_packet",
     "write_ceo_intelligence_loop_cieu_record",
+    "CEO_STRATEGIC_BENCHMARK_CIEU_EVENT_TYPE",
+    "CEOStrategicBenchmarkDecision",
+    "CEOStrategicBenchmarkDecisionValue",
+    "build_ceo_strategic_benchmark_cieu_record",
+    "validate_and_write_ceo_strategic_intelligence_strategy",
+    "validate_ceo_strategic_intelligence_strategy",
+    "write_ceo_strategic_benchmark_cieu_record",
     # Amendment
     "AmendmentEngine", "AmendmentProposal",
     # Contract Lifecycle
