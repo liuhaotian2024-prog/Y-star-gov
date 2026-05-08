@@ -276,6 +276,31 @@ from ystar.governance.ceo_live_global_open_world_strategy_contract import (
     validate_ceo_live_global_open_world_strategy,
     write_ceo_live_global_open_world_cieu_record,
 )
+from ystar.governance.ceo_competitive_intelligence_contract import (
+    CEO_COMPETITIVE_INTELLIGENCE_CIEU_EVENT_TYPE,
+    CEOCompetitiveIntelligenceDecision,
+    CEOCompetitiveIntelligenceDecisionValue,
+    build_ceo_competitive_intelligence_contract,
+    build_ceo_competitive_intelligence_cieu_record,
+    validate_and_write_ceo_competitive_intelligence,
+    validate_ceo_competitive_intelligence,
+    write_ceo_competitive_intelligence_cieu_record,
+)
+from ystar.governance.labs_universal_operating_control_contract import (
+    BASELINE_CAPABILITIES,
+    CODEX_CAPABILITIES,
+    LABS_UNIVERSAL_OPERATING_CONTROL_CIEU_EVENT_TYPE,
+    LabsUniversalControlDecision,
+    LabsUniversalControlDecisionValue,
+    PROVIDER_CAPABILITIES,
+    STRATEGY_CAPABILITIES,
+    build_labs_universal_control_cieu_record,
+    build_labs_universal_operating_control_contract,
+    required_capabilities_for_operation_context,
+    validate_and_write_labs_universal_control_packet,
+    validate_labs_universal_control_packet,
+    write_labs_universal_control_cieu_record,
+)
 
 __all__ = [
     # Omission
@@ -446,6 +471,27 @@ __all__ = [
     "validate_and_write_ceo_live_global_open_world_strategy",
     "validate_ceo_live_global_open_world_strategy",
     "write_ceo_live_global_open_world_cieu_record",
+    "CEO_COMPETITIVE_INTELLIGENCE_CIEU_EVENT_TYPE",
+    "CEOCompetitiveIntelligenceDecision",
+    "CEOCompetitiveIntelligenceDecisionValue",
+    "build_ceo_competitive_intelligence_contract",
+    "build_ceo_competitive_intelligence_cieu_record",
+    "validate_and_write_ceo_competitive_intelligence",
+    "validate_ceo_competitive_intelligence",
+    "write_ceo_competitive_intelligence_cieu_record",
+    "BASELINE_CAPABILITIES",
+    "CODEX_CAPABILITIES",
+    "LABS_UNIVERSAL_OPERATING_CONTROL_CIEU_EVENT_TYPE",
+    "LabsUniversalControlDecision",
+    "LabsUniversalControlDecisionValue",
+    "PROVIDER_CAPABILITIES",
+    "STRATEGY_CAPABILITIES",
+    "build_labs_universal_control_cieu_record",
+    "build_labs_universal_operating_control_contract",
+    "required_capabilities_for_operation_context",
+    "validate_and_write_labs_universal_control_packet",
+    "validate_labs_universal_control_packet",
+    "write_labs_universal_control_cieu_record",
     # Amendment
     "AmendmentEngine", "AmendmentProposal",
     # Contract Lifecycle
