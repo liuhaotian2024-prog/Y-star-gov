@@ -253,6 +253,19 @@ from ystar.governance.ceo_strategy_process_integrity_contract import (
     validate_ceo_strategy_process_integrity,
     write_ceo_strategy_process_integrity_cieu_record,
 )
+from ystar.governance.ceo_strategy_math_model_contract import (
+    CEO_STRATEGY_MATH_MODEL_CIEU_EVENT_TYPE,
+    CEOStrategyMathModelDecision,
+    CEOStrategyMathModelDecisionValue,
+    REQUIRED_PARAMETER_KEYS,
+    REQUIRED_ROUTE_SCORE_FIELDS,
+    REQUIRED_SOURCE_KEYS,
+    build_ceo_strategy_math_model_contract,
+    build_ceo_strategy_math_model_cieu_record,
+    validate_and_write_ceo_strategy_math_model,
+    validate_ceo_strategy_math_model,
+    write_ceo_strategy_math_model_cieu_record,
+)
 
 __all__ = [
     # Omission
@@ -404,6 +417,17 @@ __all__ = [
     "validate_and_write_ceo_strategy_process_integrity",
     "validate_ceo_strategy_process_integrity",
     "write_ceo_strategy_process_integrity_cieu_record",
+    "CEO_STRATEGY_MATH_MODEL_CIEU_EVENT_TYPE",
+    "CEOStrategyMathModelDecision",
+    "CEOStrategyMathModelDecisionValue",
+    "REQUIRED_PARAMETER_KEYS",
+    "REQUIRED_ROUTE_SCORE_FIELDS",
+    "REQUIRED_SOURCE_KEYS",
+    "build_ceo_strategy_math_model_contract",
+    "build_ceo_strategy_math_model_cieu_record",
+    "validate_and_write_ceo_strategy_math_model",
+    "validate_ceo_strategy_math_model",
+    "write_ceo_strategy_math_model_cieu_record",
     # Amendment
     "AmendmentEngine", "AmendmentProposal",
     # Contract Lifecycle
