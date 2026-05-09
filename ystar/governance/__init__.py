@@ -119,6 +119,16 @@ from ystar.governance.ceo_deep_strategic_intelligence_contract import (
     validate_ceo_deep_strategic_intelligence_dossier,
     validate_and_write_ceo_deep_strategic_intelligence_dossier,
 )
+from ystar.governance.aiden_idle_learning_contract import (
+    AIDEN_IDLE_LEARNING_CIEU_EVENT_TYPE,
+    AidenIdleLearningDecision,
+    AidenIdleLearningDecisionValue,
+    build_aiden_idle_learning_contract,
+    build_aiden_idle_learning_cieu_record,
+    validate_aiden_idle_learning_packet,
+    validate_and_write_aiden_idle_learning_packet,
+    write_aiden_idle_learning_cieu_record,
+)
 from ystar.governance.hook_contract_adapter import (
     HookAdapterDecision,
     HookAdapterIssue,
@@ -427,6 +437,14 @@ __all__ = [
     "validate_codex_handoff_prompt_generation",
     "validate_codex_execution_receipt",
     "write_ceo_codex_executor_cieu_record",
+    "AIDEN_IDLE_LEARNING_CIEU_EVENT_TYPE",
+    "AidenIdleLearningDecision",
+    "AidenIdleLearningDecisionValue",
+    "build_aiden_idle_learning_contract",
+    "build_aiden_idle_learning_cieu_record",
+    "validate_aiden_idle_learning_packet",
+    "validate_and_write_aiden_idle_learning_packet",
+    "write_aiden_idle_learning_cieu_record",
     "CEO_ADAPTIVE_GOVERNANCE_EVENT_TYPE",
     "CEOAdaptiveGovernanceDecision",
     "CEOAdaptiveGovernanceDecisionValue",
