@@ -11,9 +11,16 @@ from ystar.governance.aiden_idle_learning_contract import (
 
 
 def _evidence(idx: int, domain_id: str = "ceo_judgment") -> dict:
+    content_type_by_domain = {
+        "classical_theory_canon": "classical_theory",
+        "peer_experience_corpus": "peer_experience",
+        "historical_case_corpus": "historical_case",
+        "customer_contact_residuals": "customer_learning_methodology",
+    }
     return {
         "evidence_id": f"e116_evidence_{idx}",
         "domain_id": domain_id,
+        "content_type": content_type_by_domain.get(domain_id, "current_market_signal"),
         "source_url": f"https://public.example.org/source-{idx}",
         "source_title": f"Source {idx}",
         "source_date": "2026-05-01",
@@ -52,7 +59,7 @@ def _valid_packet() -> dict:
         "historical_case_corpus",
         "customer_contact_residuals",
     ]
-    evidence = [_evidence(idx + 1, domain_ids[idx % len(domain_ids)]) for idx in range(10)]
+    evidence = [_evidence(idx + 1, domain_ids[idx % len(domain_ids)]) for idx in range(12)]
     nodes = [
         {
             "node_id": f"ceo_learning/e116_node_{idx}",
@@ -86,7 +93,14 @@ def _valid_packet() -> dict:
         "source_date_policy": {
             "source_dates_required": True,
             "stale_or_undated_rejected": True,
-            "freshness_policy_id": "e112_market_evidence_freshness_policy_v1",
+            "freshness_policy_id": "e120_content_type_aware_evidence_freshness_policy_v2",
+            "content_type_max_age_days": {
+                "classical_theory": 3650,
+                "peer_experience": 1460,
+                "historical_case": 3650,
+                "operator_playbook": 1460,
+                "customer_learning_methodology": 1460,
+            },
         },
         "evidence_items": evidence,
         "learning_quality_summary": {
@@ -190,6 +204,28 @@ def test_active_session_task_requires_revision_with_navigation():
 def test_undated_or_unaccepted_evidence_requires_revision():
     packet = _valid_packet()
     packet["evidence_items"][0]["freshness_status"] = "rejected_missing_source_date_for_brain_learning"
+
+    decision = validate_aiden_idle_learning_packet(packet).to_dict()
+
+    assert decision["decision"] == "REQUIRE_REVISION"
+    assert decision["failed_section"] == "evidence_items"
+
+
+def test_missing_content_type_policy_requires_revision():
+    packet = _valid_packet()
+    packet["source_date_policy"].pop("content_type_max_age_days")
+
+    decision = validate_aiden_idle_learning_packet(packet).to_dict()
+
+    assert decision["decision"] == "REQUIRE_REVISION"
+    assert decision["failed_section"] == "source_date_policy"
+
+
+def test_missing_durable_knowledge_domain_evidence_requires_revision():
+    packet = _valid_packet()
+    packet["evidence_items"] = [
+        item for item in packet["evidence_items"] if item["domain_id"] != "peer_experience_corpus"
+    ]
 
     decision = validate_aiden_idle_learning_packet(packet).to_dict()
 

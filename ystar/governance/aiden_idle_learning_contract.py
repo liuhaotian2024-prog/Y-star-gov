@@ -88,6 +88,21 @@ ALLOWED_FRESHNESS_STATUSES = {
     "accepted_evergreen_context",
 }
 
+REQUIRED_CONTENT_TYPE_POLICY_KEYS = {
+    "classical_theory",
+    "peer_experience",
+    "historical_case",
+    "operator_playbook",
+    "customer_learning_methodology",
+}
+
+REQUIRED_EVIDENCE_DOMAINS = {
+    "classical_theory_canon",
+    "peer_experience_corpus",
+    "historical_case_corpus",
+    "customer_contact_residuals",
+}
+
 ALLOWED_WRITE_MODES = {
     "CIEU_backed_candidate_only",
     "isolated_test_brain_db_write",
@@ -184,6 +199,14 @@ def validate_aiden_idle_learning_packet(packet: Mapping[str, Any]) -> AidenIdleL
             "source_date_policy",
             ["set source_dates_required=true", "reject undated and stale evidence before brain write"],
         )
+    content_type_policy = source_policy.get("content_type_max_age_days") if isinstance(source_policy.get("content_type_max_age_days"), Mapping) else {}
+    missing_content_policy = sorted(REQUIRED_CONTENT_TYPE_POLICY_KEYS - set(content_type_policy.keys()))
+    if missing_content_policy:
+        return _revision(
+            "freshness policy must be content-type aware for durable theory, peer experience, cases, and customer-learning methodology",
+            "source_date_policy",
+            [f"add content_type_max_age_days.{key}" for key in missing_content_policy],
+        )
 
     evidence_items = packet.get("evidence_items")
     if not isinstance(evidence_items, list) or len(evidence_items) < 8:
@@ -193,6 +216,7 @@ def validate_aiden_idle_learning_packet(packet: Mapping[str, Any]) -> AidenIdleL
             ["collect source-dated CEO/market/strategy/technology/governance evidence before writing brain"],
         )
     accepted_ids: set[str] = set()
+    evidence_domains: set[str] = set()
     for item in evidence_items:
         if not isinstance(item, Mapping):
             return _revision("evidence item must be structured", "evidence_items", ["normalize evidence rows"])
@@ -211,6 +235,13 @@ def validate_aiden_idle_learning_packet(packet: Mapping[str, Any]) -> AidenIdleL
                 "evidence item needs source_url and source_date",
                 "evidence_items",
                 [f"add source URL/date metadata or reject evidence {evidence_id}"],
+            )
+        content_type = str(item.get("content_type") or item.get("knowledge_content_type") or "").strip()
+        if not content_type:
+            return _revision(
+                "evidence item needs content_type so freshness can distinguish market news from durable knowledge",
+                "evidence_items",
+                [f"add content_type for evidence {evidence_id}"],
             )
         quality = item.get("learning_quality") if isinstance(item.get("learning_quality"), Mapping) else {}
         score = quality.get("quality_score", item.get("quality_score"))
@@ -247,6 +278,15 @@ def validate_aiden_idle_learning_packet(packet: Mapping[str, Any]) -> AidenIdleL
                 [f"add learning_quality.{field}" for field in missing_quality_dims],
             )
         accepted_ids.add(evidence_id)
+        evidence_domains.add(str(item.get("domain_id") or ""))
+
+    missing_evidence_domains = sorted(REQUIRED_EVIDENCE_DOMAINS - evidence_domains)
+    if missing_evidence_domains:
+        return _revision(
+            "idle learning must actually ingest durable theory, peer experience, historical cases, and customer-learning methodology evidence",
+            "evidence_items",
+            [f"add accepted evidence for domain {domain_id}" for domain_id in missing_evidence_domains],
+        )
 
     quality_summary = packet.get("learning_quality_summary") if isinstance(packet.get("learning_quality_summary"), Mapping) else {}
     if quality_summary.get("learning_quality_gate_applied") is not True:

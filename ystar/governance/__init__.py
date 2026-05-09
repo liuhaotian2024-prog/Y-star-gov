@@ -150,6 +150,14 @@ from ystar.governance.aiden_operating_pattern_doctrine_contract import (
     validate_and_write_aiden_operating_pattern_invocation,
     write_aiden_operating_pattern_cieu_record,
 )
+from ystar.governance.aiden_unknown_problem_learning_protocol_contract import (
+    AIDEN_UNKNOWN_PROBLEM_LEARNING_EVENT_TYPE,
+    AidenUnknownProblemLearningDecision,
+    AidenUnknownProblemLearningDecisionValue,
+    build_aiden_unknown_problem_learning_cieu_record,
+    validate_aiden_unknown_problem_learning_protocol,
+    validate_and_write_aiden_unknown_problem_learning_protocol,
+)
 from ystar.governance.hook_contract_adapter import (
     HookAdapterDecision,
     HookAdapterIssue,
@@ -483,6 +491,12 @@ __all__ = [
     "validate_aiden_operating_pattern_invocation",
     "validate_and_write_aiden_operating_pattern_invocation",
     "write_aiden_operating_pattern_cieu_record",
+    "AIDEN_UNKNOWN_PROBLEM_LEARNING_EVENT_TYPE",
+    "AidenUnknownProblemLearningDecision",
+    "AidenUnknownProblemLearningDecisionValue",
+    "build_aiden_unknown_problem_learning_cieu_record",
+    "validate_aiden_unknown_problem_learning_protocol",
+    "validate_and_write_aiden_unknown_problem_learning_protocol",
     "CEO_ADAPTIVE_GOVERNANCE_EVENT_TYPE",
     "CEOAdaptiveGovernanceDecision",
     "CEOAdaptiveGovernanceDecisionValue",

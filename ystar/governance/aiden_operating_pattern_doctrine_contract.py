@@ -53,6 +53,7 @@ BASE_MANDATORY_PATTERNS = {
     "no_new_wheel_preflight",
     "capability_utilization_sweep",
     "class_level_extrapolation_gate",
+    "downstream_impact_scan",
     "correct_path_navigation",
     "evidence_quality_and_freshness_gate",
     "regression_test_and_cieu_closure",
@@ -80,6 +81,16 @@ CONDITIONAL_PATTERN_RULES = {
     "self_governance_related": {
         "proposal_only_no_direct_contract_mutation",
         "owner_review_before_contract_patch",
+    },
+    "unknown_problem_related": {
+        "unknown_problem_learning_protocol",
+        "knowledge_graph_methodology_selection",
+        "source_discovery_tool_selection",
+        "thinking_mode_selection",
+    },
+    "durable_learning_related": {
+        "content_type_freshness_policy",
+        "theory_case_peer_curriculum_coverage",
     },
 }
 

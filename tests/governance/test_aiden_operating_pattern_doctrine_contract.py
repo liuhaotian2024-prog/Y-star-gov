@@ -17,6 +17,8 @@ def _valid_packet() -> dict:
         "brain_write_related": True,
         "external_action_related": True,
         "self_governance_related": True,
+        "unknown_problem_related": True,
+        "durable_learning_related": True,
     }
     invocations = [
         {
@@ -52,6 +54,9 @@ def test_valid_operating_pattern_packet_allows():
     assert decision["decision"] == "ALLOW"
     assert "no_new_wheel_preflight" in decision["guidance"]["expected_patterns"]
     assert "class_level_extrapolation_gate" in decision["guidance"]["expected_patterns"]
+    assert "downstream_impact_scan" in decision["guidance"]["expected_patterns"]
+    assert "unknown_problem_learning_protocol" in decision["guidance"]["expected_patterns"]
+    assert "content_type_freshness_policy" in decision["guidance"]["expected_patterns"]
 
 
 def test_missing_required_pattern_requires_revision():
