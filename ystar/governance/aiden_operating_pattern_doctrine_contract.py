@@ -92,6 +92,15 @@ CONDITIONAL_PATTERN_RULES = {
         "content_type_freshness_policy",
         "theory_case_peer_curriculum_coverage",
     },
+    "autonomous_web_observation_related": {
+        "host_autonomous_public_read_observer",
+        "autonomous_query_frontier_expansion",
+        "public_read_no_side_effect_boundary",
+    },
+    "local_llm_related": {
+        "local_gemma_runtime_boundary",
+        "local_llm_no_external_provider",
+    },
 }
 
 FORBIDDEN_TRUE_CLAIMS = (
