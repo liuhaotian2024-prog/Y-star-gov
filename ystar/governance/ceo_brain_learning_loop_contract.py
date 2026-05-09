@@ -61,6 +61,7 @@ REQUIRED_PACKET_FIELDS = (
     "rejected_evidence_items",
     "brain_mutation_candidates",
     "failure_residual_candidates",
+    "CZL_residual_loop_linkage",
     "brain_write_policy",
     "CIEU_linkage",
     "truth_constraints",
@@ -174,6 +175,21 @@ def validate_ceo_brain_learning_packet(packet: Mapping[str, Any]) -> CEOBrainLea
             ["build CIEU-backed node/edge/residual candidates from accepted fresh evidence"],
         )
 
+    czl_linkage = packet.get("CZL_residual_loop_linkage") if isinstance(packet.get("CZL_residual_loop_linkage"), Mapping) else {}
+    if czl_linkage.get("residual_loop_engine_path") != "ystar/governance/residual_loop_engine.py":
+        return _revision(
+            "failure residual learning must use the existing CZL ResidualLoopEngine instead of a parallel residual model",
+            "CZL_residual_loop_linkage",
+            ["bind failure residuals to ystar/governance/residual_loop_engine.py"],
+        )
+    schema = set(str(item) for item in (czl_linkage.get("czl_tuple_schema") or []))
+    if not {"X_t", "U", "Y_star", "Y_t_plus_1", "R_t_plus_1"}.issubset(schema):
+        return _revision(
+            "CZL linkage must declare the causal zero loop tuple schema",
+            "CZL_residual_loop_linkage",
+            ["declare X_t, U, Y_star, Y_t_plus_1, and R_t_plus_1"],
+        )
+
     accepted_by_id = {}
     for item in accepted:
         if not isinstance(item, Mapping):
@@ -246,6 +262,24 @@ def validate_ceo_brain_learning_packet(packet: Mapping[str, Any]) -> CEOBrainLea
                 "failure_residual_candidates",
                 ["record what failed or was uncertain and how Aiden should update"],
             )
+        czl_tuple = residual.get("CZL_residual_tuple") if isinstance(residual.get("CZL_residual_tuple"), Mapping) else {}
+        missing_czl = [
+            field
+            for field in ("X_t", "U", "Y_star", "Y_t_plus_1", "R_t_plus_1")
+            if field not in czl_tuple
+        ]
+        if missing_czl:
+            return _revision(
+                "failure residual candidate must carry a CZL residual tuple",
+                "failure_residual_candidates",
+                [f"add CZL_residual_tuple.{field}" for field in missing_czl],
+            )
+        if residual.get("residual_loop_engine_path") != "ystar/governance/residual_loop_engine.py":
+            return _revision(
+                "failure residual candidate must reference the existing ResidualLoopEngine",
+                "failure_residual_candidates",
+                ["set residual_loop_engine_path to ystar/governance/residual_loop_engine.py"],
+            )
 
     linkage = packet.get("CIEU_linkage") if isinstance(packet.get("CIEU_linkage"), Mapping) else {}
     if not linkage.get("source_CIEU_event_ids") or not linkage.get("target_event_type"):
@@ -295,6 +329,9 @@ def build_ceo_brain_learning_cieu_record(
             "accepted_evidence_count": len(packet.get("accepted_evidence_items") or []),
             "rejected_evidence_count": len(packet.get("rejected_evidence_items") or []),
             "brain_mutation_candidate_count": len(packet.get("brain_mutation_candidates") or []),
+            "CZL_residual_loop_engine_path": packet.get("CZL_residual_loop_linkage", {}).get("residual_loop_engine_path")
+            if isinstance(packet.get("CZL_residual_loop_linkage"), Mapping)
+            else None,
             "freshness_filter_applied": freshness.get("freshness_filter_applied"),
         },
         "result": {

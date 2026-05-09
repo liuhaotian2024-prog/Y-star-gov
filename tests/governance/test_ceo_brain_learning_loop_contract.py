@@ -74,8 +74,21 @@ def _valid_packet() -> dict:
                 "residual_id": "residual_competitor_gap",
                 "learning_update": "Aiden must refresh competitor saturation before strategic claims.",
                 "source_evidence_ids": ["fresh_competitor_1"],
+                "residual_loop_engine_path": "ystar/governance/residual_loop_engine.py",
+                "CZL_residual_tuple": {
+                    "X_t": {"claim": "competitor map stale"},
+                    "U": ["refresh current competitor evidence"],
+                    "Y_star": {"fresh_competitor_map": True},
+                    "Y_t_plus_1": {"fresh_competitor_map": False},
+                    "R_t_plus_1": 0.5,
+                },
             }
         ],
+        "CZL_residual_loop_linkage": {
+            "residual_loop_engine_path": "ystar/governance/residual_loop_engine.py",
+            "czl_tuple_schema": ["X_t", "U", "Y_star", "Y_t_plus_1", "R_t_plus_1"],
+            "uses_existing_czl_mechanism": True,
+        },
         "brain_write_policy": {
             "automatic_direct_writeback": False,
             "production_brain_write_requested": False,
@@ -150,3 +163,11 @@ def test_no_accepted_fresh_evidence_requires_revision():
     decision = validate_ceo_brain_learning_packet(packet)
     assert decision.to_dict()["decision"] == "REQUIRE_REVISION"
     assert "refresh public-read scan" in " ".join(decision.to_dict()["correct_path"])
+
+
+def test_missing_czl_residual_tuple_requires_revision():
+    packet = _valid_packet()
+    del packet["failure_residual_candidates"][0]["CZL_residual_tuple"]
+    decision = validate_ceo_brain_learning_packet(packet)
+    assert decision.to_dict()["decision"] == "REQUIRE_REVISION"
+    assert "CZL_residual_tuple" in " ".join(decision.to_dict()["correct_path"])
