@@ -65,8 +65,11 @@ def _valid_dossier() -> dict:
                 {
                     "name": f"Competitor {idx}",
                     "source_url": f"https://vendor{idx}.com/research/current-signal",
+                    "source_date": "2026-05-09",
                     "observed_at": "2026-05-09",
                     "public_signal_date": "2026-05-09",
+                    "public_signal_date_basis": "source_dated_public_evidence",
+                    "public_signal_evidence_refs": [f"public://competitor-signal-{idx}"],
                 }
                 for idx in range(1, 6)
             ]
@@ -163,6 +166,21 @@ def test_competitor_without_current_signal_requires_revision():
     competitor["source_url"] = "https://vendor1.com/"
     competitor.pop("public_signal_date")
     competitor.pop("observed_at")
+
+    decision = validate_ceo_deep_strategic_intelligence_dossier(dossier)
+
+    assert decision.decision == CEODeepStrategicDecisionValue.REQUIRE_REVISION
+    assert decision.failed_section == "competitive_landscape"
+
+
+def test_competitor_homepage_with_self_assigned_current_date_requires_revision():
+    dossier = _valid_dossier()
+    competitor = dossier["competitive_landscape"]["competitors_and_substitutes"][0]
+    competitor["source_url"] = "https://vendor1.com/"
+    competitor["public_signal_date"] = "2026-05-09"
+    competitor["public_signal_date_basis"] = "public competitor presence observed during strategy run"
+    competitor["public_signal_evidence_refs"] = []
+    competitor.pop("source_date")
 
     decision = validate_ceo_deep_strategic_intelligence_dossier(dossier)
 

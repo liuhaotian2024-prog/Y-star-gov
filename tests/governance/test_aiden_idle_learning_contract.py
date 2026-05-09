@@ -28,6 +28,10 @@ def _evidence(idx: int, domain_id: str = "ceo_judgment") -> dict:
             "novelty": 0.7,
             "cross_source_support": 0.72,
             "actionability": 0.76,
+            "source_authority_basis": "public.example.org",
+            "source_url_depth": 0.7,
+            "claim_specificity": 0.74,
+            "current_signal_verifiability": 0.82,
             "risk_of_staleness": 0.18,
         },
     }
@@ -95,6 +99,7 @@ def _valid_packet() -> dict:
             "target_brain_db": "/tmp/e116_test_brain.db",
             "max_nodes_per_cycle": 25,
             "max_edges_per_cycle": 50,
+            "production_target": False,
             "production_brain_write_performed": False,
         },
         "CIEU_linkage": {
@@ -177,6 +182,53 @@ def test_automatic_direct_writeback_is_denied():
 
     assert decision["decision"] == "DENY"
     assert decision["failed_section"] == "brain_write_policy"
+
+
+def test_production_brain_write_without_owner_approval_escalates():
+    packet = _valid_packet()
+    packet["brain_write_policy"]["write_mode"] = "governed_local_brain_db_write"
+    packet["brain_write_policy"]["production_target"] = True
+    packet["brain_write_policy"]["target_brain_db"] = "/Users/haotianliu/.openclaw/workspace/ystar-bridge-labs/aiden_brain.db"
+
+    decision = validate_aiden_idle_learning_packet(packet).to_dict()
+
+    assert decision["decision"] == "ESCALATE"
+    assert decision["failed_section"] == "brain_write_policy"
+    assert decision["requires_owner_decision"] is True
+
+
+def test_approved_production_brain_write_requires_verified_backup():
+    packet = _valid_packet()
+    packet["brain_write_policy"]["write_mode"] = "governed_local_brain_db_write"
+    packet["brain_write_policy"]["production_target"] = True
+    packet["brain_write_policy"]["owner_explicit_production_write_approval"] = True
+
+    decision = validate_aiden_idle_learning_packet(packet).to_dict()
+
+    assert decision["decision"] == "REQUIRE_REVISION"
+    assert decision["failed_section"] == "brain_write_policy"
+    assert "backup_verified=true" in " ".join(decision["correct_path"])
+
+
+def test_approved_production_brain_write_with_verified_backup_allows():
+    packet = _valid_packet()
+    packet["brain_write_policy"].update(
+        {
+            "write_mode": "governed_local_brain_db_write",
+            "production_target": True,
+            "owner_explicit_production_write_approval": True,
+            "pre_write_backup_path": "/tmp/aiden_brain.db.backup",
+            "pre_write_backup_sha256": "abc123",
+            "pre_write_brain_db_sha256": "abc123",
+            "backup_created_at": "2026-05-09T00:00:00Z",
+            "backup_verified": True,
+            "rollback_plan": "restore backup before restarting runtime",
+        }
+    )
+
+    decision = validate_aiden_idle_learning_packet(packet)
+
+    assert decision.decision == AidenIdleLearningDecisionValue.ALLOW
 
 
 def test_external_or_revenue_claim_is_denied():

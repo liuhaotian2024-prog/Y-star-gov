@@ -180,11 +180,17 @@ def validate_ceo_deep_strategic_intelligence_dossier(
                 "competitive_landscape",
                 ["attach source_date/latest_funding_date/public_signal_date/observed_at for every competitor"],
             )
-        if _is_plain_homepage_url(str(competitor.get("source_url") or "")) and not competitor.get("public_signal_date"):
+        if not _competitor_has_verifiable_signal_basis(competitor):
             return _revision(
-                "plain competitor homepages need an explicit current public_signal_date",
+                "competitor current signal must be tied to dated public evidence, not only runtime observation",
                 "competitive_landscape",
-                ["add current public_signal_date or replace homepage with a dated competitor evidence URL"],
+                ["attach public_signal_date_basis=source_dated_public_evidence and public_signal_evidence_refs, or replace with a dated source URL"],
+            )
+        if _is_plain_homepage_url(str(competitor.get("source_url") or "")) and not _homepage_has_dated_public_signal(competitor):
+            return _revision(
+                "plain competitor homepages need dated public-signal evidence, not a self-assigned observation date",
+                "competitive_landscape",
+                ["replace homepage with a dated competitor evidence URL or attach public_signal_evidence_refs and source_dated basis"],
             )
 
     right_to_win = dossier.get("right_to_win_and_right_to_lose")
@@ -417,6 +423,33 @@ def _competitor_has_current_signal(competitor: Mapping[str, Any]) -> bool:
         _present(competitor.get(field))
         for field in ("source_date", "latest_funding_date", "public_signal_date", "observed_at", "updated_at")
     )
+
+
+def _competitor_has_verifiable_signal_basis(competitor: Mapping[str, Any]) -> bool:
+    basis = str(competitor.get("public_signal_date_basis") or competitor.get("source_date_basis") or "").strip().lower()
+    allowed_basis = {
+        "source_dated_public_evidence",
+        "dated_article",
+        "dated_press_release",
+        "latest_funding_date",
+        "version_release_date",
+        "regulatory_or_market_report_date",
+        "public_read_source_date",
+    }
+    if basis in allowed_basis:
+        return True
+    if _present(competitor.get("source_date")) or _present(competitor.get("latest_funding_date")) or _present(competitor.get("updated_at")):
+        return True
+    return False
+
+
+def _homepage_has_dated_public_signal(competitor: Mapping[str, Any]) -> bool:
+    if not _present(competitor.get("public_signal_date")):
+        return False
+    refs = _as_list(competitor.get("public_signal_evidence_refs"))
+    if not refs:
+        return False
+    return _competitor_has_verifiable_signal_basis(competitor)
 
 
 def _is_plain_homepage_url(url: str) -> bool:

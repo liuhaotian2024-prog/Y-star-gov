@@ -218,7 +218,19 @@ def validate_aiden_idle_learning_packet(packet: Mapping[str, Any]) -> AidenIdleL
                 "learning_quality_summary",
                 [f"replace or downgrade evidence {evidence_id}; minimum quality_score is 0.60"],
             )
-        required_quality_dims = {"source_authority", "freshness", "commercial_relevance", "novelty", "cross_source_support", "actionability", "risk_of_staleness"}
+        required_quality_dims = {
+            "source_authority",
+            "source_authority_basis",
+            "freshness",
+            "commercial_relevance",
+            "novelty",
+            "cross_source_support",
+            "actionability",
+            "source_url_depth",
+            "claim_specificity",
+            "current_signal_verifiability",
+            "risk_of_staleness",
+        }
         missing_quality_dims = sorted(required_quality_dims - set(quality.keys()))
         if missing_quality_dims:
             return _revision(
@@ -326,6 +338,35 @@ def validate_aiden_idle_learning_packet(packet: Mapping[str, Any]) -> AidenIdleL
                 "brain write policy needs per-cycle rate limits",
                 "brain_write_policy",
                 ["set max_nodes_per_cycle and max_edges_per_cycle"],
+            )
+    if write_mode == "governed_local_brain_db_write" and brain_policy.get("production_target") is True:
+        if brain_policy.get("owner_explicit_production_write_approval") is not True:
+            return AidenIdleLearningDecision(
+                decision=AidenIdleLearningDecisionValue.ESCALATE,
+                reason="production brain write is owner-bound and requires explicit approval before graph mutation",
+                failed_section="brain_write_policy",
+                violations=["production_brain_write_owner_approval_missing"],
+                correct_path=[
+                    "present production brain write preflight to owner",
+                    "create and verify a timestamped brain.db backup",
+                    "rerun with owner_explicit_production_write_approval=true only after approval",
+                ],
+                guidance={"next_allowed_action": "owner_visible_preflight_only"},
+                requires_owner_decision=True,
+            )
+        backup_required_fields = [
+            "pre_write_backup_path",
+            "pre_write_backup_sha256",
+            "pre_write_brain_db_sha256",
+            "backup_created_at",
+            "rollback_plan",
+        ]
+        missing_backup = [field for field in backup_required_fields if not brain_policy.get(field)]
+        if missing_backup or brain_policy.get("backup_verified") is not True:
+            return _revision(
+                "approved production brain write requires verified backup and rollback metadata",
+                "brain_write_policy",
+                [f"add {field}" for field in missing_backup] + ["set backup_verified=true before production write"],
             )
     if brain_policy.get("production_brain_write_performed") is True:
         return _deny(
