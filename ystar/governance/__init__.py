@@ -149,6 +149,15 @@ from ystar.governance.aiden_host_autonomous_web_observer_contract import (
     validate_and_write_aiden_host_autonomous_web_observer_packet,
     write_aiden_host_autonomous_web_observer_cieu_record,
 )
+from ystar.governance.aiden_host_runtime_service_controller_contract import (
+    AIDEN_HOST_RUNTIME_SERVICE_CONTROLLER_EVENT_TYPE,
+    AidenHostRuntimeServiceDecision,
+    AidenHostRuntimeServiceDecisionValue,
+    build_aiden_host_runtime_service_controller_contract,
+    build_aiden_host_runtime_service_cieu_record,
+    validate_aiden_host_runtime_service_order,
+    validate_and_write_aiden_host_runtime_service_order,
+)
 from ystar.governance.aiden_operating_pattern_doctrine_contract import (
     AIDEN_OPERATING_PATTERN_DOCTRINE_EVENT_TYPE,
     AidenOperatingPatternDecision,
