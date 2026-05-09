@@ -49,6 +49,26 @@ def _valid_packet() -> dict:
             "total_capability_domains": len(domains),
             "source": "git_ls_files_plus_runtime_capability_map",
         },
+        "capability_utilization_matrix": {
+            "code_index_loaded": True,
+            "indexed_capability_counts": {
+                "total_tracked_files": 34677,
+                "total_python_files": 3085,
+                "total_functions": 11495,
+                "total_classes": 1660,
+            },
+            "action_relevant_capability_groups": [
+                {
+                    "domain_id": domain,
+                    "utilization_status": "runtime_bound",
+                    "invocation_requirement": "mandatory",
+                    "source_paths": [f"canonical/{domain}.py"],
+                }
+                for domain in domains
+            ],
+            "available_for_future_activation": [],
+            "unreviewed_runtime_active_capability_count": 0,
+        },
         "mandatory_capability_domains": domains,
         "semantic_capability_matches": matches,
         "reuse_plan": [
@@ -141,3 +161,23 @@ def test_missing_repo_scan_requires_revision():
     decision = validate_no_new_wheel_runtime_law_packet(packet)
     assert decision.to_dict()["decision"] == "REQUIRE_REVISION"
     assert "gov-mcp" in " ".join(decision.to_dict()["correct_path"])
+
+
+def test_missing_capability_utilization_matrix_requires_revision():
+    packet = _valid_packet()
+    packet.pop("capability_utilization_matrix")
+    decision = validate_no_new_wheel_runtime_law_packet(packet)
+    assert decision.to_dict()["decision"] == "REQUIRE_REVISION"
+    assert "capability_utilization_matrix" in " ".join(decision.to_dict()["correct_path"])
+
+
+def test_mandatory_domain_missing_from_utilization_matrix_requires_revision():
+    packet = _valid_packet()
+    packet["capability_utilization_matrix"]["action_relevant_capability_groups"] = [
+        row
+        for row in packet["capability_utilization_matrix"]["action_relevant_capability_groups"]
+        if row["domain_id"] != "czl_residual_loop_engine"
+    ]
+    decision = validate_no_new_wheel_runtime_law_packet(packet)
+    assert decision.to_dict()["decision"] == "REQUIRE_REVISION"
+    assert "residual_loop_engine" in " ".join(decision.to_dict()["correct_path"])

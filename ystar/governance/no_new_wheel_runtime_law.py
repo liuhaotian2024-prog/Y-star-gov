@@ -54,6 +54,7 @@ REQUIRED_PACKET_FIELDS = (
     "action_context",
     "repository_discovery",
     "capability_index_summary",
+    "capability_utilization_matrix",
     "mandatory_capability_domains",
     "semantic_capability_matches",
     "reuse_plan",
@@ -226,6 +227,46 @@ def validate_no_new_wheel_runtime_law_packet(packet: Mapping[str, Any]) -> NoNew
             [_correct_path_for(domain) for domain in sorted(set(missing_matches + missing_plan))],
         )
 
+    utilization = packet.get("capability_utilization_matrix") if isinstance(packet.get("capability_utilization_matrix"), Mapping) else {}
+    if utilization.get("code_index_loaded") is not True:
+        return _revision(
+            "full-system capability utilization matrix must load the E87R code index before action",
+            "capability_utilization_matrix",
+            ["load operations/baseline/e87r_full_repo_baseline/code_index.json before selecting implementation path"],
+        )
+    totals = utilization.get("indexed_capability_counts") if isinstance(utilization.get("indexed_capability_counts"), Mapping) else {}
+    if int(totals.get("total_python_files") or 0) <= 0 or int(totals.get("total_functions") or 0) <= 0:
+        return _revision(
+            "capability utilization matrix must expose indexed Python files and functions",
+            "capability_utilization_matrix",
+            ["reuse E87R code_index counts so existing capabilities are visible to the runtime"],
+        )
+    action_groups = utilization.get("action_relevant_capability_groups")
+    if not isinstance(action_groups, list) or not action_groups:
+        return _revision(
+            "runtime must identify action-relevant capability groups, not just prevent rebuilds",
+            "capability_utilization_matrix",
+            ["map the action context to existing capability groups and decide invoke/consult/defer for each"],
+        )
+    missing_utilization = [
+        str(domain)
+        for domain in mandatory
+        if domain not in set(str(item.get("domain_id")) for item in action_groups if isinstance(item, Mapping))
+    ]
+    if missing_utilization:
+        return _revision(
+            "mandatory capability domains must appear in the utilization matrix",
+            "capability_utilization_matrix",
+            [_correct_path_for(domain) for domain in missing_utilization],
+        )
+    unreviewed = utilization.get("unreviewed_runtime_active_capability_count")
+    if unreviewed not in (0, "0", None):
+        return _revision(
+            "runtime-active capabilities cannot remain invisible to the action planner",
+            "capability_utilization_matrix",
+            ["classify every runtime-active capability as invoke, consult, available-for-future, deprecated, or irrelevant-to-this-action"],
+        )
+
     for item in matches:
         if not isinstance(item, Mapping):
             continue
@@ -328,6 +369,12 @@ def build_no_new_wheel_runtime_law_cieu_record(
             "runtime_law_id": packet.get("runtime_law_id"),
             "operation_type": context.get("operation_type") or context.get("action_type"),
             "mandatory_capability_domains": list(packet.get("mandatory_capability_domains") or []),
+            "capability_utilization_counts": packet.get("capability_utilization_matrix", {}).get("indexed_capability_counts")
+            if isinstance(packet.get("capability_utilization_matrix"), Mapping)
+            else None,
+            "action_relevant_capability_group_count": len(packet.get("capability_utilization_matrix", {}).get("action_relevant_capability_groups") or [])
+            if isinstance(packet.get("capability_utilization_matrix"), Mapping)
+            else None,
             "R_t_plus_1": packet.get("CZL_closure", {}).get("R_t_plus_1")
             if isinstance(packet.get("CZL_closure"), Mapping)
             else None,
