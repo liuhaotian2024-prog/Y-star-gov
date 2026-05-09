@@ -112,6 +112,13 @@ from ystar.governance.contract_dry_run import (
     DryRunResult,
     run_governance_contract_dry_run,
 )
+
+from ystar.governance.ceo_deep_strategic_intelligence_contract import (
+    CEODeepStrategicDecision,
+    CEODeepStrategicDecisionValue,
+    validate_ceo_deep_strategic_intelligence_dossier,
+    validate_and_write_ceo_deep_strategic_intelligence_dossier,
+)
 from ystar.governance.hook_contract_adapter import (
     HookAdapterDecision,
     HookAdapterIssue,
