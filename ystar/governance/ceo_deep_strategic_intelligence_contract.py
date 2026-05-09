@@ -73,6 +73,7 @@ REQUIRED_SECTIONS = (
     "experiment_design",
     "post_action_residual_learning_plan",
     "CIEU_predictions",
+    "extrapolation_gate",
     "no_overclaim_boundary",
 )
 
@@ -149,6 +150,9 @@ def validate_ceo_deep_strategic_intelligence_dossier(
     diversity_decision = _validate_dimension_evidence_diversity(dimensions)
     if diversity_decision:
         return diversity_decision
+    extrapolation_decision = _validate_extrapolation_gate(dossier.get("extrapolation_gate"))
+    if extrapolation_decision:
+        return extrapolation_decision
 
     market_map = dossier.get("market_map")
     if not isinstance(market_map, Mapping):
@@ -468,6 +472,56 @@ def _no_real_feedback_claimed(dossier: Mapping[str, Any]) -> bool:
         boundary.get(key) is True
         for key in ("customer_validation_claim", "revenue_claim", "payment_claim", "paid_signal_claim", "pricing_validation_claim", "L4_feedback_executed")
     )
+
+
+def _validate_extrapolation_gate(value: Any) -> CEODeepStrategicDecision | None:
+    if not isinstance(value, Mapping):
+        return _revision(
+            "deep strategy must include class-level extrapolation gate",
+            "extrapolation_gate",
+            ["add class_of_issue, extrapolation_to_other_cases, proposed_class_level_fix, and evidence_refs"],
+        )
+    class_issue = value.get("class_of_issue") if isinstance(value.get("class_of_issue"), Mapping) else {}
+    if not _present(class_issue.get("issue_class_id")) or not _present(class_issue.get("generalization_boundary")):
+        return _revision(
+            "extrapolation gate needs class_of_issue with generalization boundary",
+            "extrapolation_gate",
+            ["identify the issue class, not only the observed point failure"],
+        )
+    cases = _as_list(value.get("extrapolation_to_other_cases"))
+    if len(cases) < 3:
+        return _revision(
+            "extrapolation gate must project at least three same-class variants",
+            "extrapolation_gate",
+            ["list at least three other cases where this issue class can recur"],
+        )
+    for case in cases:
+        if not isinstance(case, Mapping) or not _present(case.get("case_id")) or not _present(case.get("why_same_class")) or not _present(case.get("preventive_rule")):
+            return _revision(
+                "each extrapolated case needs case_id, why_same_class, and preventive_rule",
+                "extrapolation_gate",
+                ["turn the point fix into class-level preventive rules"],
+            )
+    class_fix = value.get("proposed_class_level_fix") if isinstance(value.get("proposed_class_level_fix"), Mapping) else {}
+    if not _present(class_fix.get("rule")) or len(_as_list(class_fix.get("affected_runtime_paths"))) < 2:
+        return _revision(
+            "extrapolation gate needs a class-level fix across affected runtimes",
+            "extrapolation_gate",
+            ["add proposed_class_level_fix.rule and at least two affected_runtime_paths"],
+        )
+    if not _as_list(value.get("evidence_refs")):
+        return _revision(
+            "extrapolation gate needs evidence refs",
+            "extrapolation_gate",
+            ["attach source code, report, CIEU, or audit evidence supporting the issue class"],
+        )
+    if value.get("point_fix_only") is True:
+        return _revision(
+            "point-fix-only repair is not sufficient",
+            "extrapolation_gate",
+            ["replace point_fix_only with class-level fix and rerun governance"],
+        )
+    return None
 
 
 def _deny(reason: str, section: str, violations: list[str]) -> CEODeepStrategicDecision:

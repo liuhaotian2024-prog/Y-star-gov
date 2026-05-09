@@ -47,6 +47,10 @@ def _valid_packet() -> dict:
         "governance_and_risk",
         "technology_architecture",
         "failure_residual_learning",
+        "classical_theory_canon",
+        "peer_experience_corpus",
+        "historical_case_corpus",
+        "customer_contact_residuals",
     ]
     evidence = [_evidence(idx + 1, domain_ids[idx % len(domain_ids)]) for idx in range(10)]
     nodes = [
@@ -111,6 +115,36 @@ def _valid_packet() -> dict:
             "residual_loop_engine_path": "ystar/governance/residual_loop_engine.py",
             "R_t_plus_1": 0.0,
         },
+        "extrapolation_gate": {
+            "class_of_issue": {
+                "issue_class_id": "idle_learning_point_fix_without_generalization",
+                "description": "idle learning can accept a repaired evidence row without preventing same-class future failures",
+                "generalization_boundary": "applies to source quality, freshness, evidence diversity, and production brain write safety",
+            },
+            "extrapolation_to_other_cases": [
+                {
+                    "case_id": "single_source_market_claim",
+                    "why_same_class": "a quality score can pass while corroboration remains weak",
+                    "preventive_rule": "require explicit corroboration or mark as single-source hypothesis",
+                },
+                {
+                    "case_id": "classic_theory_not_ingested",
+                    "why_same_class": "curriculum can focus on market news and ignore durable CEO theory",
+                    "preventive_rule": "require canonical theory and historical case learning domains",
+                },
+                {
+                    "case_id": "production_write_boolean_approval",
+                    "why_same_class": "a boolean can stand in for owner-visible approval",
+                    "preventive_rule": "require owner-visible preflight and verified backup",
+                },
+            ],
+            "proposed_class_level_fix": {
+                "rule": "durable learning must identify issue class and future variants before brain write",
+                "affected_runtime_paths": ["E116_idle_learning", "E118_production_brain_write"],
+            },
+            "evidence_refs": ["tests/governance/test_aiden_idle_learning_contract.py"],
+            "point_fix_only": False,
+        },
         "truth_constraints": {
             "external_action_executed": False,
             "provider_action_executed": False,
@@ -172,6 +206,26 @@ def test_low_quality_evidence_requires_revision_with_correct_path():
     assert decision["decision"] == "REQUIRE_REVISION"
     assert decision["failed_section"] == "learning_quality_summary"
     assert "minimum quality_score" in " ".join(decision["correct_path"])
+
+
+def test_missing_extrapolation_gate_requires_revision():
+    packet = _valid_packet()
+    packet.pop("extrapolation_gate")
+
+    decision = validate_aiden_idle_learning_packet(packet).to_dict()
+
+    assert decision["decision"] == "REQUIRE_REVISION"
+    assert decision["failed_section"] == "schema"
+
+
+def test_point_fix_only_extrapolation_gate_requires_revision():
+    packet = _valid_packet()
+    packet["extrapolation_gate"]["point_fix_only"] = True
+
+    decision = validate_aiden_idle_learning_packet(packet).to_dict()
+
+    assert decision["decision"] == "REQUIRE_REVISION"
+    assert decision["failed_section"] == "extrapolation_gate"
 
 
 def test_automatic_direct_writeback_is_denied():

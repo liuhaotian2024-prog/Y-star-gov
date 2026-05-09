@@ -114,6 +114,37 @@ def _valid_dossier() -> dict:
         },
         "post_action_residual_learning_plan": {"learning_update": "compare buyer feedback against predictions"},
         "CIEU_predictions": [{"X_t": "strategy", "predicted_R_t_plus_1": 0, "falsification_condition": "no buyer urgency"}],
+        "extrapolation_gate": {
+            "class_of_issue": {
+                "issue_class_id": "strategy_point_fix_without_generalization",
+                "description": "single audit findings can be patched without preventing the class of failure",
+                "generalization_boundary": "applies to strategic reasoning, evidence, competitor, right-to-win, and CZL truth gates",
+            },
+            "extrapolation_to_other_cases": [
+                {
+                    "case_id": "repeated_evidence_bundle",
+                    "why_same_class": "schema can be satisfied while semantic diversity is absent",
+                    "preventive_rule": "require dimension-specific evidence diversity",
+                },
+                {
+                    "case_id": "homepage_current_signal",
+                    "why_same_class": "a field can be present without proving source-dated reality",
+                    "preventive_rule": "require source-dated current-signal basis",
+                },
+                {
+                    "case_id": "internal_only_right_to_win",
+                    "why_same_class": "internal assets can masquerade as market differentiation",
+                    "preventive_rule": "require buyer-visible proof",
+                },
+            ],
+            "proposed_class_level_fix": {
+                "rule": "every deep strategy must name the issue class and at least three same-class future variants",
+                "affected_runtime_paths": ["E115_deep_strategy", "E116_idle_learning"],
+                "correct_path_navigation": "generalize the point failure before accepting the strategy",
+            },
+            "evidence_refs": ["tests/governance/test_ceo_deep_strategic_intelligence_contract.py"],
+            "point_fix_only": False,
+        },
         "no_overclaim_boundary": {
             "customer_validation_claim": False,
             "revenue_claim": False,
@@ -206,6 +237,26 @@ def test_false_real_market_residual_closure_denies():
 
     assert decision.decision == CEODeepStrategicDecisionValue.DENY
     assert decision.failed_section == "causal_zero_loop_model"
+
+
+def test_missing_extrapolation_gate_requires_revision():
+    dossier = _valid_dossier()
+    dossier.pop("extrapolation_gate")
+
+    decision = validate_ceo_deep_strategic_intelligence_dossier(dossier)
+
+    assert decision.decision == CEODeepStrategicDecisionValue.REQUIRE_REVISION
+    assert decision.failed_section == "dossier_schema"
+
+
+def test_point_fix_only_extrapolation_gate_requires_revision():
+    dossier = _valid_dossier()
+    dossier["extrapolation_gate"]["point_fix_only"] = True
+
+    decision = validate_ceo_deep_strategic_intelligence_dossier(dossier)
+
+    assert decision.decision == CEODeepStrategicDecisionValue.REQUIRE_REVISION
+    assert decision.failed_section == "extrapolation_gate"
 
 
 def test_external_action_executed_denies():

@@ -63,6 +63,7 @@ REQUIRED_PACKET_FIELDS = (
     "brain_write_policy",
     "CIEU_linkage",
     "CZL_closure",
+    "extrapolation_gate",
     "truth_constraints",
 )
 
@@ -75,6 +76,10 @@ REQUIRED_CURRICULUM_DOMAINS = {
     "governance_and_risk",
     "technology_architecture",
     "failure_residual_learning",
+    "classical_theory_canon",
+    "peer_experience_corpus",
+    "historical_case_corpus",
+    "customer_contact_residuals",
 }
 
 ALLOWED_FRESHNESS_STATUSES = {
@@ -131,6 +136,9 @@ def validate_aiden_idle_learning_packet(packet: Mapping[str, Any]) -> AidenIdleL
     forbidden = _forbidden_claim(packet)
     if forbidden:
         return _deny(f"forbidden idle-learning overclaim or side effect present: {forbidden}", "truth_constraints", [forbidden])
+    extrapolation = _validate_extrapolation_gate(packet.get("extrapolation_gate"))
+    if extrapolation:
+        return extrapolation
 
     trigger = packet.get("trigger_context") if isinstance(packet.get("trigger_context"), Mapping) else {}
     if trigger.get("explicit_session_task_active") is True:
@@ -555,6 +563,56 @@ def _deny(reason: str, failed_section: str, violations: list[str]) -> AidenIdleL
         ],
         guidance={"decision_mode": "blocked", "next_allowed_action": "repair_then_resubmit"},
     )
+
+
+def _validate_extrapolation_gate(value: Any) -> AidenIdleLearningDecision | None:
+    if not isinstance(value, Mapping):
+        return _revision(
+            "idle learning must include class-level extrapolation gate",
+            "extrapolation_gate",
+            ["add class_of_issue, extrapolation_to_other_cases, proposed_class_level_fix, and evidence_refs"],
+        )
+    class_issue = value.get("class_of_issue") if isinstance(value.get("class_of_issue"), Mapping) else {}
+    if not class_issue.get("issue_class_id") or not class_issue.get("generalization_boundary"):
+        return _revision(
+            "extrapolation gate needs class_of_issue and generalization boundary",
+            "extrapolation_gate",
+            ["identify the issue class before writing durable brain learning"],
+        )
+    cases = value.get("extrapolation_to_other_cases")
+    if not isinstance(cases, list) or len(cases) < 3:
+        return _revision(
+            "extrapolation gate must list at least three same-class variants",
+            "extrapolation_gate",
+            ["list three other places this learning failure could recur"],
+        )
+    for case in cases:
+        if not isinstance(case, Mapping) or not case.get("case_id") or not case.get("why_same_class") or not case.get("preventive_rule"):
+            return _revision(
+                "each extrapolated case needs case_id, why_same_class, and preventive_rule",
+                "extrapolation_gate",
+                ["turn observed residual into reusable preventive rule"],
+            )
+    class_fix = value.get("proposed_class_level_fix") if isinstance(value.get("proposed_class_level_fix"), Mapping) else {}
+    if not class_fix.get("rule") or len(class_fix.get("affected_runtime_paths") or []) < 2:
+        return _revision(
+            "extrapolation gate needs a class-level fix across affected runtimes",
+            "extrapolation_gate",
+            ["add proposed_class_level_fix.rule and at least two affected_runtime_paths"],
+        )
+    if not value.get("evidence_refs"):
+        return _revision(
+            "extrapolation gate needs evidence refs",
+            "extrapolation_gate",
+            ["attach evidence refs that justify the class-level learning"],
+        )
+    if value.get("point_fix_only") is True:
+        return _revision(
+            "point-fix-only learning is not sufficient for durable brain growth",
+            "extrapolation_gate",
+            ["generalize the issue class before accepting brain learning"],
+        )
+    return None
 
 
 def _forbidden_claim(packet: Mapping[str, Any]) -> str | None:
