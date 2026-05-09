@@ -11,9 +11,11 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Mapping, Optional
+from urllib.parse import urlparse
 
 from ystar.governance.cieu_store import CIEUStore
 
@@ -144,6 +146,9 @@ def validate_ceo_deep_strategic_intelligence_dossier(
                 "deep_reasoning_dimensions",
                 ["attach structured output, cited evidence, and uncertainty for every dimension"],
             )
+    diversity_decision = _validate_dimension_evidence_diversity(dimensions)
+    if diversity_decision:
+        return diversity_decision
 
     market_map = dossier.get("market_map")
     if not isinstance(market_map, Mapping):
@@ -169,6 +174,18 @@ def validate_ceo_deep_strategic_intelligence_dossier(
             return _revision("competitor rows must be structured", "competitive_landscape", [])
         if "example.com" in str(competitor.get("source_url") or ""):
             return _revision("placeholder competitor sources are not allowed", "competitive_landscape", ["replace placeholder source URLs with real public evidence"])
+        if not _competitor_has_current_signal(competitor):
+            return _revision(
+                "competitor rows require source-date, funding-date, or public-signal date",
+                "competitive_landscape",
+                ["attach source_date/latest_funding_date/public_signal_date/observed_at for every competitor"],
+            )
+        if _is_plain_homepage_url(str(competitor.get("source_url") or "")) and not competitor.get("public_signal_date"):
+            return _revision(
+                "plain competitor homepages need an explicit current public_signal_date",
+                "competitive_landscape",
+                ["add current public_signal_date or replace homepage with a dated competitor evidence URL"],
+            )
 
     right_to_win = dossier.get("right_to_win_and_right_to_lose")
     if not isinstance(right_to_win, Mapping):
@@ -179,6 +196,22 @@ def validate_ceo_deep_strategic_intelligence_dossier(
             "right_to_win_and_right_to_lose",
             ["list at least five specific strengths and three specific risks"],
         )
+    market_visible = _as_list(right_to_win.get("market_visible_right_to_win_assets"))
+    if len(market_visible) < 4:
+        return _revision(
+            "right-to-win must include buyer-visible proof, not only internal technology assets",
+            "right_to_win_and_right_to_lose",
+            ["add at least four market_visible_right_to_win_assets with buyer_visible_proof and evidence_refs"],
+        )
+    for item in market_visible:
+        if not isinstance(item, Mapping):
+            return _revision("market-visible right-to-win rows must be structured", "right_to_win_and_right_to_lose", [])
+        if not _present(item.get("buyer_visible_proof")) or not _as_list(item.get("evidence_refs")) or not _present(item.get("why_buyer_cares")):
+            return _revision(
+                "market-visible right-to-win rows need proof, evidence_refs, and why_buyer_cares",
+                "right_to_win_and_right_to_lose",
+                ["turn internal assets into buyer-visible proof points"],
+            )
 
     assumptions = _as_list(dossier.get("assumption_registry"))
     if len(assumptions) < 5:
@@ -193,6 +226,19 @@ def validate_ceo_deep_strategic_intelligence_dossier(
     r_t_plus_1 = czl.get("R_t_plus_1")
     if r_t_plus_1 is None or float(r_t_plus_1) != 0.0:
         return _revision("CZL closure requires R_t_plus_1=0", "causal_zero_loop_model", ["close the residual loop before calling the strategy complete"])
+    residual_truth = czl.get("residual_truth_status") if isinstance(czl.get("residual_truth_status"), Mapping) else {}
+    if residual_truth.get("real_market_residual_closed") is True and _no_real_feedback_claimed(dossier):
+        return _deny(
+            "real market residual cannot be claimed closed without real feedback/customer evidence",
+            "causal_zero_loop_model",
+            ["false_real_market_residual_closure"],
+        )
+    if residual_truth.get("closure_scope") != "planning_residual_closed_real_market_residual_pending":
+        return _revision(
+            "CZL closure must distinguish planning residual from real market residual",
+            "causal_zero_loop_model",
+            ["set residual_truth_status.closure_scope=planning_residual_closed_real_market_residual_pending"],
+        )
 
     experiment = dossier.get("experiment_design")
     if not isinstance(experiment, Mapping):
@@ -327,6 +373,67 @@ def _revision(reason: str, section: str, correct_path: list[str]) -> CEODeepStra
         failed_section=section,
         correct_path=path,
         guidance={"next_allowed_action": "repair_deep_strategy_dossier", "correct_path": path},
+    )
+
+
+def _validate_dimension_evidence_diversity(dimensions: list[Any]) -> CEODeepStrategicDecision | None:
+    ref_sets = []
+    all_refs: list[str] = []
+    for item in dimensions:
+        if not isinstance(item, Mapping):
+            continue
+        refs = {str(ref) for ref in _as_list(item.get("evidence_refs")) if str(ref)}
+        ref_sets.append(tuple(sorted(refs)))
+        all_refs.extend(sorted(refs))
+    if len(set(all_refs)) < 12:
+        return _revision(
+            "deep strategy evidence is too narrow across dimensions",
+            "deep_reasoning_dimensions",
+            ["use at least twelve distinct evidence refs across the deep strategy dossier"],
+        )
+    repeated = Counter(ref_sets)
+    if repeated and repeated.most_common(1)[0][1] >= 6:
+        return _revision(
+            "too many deep reasoning dimensions reuse the identical evidence set",
+            "deep_reasoning_dimensions",
+            ["give each strategic dimension dimension-specific evidence instead of copying the same refs"],
+        )
+    ref_counts = Counter(all_refs)
+    dimension_specific_count = 0
+    for refs in ref_sets:
+        if any(ref_counts[ref] <= 3 for ref in refs):
+            dimension_specific_count += 1
+    if dimension_specific_count < 8:
+        return _revision(
+            "too few dimensions have dimension-specific evidence",
+            "deep_reasoning_dimensions",
+            ["at least eight dimensions need evidence not reused everywhere"],
+        )
+    return None
+
+
+def _competitor_has_current_signal(competitor: Mapping[str, Any]) -> bool:
+    return any(
+        _present(competitor.get(field))
+        for field in ("source_date", "latest_funding_date", "public_signal_date", "observed_at", "updated_at")
+    )
+
+
+def _is_plain_homepage_url(url: str) -> bool:
+    if not url:
+        return False
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    return parsed.path in {"", "/"}
+
+
+def _no_real_feedback_claimed(dossier: Mapping[str, Any]) -> bool:
+    boundary = dossier.get("no_overclaim_boundary") if isinstance(dossier.get("no_overclaim_boundary"), Mapping) else {}
+    return not any(
+        boundary.get(key) is True
+        for key in ("customer_validation_claim", "revenue_claim", "payment_claim", "paid_signal_claim", "pricing_validation_claim", "L4_feedback_executed")
     )
 
 

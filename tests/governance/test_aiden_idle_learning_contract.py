@@ -20,6 +20,16 @@ def _evidence(idx: int, domain_id: str = "ceo_judgment") -> dict:
         "observed_at": "2026-05-09T00:00:00Z",
         "freshness_status": "accepted_current",
         "claim_summary": f"Source-dated learning fact {idx}",
+        "learning_quality": {
+            "quality_score": 0.78,
+            "source_authority": 0.78,
+            "freshness": 0.9,
+            "commercial_relevance": 0.75,
+            "novelty": 0.7,
+            "cross_source_support": 0.72,
+            "actionability": 0.76,
+            "risk_of_staleness": 0.18,
+        },
     }
 
 
@@ -43,6 +53,7 @@ def _valid_packet() -> dict:
             "depth_label": "operational",
             "source_evidence_ids": [evidence[idx % len(evidence)]["evidence_id"]],
             "summary": f"Learning node {idx}",
+            "learning_quality_score": 0.78,
         }
         for idx in range(10)
     ]
@@ -70,6 +81,12 @@ def _valid_packet() -> dict:
             "freshness_policy_id": "e112_market_evidence_freshness_policy_v1",
         },
         "evidence_items": evidence,
+        "learning_quality_summary": {
+            "learning_quality_gate_applied": True,
+            "average_quality_score": 0.78,
+            "minimum_quality_score": 0.78,
+            "low_quality_evidence_ids": [],
+        },
         "knowledge_graph_delta": {"nodes": nodes, "edges": edges},
         "brain_write_policy": {
             "write_mode": "isolated_test_brain_db_write",
@@ -141,6 +158,17 @@ def test_undated_or_unaccepted_evidence_requires_revision():
     assert decision["failed_section"] == "evidence_items"
 
 
+def test_low_quality_evidence_requires_revision_with_correct_path():
+    packet = _valid_packet()
+    packet["evidence_items"][0]["learning_quality"]["quality_score"] = 0.4
+
+    decision = validate_aiden_idle_learning_packet(packet).to_dict()
+
+    assert decision["decision"] == "REQUIRE_REVISION"
+    assert decision["failed_section"] == "learning_quality_summary"
+    assert "minimum quality_score" in " ".join(decision["correct_path"])
+
+
 def test_automatic_direct_writeback_is_denied():
     packet = _valid_packet()
     packet["brain_write_policy"]["automatic_direct_writeback"] = True
@@ -159,4 +187,3 @@ def test_external_or_revenue_claim_is_denied():
 
     assert decision["decision"] == "DENY"
     assert decision["failed_section"] == "truth_constraints"
-

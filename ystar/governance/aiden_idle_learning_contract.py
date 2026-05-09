@@ -58,6 +58,7 @@ REQUIRED_PACKET_FIELDS = (
     "curriculum_domains",
     "source_date_policy",
     "evidence_items",
+    "learning_quality_summary",
     "knowledge_graph_delta",
     "brain_write_policy",
     "CIEU_linkage",
@@ -203,7 +204,49 @@ def validate_aiden_idle_learning_packet(packet: Mapping[str, Any]) -> AidenIdleL
                 "evidence_items",
                 [f"add source URL/date metadata or reject evidence {evidence_id}"],
             )
+        quality = item.get("learning_quality") if isinstance(item.get("learning_quality"), Mapping) else {}
+        score = quality.get("quality_score", item.get("quality_score"))
+        if score is None:
+            return _revision(
+                "evidence item needs deterministic learning_quality score",
+                "learning_quality_summary",
+                [f"score learning quality before using evidence {evidence_id}"],
+            )
+        if float(score) < 0.6:
+            return _revision(
+                "low-quality evidence cannot feed idle brain learning",
+                "learning_quality_summary",
+                [f"replace or downgrade evidence {evidence_id}; minimum quality_score is 0.60"],
+            )
+        required_quality_dims = {"source_authority", "freshness", "commercial_relevance", "novelty", "cross_source_support", "actionability", "risk_of_staleness"}
+        missing_quality_dims = sorted(required_quality_dims - set(quality.keys()))
+        if missing_quality_dims:
+            return _revision(
+                "learning_quality score must expose all deterministic dimensions",
+                "learning_quality_summary",
+                [f"add learning_quality.{field}" for field in missing_quality_dims],
+            )
         accepted_ids.add(evidence_id)
+
+    quality_summary = packet.get("learning_quality_summary") if isinstance(packet.get("learning_quality_summary"), Mapping) else {}
+    if quality_summary.get("learning_quality_gate_applied") is not True:
+        return _revision(
+            "learning quality gate must run before brain graph write",
+            "learning_quality_summary",
+            ["run deterministic learning quality scoring after freshness filtering"],
+        )
+    if float(quality_summary.get("average_quality_score") or 0.0) < 0.65:
+        return _revision(
+            "average learning quality is too low for durable brain growth",
+            "learning_quality_summary",
+            ["raise source authority, relevance, novelty, and cross-source support before writing brain"],
+        )
+    if quality_summary.get("low_quality_evidence_ids"):
+        return _revision(
+            "low-quality evidence must be rejected or kept out of knowledge graph delta",
+            "learning_quality_summary",
+            ["remove low_quality_evidence_ids from accepted evidence and graph delta"],
+        )
 
     delta = packet.get("knowledge_graph_delta") if isinstance(packet.get("knowledge_graph_delta"), Mapping) else {}
     nodes = delta.get("nodes")
@@ -236,6 +279,12 @@ def validate_aiden_idle_learning_packet(packet: Mapping[str, Any]) -> AidenIdleL
                 "knowledge node references evidence that was not accepted by freshness policy",
                 "knowledge_graph_delta",
                 [f"refresh or remove refs for node {node_id}: {', '.join(missing_refs)}"],
+            )
+        if float(node.get("learning_quality_score") or 0.0) < 0.6:
+            return _revision(
+                "knowledge node quality is too low for brain graph write",
+                "knowledge_graph_delta",
+                [f"raise or remove node {node_id}; minimum learning_quality_score is 0.60"],
             )
     for edge in edges:
         if not isinstance(edge, Mapping):

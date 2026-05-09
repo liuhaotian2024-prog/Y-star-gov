@@ -7,11 +7,15 @@ from ystar.governance.ceo_deep_strategic_intelligence_contract import (
 )
 
 
-def _dimension(dimension_id: str) -> dict:
+def _dimension(dimension_id: str, idx: int) -> dict:
     return {
         "dimension_id": dimension_id,
         "conclusion": f"{dimension_id} conclusion",
-        "evidence_refs": ["public://evidence-1"],
+        "evidence_refs": [
+            f"public://dimension-specific-{idx}",
+            f"public://shared-cluster-{idx % 4}",
+            f"public://supporting-{idx + 20}",
+        ],
         "uncertainty": "buyer feedback pending",
     }
 
@@ -41,7 +45,7 @@ def _valid_dossier() -> dict:
             "question": "What is the easiest credible first-cash path?",
             "not_the_question": ["do not chase vague SaaS", "do not claim customer validation"],
         },
-        "deep_reasoning_dimensions": [_dimension(item) for item in dimensions],
+        "deep_reasoning_dimensions": [_dimension(item, idx) for idx, item in enumerate(dimensions)],
         "market_map": {
             "domains_analyzed": [{"domain_id": f"domain_{idx}"} for idx in range(1, 6)],
             "source_date_coverage": {"dated_count": 12, "undated_count": 0},
@@ -58,12 +62,26 @@ def _valid_dossier() -> dict:
         },
         "competitive_landscape": {
             "competitors_and_substitutes": [
-                {"name": f"Competitor {idx}", "source_url": f"https://vendor{idx}.com", "observed_at": "2026-05-09"}
+                {
+                    "name": f"Competitor {idx}",
+                    "source_url": f"https://vendor{idx}.com/research/current-signal",
+                    "observed_at": "2026-05-09",
+                    "public_signal_date": "2026-05-09",
+                }
                 for idx in range(1, 6)
             ]
         },
         "right_to_win_and_right_to_lose": {
             "right_to_win_assets": [f"asset_{idx}" for idx in range(1, 6)],
+            "market_visible_right_to_win_assets": [
+                {
+                    "asset": f"market_visible_asset_{idx}",
+                    "buyer_visible_proof": f"buyer can inspect proof artifact {idx}",
+                    "why_buyer_cares": "reduces trust, audit, or implementation risk",
+                    "evidence_refs": [f"public://dimension-specific-{idx}"],
+                }
+                for idx in range(1, 5)
+            ],
             "right_to_lose_risks": [f"risk_{idx}" for idx in range(1, 4)],
         },
         "product_shape": {
@@ -72,7 +90,14 @@ def _valid_dossier() -> dict:
         },
         "pricing_and_value_capture": {"price_hypothesis_usd": "500-2000", "validation_status": "hypothesis_only"},
         "distribution_and_first_10_buyers": {"channels": ["founder communities"], "first_10_buyer_profiles": [f"profile_{idx}" for idx in range(1, 11)]},
-        "causal_zero_loop_model": {"R_t_plus_1": 0.0, "residual_closed_by": "assumption registry and next experiment"},
+        "causal_zero_loop_model": {
+            "R_t_plus_1": 0.0,
+            "residual_closed_by": "assumption registry and next experiment",
+            "residual_truth_status": {
+                "closure_scope": "planning_residual_closed_real_market_residual_pending",
+                "real_market_residual_closed": False,
+            },
+        },
         "assumption_registry": [
             {"assumption_id": f"a{idx}", "test_method": "owner-approved no-send feedback", "falsification_condition": "buyer rejects pain"}
             for idx in range(1, 6)
@@ -119,6 +144,50 @@ def test_placeholder_competitor_source_requires_revision():
 
     assert decision.decision == CEODeepStrategicDecisionValue.REQUIRE_REVISION
     assert decision.failed_section == "competitive_landscape"
+
+
+def test_reused_identical_dimension_evidence_requires_revision():
+    dossier = _valid_dossier()
+    for item in dossier["deep_reasoning_dimensions"]:
+        item["evidence_refs"] = ["public://same-1", "public://same-2"]
+
+    decision = validate_ceo_deep_strategic_intelligence_dossier(dossier)
+
+    assert decision.decision == CEODeepStrategicDecisionValue.REQUIRE_REVISION
+    assert decision.failed_section == "deep_reasoning_dimensions"
+
+
+def test_competitor_without_current_signal_requires_revision():
+    dossier = _valid_dossier()
+    competitor = dossier["competitive_landscape"]["competitors_and_substitutes"][0]
+    competitor["source_url"] = "https://vendor1.com/"
+    competitor.pop("public_signal_date")
+    competitor.pop("observed_at")
+
+    decision = validate_ceo_deep_strategic_intelligence_dossier(dossier)
+
+    assert decision.decision == CEODeepStrategicDecisionValue.REQUIRE_REVISION
+    assert decision.failed_section == "competitive_landscape"
+
+
+def test_internal_only_right_to_win_requires_revision():
+    dossier = _valid_dossier()
+    dossier["right_to_win_and_right_to_lose"].pop("market_visible_right_to_win_assets")
+
+    decision = validate_ceo_deep_strategic_intelligence_dossier(dossier)
+
+    assert decision.decision == CEODeepStrategicDecisionValue.REQUIRE_REVISION
+    assert decision.failed_section == "right_to_win_and_right_to_lose"
+
+
+def test_false_real_market_residual_closure_denies():
+    dossier = _valid_dossier()
+    dossier["causal_zero_loop_model"]["residual_truth_status"]["real_market_residual_closed"] = True
+
+    decision = validate_ceo_deep_strategic_intelligence_dossier(dossier)
+
+    assert decision.decision == CEODeepStrategicDecisionValue.DENY
+    assert decision.failed_section == "causal_zero_loop_model"
 
 
 def test_external_action_executed_denies():
