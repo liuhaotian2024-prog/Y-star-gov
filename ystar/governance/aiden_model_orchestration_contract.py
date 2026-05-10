@@ -59,6 +59,8 @@ SUPPORTED_MODEL_IDS = {
 
 LOCAL_MODEL_IDS = {"local_gemma4_e4b", "local_ystar_gemma"}
 EXTERNAL_MODEL_IDS = {"external_gpt", "external_claude"}
+OWNER_FACING_REPLY_SURFACES = {"owner_facing_reply", "aiden_owner_reply", "meeting_room_reply"}
+OWNER_FACING_REPLY_MODEL_IDS = LOCAL_MODEL_IDS | EXTERNAL_MODEL_IDS
 
 REQUIRED_SECTIONS = (
     "orchestration_id",
@@ -268,6 +270,17 @@ def _validate_selected_model(
     task: Mapping[str, Any],
     packet: Mapping[str, Any],
 ) -> AidenModelOrchestrationDecision | None:
+    execution_surface = str(task.get("execution_surface") or _mapping(packet.get("routing_factors")).get("execution_surface") or "")
+    if execution_surface in OWNER_FACING_REPLY_SURFACES and selected_id not in OWNER_FACING_REPLY_MODEL_IDS:
+        return _revision(
+            "owner-facing Aiden replies must use an executable generative model, not a validator or Codex executor",
+            "selected_model",
+            [
+                "select local_gemma4_e4b/local_ystar_gemma for local owner-facing replies",
+                "use external_gpt/external_claude only with owner-approved redacted external boundary",
+                "route Codex through CEOImplementationOrder only after the CEO reply/order is generated",
+            ],
+        )
     if selected_id in LOCAL_MODEL_IDS:
         if boundary.get("host_runtime_service_bridge_required") is not True:
             return _revision("local Gemma selection requires host runtime service bridge", "execution_boundary", ["route through E122 host runtime service bridge"])

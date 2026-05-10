@@ -111,6 +111,25 @@ def test_external_model_with_private_unredacted_context_denies() -> None:
     assert decision["decision"] == "DENY"
 
 
+def test_owner_facing_reply_cannot_select_codex_executor() -> None:
+    packet = valid_packet()
+    packet["task_context"]["execution_surface"] = "owner_facing_reply"
+    packet["routing_factors"]["execution_surface"] = "owner_facing_reply"
+    packet["selected_model"] = {"model_id": "codex_executor", "role": "executor"}
+    packet["execution_boundary"] = {
+        "CEOImplementationOrder_required": True,
+        "Codex_executor_boundary_required": True,
+        "external_provider_call_allowed": False,
+        "scope_expansion_allowed": False,
+    }
+
+    decision = validate_aiden_model_orchestration_packet(packet).to_dict()
+
+    assert decision["decision"] == "REQUIRE_REVISION"
+    assert decision["failed_section"] == "selected_model"
+    assert "owner-facing Aiden replies" in decision["reason"]
+
+
 def test_missing_long_term_memory_requires_revision() -> None:
     packet = valid_packet()
     packet["memory_context_plan"]["discovered_memory_assets"] = [
