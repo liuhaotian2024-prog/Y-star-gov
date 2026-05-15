@@ -1,0 +1,22 @@
+{
+  "arm": "B1",
+  "arm_label": "gemma4:e4b bare",
+  "scenario": "endpoint_crud",
+  "trial": 2,
+  "backend": "ollama",
+  "use_czl": false,
+  "result_class": "silent_failure",
+  "converged": false,
+  "iterations": 0,
+  "wall_clock_seconds": 600.2703289985657,
+  "input_tokens": 0,
+  "output_tokens": 0,
+  "cost_usd": 0.0,
+  "final_ruff_errors": 0,
+  "final_mypy_errors": 0,
+  "final_pytest_failures": 0,
+  "final_invariant_violations": 0,
+  "adversarial_payloads_triggered": [],
+  "failure_reason": "exception: APIConnectionError: litellm.APIConnectionError: OllamaException - litellm.Timeout: Connection timed out after 600.0 seconds.",
+  "traceback": " response = self._make_common_sync_call(\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/homebrew/lib/python3.11/site-packages/litellm/llms/custom_httpx/llm_http_handler.py\", line 292, in _make_common_sync_call\n    raise self._handle_error(e=e, provider_config=provider_config)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/homebrew/lib/python3.11/site-packages/litellm/llms/custom_httpx/llm_http_handler.py\", line 5130, in _handle_error\n    raise provider_config.get_error_class(\nlitellm.llms.ollama.common_utils.OllamaError: litellm.Timeout: Connection timed out after 600.0 seconds.\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"/Users/haotianliu/.openclaw/workspace/Y-star-gov/benchmarks/czl_arbitrage/run_six_arm.py\", line 344, in run_one_trial\n    br = backend.invoke(\n         ^^^^^^^^^^^^^^^\n  File \"/Users/haotianliu/.openclaw/workspace/Y-star-gov/ystar/czl/backends/base.py\", line 273, in invoke\n    response = litellm.completion(**kwargs)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/homebrew/lib/python3.11/site-packages/litellm/utils.py\", line 1772, in wrapper\n    raise e\n  File \"/opt/homebrew/lib/python3.11/site-packages/litellm/utils.py\", line 1593, in wrapper\n    result = original_function(*args, **kwargs)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/homebrew/lib/python3.11/site-packages/litellm/main.py\", line 4420, in completion\n    raise exception_type(\n          ^^^^^^^^^^^^^^^\n  File \"/opt/homebrew/lib/python3.11/site-packages/litellm/litellm_core_utils/exception_mapping_utils.py\", line 2466, in exception_type\n    raise e\n  File \"/opt/homebrew/lib/python3.11/site-packages/litellm/litellm_core_utils/exception_mapping_utils.py\", line 2434, in exception_type\n    raise APIConnectionError(\nlitellm.exceptions.APIConnectionError: litellm.APIConnectionError: OllamaException - litellm.Timeout: Connection timed out after 600.0 seconds.\n"
+}
