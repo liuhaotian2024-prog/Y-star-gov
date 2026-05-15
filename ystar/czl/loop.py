@@ -164,10 +164,21 @@ def run_scenario(
     # ResidualLoopEngine's autonomy_engine integration is reserved for
     # multi-agent setups where the next U is computed by another agent.
     plan_steps = request.scenario.plan(request.task_description, request.workspace_dir)
+    if not plan_steps:
+        result.failure_reason = "scenario_returned_empty_plan"
+        result.duration_seconds = time.time() - started
+        result.cost_summary_line = _format_cost_summary(result, request.backend)
+        return result
     last_violations: List[VerifierResult] = []
     feedback_block: str = ""
 
-    for step_idx, step in enumerate(plan_steps[: request.max_iterations]):
+    # The loop drives Rt+1 to zero. Plan steps advance one-per-iteration until
+    # we run out of distinct steps; further iterations re-attempt the final
+    # step with accumulated verifier feedback. Most MVP scenarios emit a
+    # single PlanStep — they rely entirely on this re-attempt behaviour for
+    # convergence. See docs/CZL_PRODUCT_DESIGN.md §3.
+    for step_idx in range(request.max_iterations):
+        step = plan_steps[min(step_idx, len(plan_steps) - 1)]
         result.iterations = step_idx + 1
 
         # 4a. ask the backend to produce the action for this step

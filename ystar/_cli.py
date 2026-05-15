@@ -25,6 +25,8 @@ Commands:
   ystar domain             Discover and use domain packs (list|describe|init)
   ystar governance-coverage Show governance coverage report (agent/tool coverage)
   ystar safemode           Board override mechanism (bypass governance with audit trail)
+  ystar czl                Run a CZL scenario: cheap-API + closure-loop arbitrage
+                           Sub: run | list-scenarios | list-backends | undo | benchmark
   ystar version            Show version
 
 Quick start (3 steps to integrate with OpenClaw):
@@ -639,13 +641,17 @@ def main() -> None:
         # Safemode is a click command, invoke it directly
         _cmd_safemode(rest)
 
+    elif cmd == "czl":
+        from ystar.czl.cli import main as _czl_main
+        sys.exit(_czl_main(rest))
+
     else:
         print(f"Unknown command: {cmd}\n")
         print("Available commands: demo, setup, hook-install, doctor, verify, report,")
         print("                    seal, policy-builder, audit, check, check-impact,")
         print("                    init, version, simulate, quality, baseline, delta,")
         print("                    trend, domain, archive, archive-cieu, reset-breaker,")
-        print("                    governance-coverage, safemode")
+        print("                    governance-coverage, safemode, czl")
         sys.exit(1)
 
 

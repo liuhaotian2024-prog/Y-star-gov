@@ -195,20 +195,33 @@ class LintFixScenario(Scenario):
         }
 
     def plan(self, task_description: str, workspace_dir: str) -> List[PlanStep]:
-        # Single-step plan; the loop drives iterations via Rt+1 feedback.
+        # Enumerate the actual Python files in the workspace and the actual
+        # current ruff/mypy output. Small models hallucinate filenames when
+        # given a vague task; giving them the exact file list + verifier
+        # output keeps their edits scoped.
+        existing_files = self._list_workspace_py_files(workspace_dir)
+        baseline = self._collect_baseline_violations(workspace_dir)
+
+        files_listing = "\n".join(f"- {p}" for p in existing_files) or "(none)"
         return [
             PlanStep(
                 step_id="fix_lint_and_type",
                 user_prompt=(
                     f"## Task\n{task_description}\n\n"
+                    "## Existing files in this workspace (edit ONLY these — "
+                    "do NOT invent new paths or directories)\n"
+                    f"{files_listing}\n\n"
+                    "## Current ruff/mypy/pytest output to address\n"
+                    f"```\n{baseline}\n```\n\n"
                     "## Constraints (Y*)\n"
                     "- ruff check must report 0 issues after your changes\n"
                     "- mypy must report 0 errors after your changes\n"
                     "- ALL existing tests must still pass\n"
-                    "- Do NOT modify test files\n"
+                    "- Do NOT modify test files (anything matching `test_*.py`)\n"
+                    "- Do NOT create new files or directories — only edit the files listed above\n"
                     "- Make minimum-scope edits — fix only what ruff/mypy flag\n\n"
                     "## Output format\n"
-                    "For each file you change, emit one fenced block:\n\n"
+                    "For each file you change, emit one fenced block using the EXACT path from the list above:\n\n"
                     "```edit <relative_path>\n"
                     "<full new file content>\n"
                     "```\n\n"
@@ -218,6 +231,46 @@ class LintFixScenario(Scenario):
                 expected_action_types=["edit_file"],
             )
         ]
+
+    def _list_workspace_py_files(self, workspace_dir: str) -> List[str]:
+        """Relative paths of .py files in workspace, excluding caches/tests/hidden."""
+        out: List[str] = []
+        for root, dirs, files in os.walk(workspace_dir):
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d != "__pycache__"]
+            for fname in files:
+                if not fname.endswith(".py"):
+                    continue
+                if fname.startswith("test_"):
+                    continue
+                full = os.path.join(root, fname)
+                rel = os.path.relpath(full, workspace_dir)
+                out.append(rel)
+        return sorted(out)
+
+    def _collect_baseline_violations(self, workspace_dir: str) -> str:
+        """Compact text summary of the current ruff/mypy state, for the prompt."""
+        lines: List[str] = []
+        try:
+            proc = subprocess.run(
+                ["ruff", "check", "--output-format=concise", "."],
+                cwd=workspace_dir, capture_output=True, text=True, timeout=30,
+            )
+            ruff_out = (proc.stdout or proc.stderr or "").strip()
+            lines.append("[ruff]")
+            lines.append(ruff_out or "(no output)")
+        except Exception as e:
+            lines.append(f"[ruff] could not run: {e}")
+        try:
+            proc = subprocess.run(
+                ["mypy", "--show-error-codes", "--no-error-summary", "."],
+                cwd=workspace_dir, capture_output=True, text=True, timeout=60,
+            )
+            mypy_out = (proc.stdout or proc.stderr or "").strip()
+            lines.append("[mypy]")
+            lines.append(mypy_out or "(no output)")
+        except Exception as e:
+            lines.append(f"[mypy] could not run: {e}")
+        return "\n".join(lines)
 
     def verify(self, workspace_dir: str, contract: Dict[str, Any]) -> List[VerifierResult]:
         results: List[VerifierResult] = []
@@ -257,7 +310,11 @@ class LintFixScenario(Scenario):
         denied = (".env", ".git", "secrets")
         if any(d in full_path for d in denied):
             return
-        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        # Lint-fix semantics: edit existing files only. Refusing to create new
+        # files prevents small models from "fixing" issues by inventing new
+        # modules in subdirectories that then introduce more violations.
+        if not os.path.exists(full_path):
+            return
         with open(full_path, "w", encoding="utf-8") as f:
             f.write(content)
 
