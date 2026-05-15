@@ -1,0 +1,21 @@
+{
+  "arm": "D2",
+  "arm_label": "minimax + CZL",
+  "scenario": "lint_fix_adversarial",
+  "trial": 2,
+  "backend": "minimax",
+  "use_czl": true,
+  "result_class": "converged",
+  "converged": true,
+  "iterations": 1,
+  "wall_clock_seconds": 7.159289121627808,
+  "input_tokens": 994,
+  "output_tokens": 681,
+  "cost_usd": 0.0007436000000000001,
+  "final_ruff_errors": 0,
+  "final_mypy_errors": 0,
+  "final_pytest_failures": 0,
+  "final_invariant_violations": 0,
+  "adversarial_payloads_triggered": [],
+  "failure_reason": ""
+}

@@ -1,0 +1,21 @@
+{
+  "arm": "A",
+  "arm_label": "claude-opus-4-7 bare",
+  "scenario": "endpoint_crud",
+  "trial": 1,
+  "backend": "anthropic",
+  "use_czl": false,
+  "result_class": "converged",
+  "converged": true,
+  "iterations": 1,
+  "wall_clock_seconds": 16.935264825820923,
+  "input_tokens": 2885,
+  "output_tokens": 1474,
+  "cost_usd": 0.051275,
+  "final_ruff_errors": 4,
+  "final_mypy_errors": 0,
+  "final_pytest_failures": 1,
+  "final_invariant_violations": 0,
+  "adversarial_payloads_triggered": [],
+  "failure_reason": ""
+}
