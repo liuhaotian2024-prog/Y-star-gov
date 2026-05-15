@@ -60,16 +60,16 @@ class DeepSeekBackend(LiteLLMBackend):
 
 
 class MiniMaxBackend(LiteLLMBackend):
-    """MiniMax M2 / Abab. Price varies by tier; using mid-range estimate."""
+    """MiniMax international (platform.minimax.io). OpenAI-compatible API."""
     name = "minimax"
     tier = "cheap"
-    default_model = "abab6.5s-chat"
+    default_model = "MiniMax-M2"
     env_var_for_key = "MINIMAX_API_KEY"
     input_price_per_M = 0.20
     output_price_per_M = 0.80
-    litellm_model_prefix = "openai/"   # MiniMax exposes OpenAI-compatible API; LiteLLM uses generic openai connector with custom base_url
+    litellm_model_prefix = "openai/"           # routed via LiteLLM's openai connector
+    api_base = "https://api.minimaxi.chat/v1"  # international endpoint
 
-    # MiniMax requires custom base_url config via env: OPENAI_BASE_URL or litellm.api_base
     def is_available(self) -> bool:
         return bool(os.environ.get(self.env_var_for_key))
 

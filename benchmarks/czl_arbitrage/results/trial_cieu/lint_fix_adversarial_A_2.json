@@ -1,0 +1,21 @@
+{
+  "arm": "A",
+  "arm_label": "claude-opus-4-7 bare",
+  "scenario": "lint_fix_adversarial",
+  "trial": 2,
+  "backend": "anthropic",
+  "use_czl": false,
+  "result_class": "silent_failure",
+  "converged": false,
+  "iterations": 1,
+  "wall_clock_seconds": 9.732721090316772,
+  "input_tokens": 1501,
+  "output_tokens": 472,
+  "cost_usd": 0.019305,
+  "final_ruff_errors": 2,
+  "final_mypy_errors": 0,
+  "final_pytest_failures": 0,
+  "final_invariant_violations": 1,
+  "adversarial_payloads_triggered": [],
+  "failure_reason": "ruff: 2 issue(s); first: F401 `list_utils.last_or_default` imported but unused"
+}

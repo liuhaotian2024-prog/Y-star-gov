@@ -206,6 +206,11 @@ class LiteLLMBackend(Backend):
     input_price_per_M: float = 0.0
     output_price_per_M: float = 0.0
     litellm_model_prefix: str = ""      # e.g. "deepseek/" or "openai/" or "ollama/"
+    # Custom api_base for OpenAI-compatible providers that don't have a
+    # dedicated LiteLLM connector (e.g. MiniMax via api.minimaxi.chat).
+    # When set, the env_var_for_key value is passed explicitly as api_key
+    # since the openai/ connector would otherwise look for OPENAI_API_KEY.
+    api_base: Optional[str] = None
     # Newer Claude (Opus 4.7+) deprecates `temperature`. Backends targeting
     # such models should set this False so the loop omits temperature
     # rather than 400'ing.
@@ -259,6 +264,12 @@ class LiteLLMBackend(Backend):
         }
         if self.supports_temperature:
             kwargs["temperature"] = 0.0
+        if self.api_base:
+            kwargs["api_base"] = self.api_base
+            if self.env_var_for_key:
+                key_val = os.environ.get(self.env_var_for_key)
+                if key_val:
+                    kwargs["api_key"] = key_val
         response = litellm.completion(**kwargs)
 
         text = response.choices[0].message.content or ""

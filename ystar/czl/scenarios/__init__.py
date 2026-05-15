@@ -4,8 +4,8 @@ from __future__ import annotations
 # Trigger registration of bundled scenarios.
 # Each module calls ScenarioRegistry.register() on import.
 from ystar.czl.scenarios import lint_fix  # noqa: F401
+from ystar.czl.scenarios import bug_fix   # noqa: F401
+from ystar.czl.scenarios import endpoint_crud  # noqa: F401
 
 # Future MVP scenarios will be added here:
 # from ystar.czl.scenarios import test_gen    # noqa: F401
-# from ystar.czl.scenarios import bug_fix     # noqa: F401
-# from ystar.czl.scenarios import crud_endpoint  # noqa: F401
