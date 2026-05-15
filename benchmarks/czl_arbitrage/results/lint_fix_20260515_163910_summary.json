@@ -1,0 +1,29 @@
+{
+  "A": {
+    "n_trials": 3,
+    "n_converged": 3,
+    "convergence_rate": 1.0,
+    "mean_iterations": 1,
+    "mean_cost_usd": 0.008321666666666666,
+    "mean_duration_s": 0.0,
+    "total_cost_usd": 0.024964999999999998
+  },
+  "B": {
+    "n_trials": 3,
+    "n_converged": 3,
+    "convergence_rate": 1.0,
+    "mean_iterations": 1,
+    "mean_cost_usd": 0.0,
+    "mean_duration_s": 42.67219805717468,
+    "total_cost_usd": 0.0
+  },
+  "C": {
+    "n_trials": 3,
+    "n_converged": 3,
+    "convergence_rate": 1.0,
+    "mean_iterations": 1,
+    "mean_cost_usd": 6.034000000000001e-05,
+    "mean_duration_s": 2.5702823797861734,
+    "total_cost_usd": 0.00018102000000000003
+  }
+}

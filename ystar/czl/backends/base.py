@@ -206,6 +206,10 @@ class LiteLLMBackend(Backend):
     input_price_per_M: float = 0.0
     output_price_per_M: float = 0.0
     litellm_model_prefix: str = ""      # e.g. "deepseek/" or "openai/" or "ollama/"
+    # Newer Claude (Opus 4.7+) deprecates `temperature`. Backends targeting
+    # such models should set this False so the loop omits temperature
+    # rather than 400'ing.
+    supports_temperature: bool = True
 
     def __init__(self, model: Optional[str] = None):
         self.model = model or self.default_model
@@ -244,15 +248,18 @@ class LiteLLMBackend(Backend):
         ]
 
         # Call LiteLLM (which handles auth, retry, rate-limit per provider).
-        # temperature=0 is deliberate: small models drift toward "creative
-        # rewrites" of code at higher temperatures, which destroys
-        # convergence under external verification. Deterministic output is
-        # what CZL needs.
-        response = litellm.completion(
-            model=self.full_model_id,
-            messages=messages,
-            temperature=0.0,
-        )
+        # temperature=0 is deliberate for backends that accept it: small
+        # models drift toward "creative rewrites" at higher temperatures,
+        # which destroys convergence under external verification. Newer
+        # frontier models (Claude Opus 4.7+) deprecate temperature entirely,
+        # so we omit it when supports_temperature is False.
+        kwargs: Dict[str, Any] = {
+            "model": self.full_model_id,
+            "messages": messages,
+        }
+        if self.supports_temperature:
+            kwargs["temperature"] = 0.0
+        response = litellm.completion(**kwargs)
 
         text = response.choices[0].message.content or ""
         usage = getattr(response, "usage", None)

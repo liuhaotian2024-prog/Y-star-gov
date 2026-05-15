@@ -33,6 +33,8 @@ class AnthropicBackend(LiteLLMBackend):
     input_price_per_M = 5.00
     output_price_per_M = 25.00
     litellm_model_prefix = "anthropic/"
+    # Claude Opus 4.7 deprecated the temperature parameter.
+    supports_temperature = False
 
 
 class OpenAIBackend(LiteLLMBackend):

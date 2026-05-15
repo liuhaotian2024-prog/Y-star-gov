@@ -1,0 +1,10 @@
+arm,arm_label,trial,scenario,backend,use_czl,converged,iterations,input_tokens,output_tokens,cost_usd,final_residual,duration_s,failure_reason
+A,frontier baseline,0,lint_fix,anthropic,False,True,1,866,178,0.00878,0.0,0.0,
+A,frontier baseline,1,lint_fix,anthropic,False,True,1,866,118,0.00728,0.0,0.0,
+A,frontier baseline,2,lint_fix,anthropic,False,True,1,866,183,0.008905,0.0,0.0,
+B,local + CZL,0,lint_fix,ollama,True,True,1,632,1114,0.0,0.0,42.76792597770691,
+B,local + CZL,1,lint_fix,ollama,True,True,1,632,1114,0.0,0.0,42.45565319061279,
+B,local + CZL,2,lint_fix,ollama,True,True,1,632,1114,0.0,0.0,42.793015003204346,
+C,cheap API + CZL,0,lint_fix,deepseek,True,True,1,578,71,6.034000000000001e-05,0.0,3.2642061710357666,
+C,cheap API + CZL,1,lint_fix,deepseek,True,True,1,578,71,6.034000000000001e-05,0.0,2.2100720405578613,
+C,cheap API + CZL,2,lint_fix,deepseek,True,True,1,578,71,6.034000000000001e-05,0.0,2.2365689277648926,

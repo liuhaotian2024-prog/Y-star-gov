@@ -19,8 +19,10 @@ import argparse
 import csv
 import json
 import os
+import shutil
 import statistics
 import sys
+import tempfile
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -71,10 +73,17 @@ def run_one_trial(
         )
         result = run_scenario(request)
     else:
-        # ARM A: no CZL — just one shot at the backend, then verify ONCE
+        # ARM A: no CZL retry loop — give the frontier model the same
+        # well-formed first-iteration prompt the scenario hands to arms B/C
+        # (file list + content + current verifier output), then verify ONCE.
+        # Without sharing the prompt shape, arm A is artificially handicapped
+        # — its raw task line ("fix all ruff and mypy errors") gives Opus no
+        # workspace context and it returns prose instead of edit blocks.
+        plan_steps = scenario.plan(task_description, workspace_dir)
+        first_step_prompt = plan_steps[0].user_prompt if plan_steps else task_description
         backend_response = backend.invoke(
-            system_prompt="You are a senior engineer. Complete the task. Output edits as ```edit <path>\\n<content>\\n``` blocks.",
-            user_prompt=task_description,
+            system_prompt=scenario.system_prompt(),
+            user_prompt=first_step_prompt,
             workspace_dir=workspace_dir,
             contract={},
         )
@@ -122,15 +131,15 @@ def summarize(records: list[dict]) -> dict:
     summary: dict[str, dict] = {}
     for arm, rs in by_arm.items():
         n = len(rs)
-        converged = [r for r in rs if r["converged"]]
+        converged = [r for r in rs if r.get("converged")]
         summary[arm] = {
             "n_trials": n,
             "n_converged": len(converged),
             "convergence_rate": len(converged) / n if n else 0,
-            "mean_iterations": statistics.mean([r["iterations"] for r in rs]) if rs else 0,
-            "mean_cost_usd": statistics.mean([r["cost_usd"] for r in rs]) if rs else 0,
-            "mean_duration_s": statistics.mean([r["duration_s"] for r in rs]) if rs else 0,
-            "total_cost_usd": sum(r["cost_usd"] for r in rs),
+            "mean_iterations": statistics.mean([r.get("iterations") or 0 for r in rs]) if rs else 0,
+            "mean_cost_usd": statistics.mean([r.get("cost_usd") or 0.0 for r in rs]) if rs else 0,
+            "mean_duration_s": statistics.mean([r.get("duration_s") or 0.0 for r in rs]) if rs else 0,
+            "total_cost_usd": sum((r.get("cost_usd") or 0.0) for r in rs),
         }
     return summary
 
@@ -179,14 +188,31 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     arms = [a.strip() for a in args.arms.split(",")]
 
+    # Snapshot the pristine workspace once. Each trial restores from this
+    # snapshot before running, so trials are independent samples — without
+    # this, trial 2/3 would see the already-fixed output from trial 1 and
+    # report a fake "instant convergence".
+    workspace_abs = os.path.abspath(args.workspace)
+    snapshot = tempfile.mkdtemp(prefix="czl_bench_snap_")
+    shutil.rmtree(snapshot)
+    shutil.copytree(workspace_abs, snapshot,
+                    ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))
+    print(f"[bench] snapshotted pristine workspace -> {snapshot}")
+
+    def reset_workspace() -> None:
+        if os.path.isdir(workspace_abs):
+            shutil.rmtree(workspace_abs)
+        shutil.copytree(snapshot, workspace_abs)
+
     records: list[dict] = []
     for arm in arms:
         if arm not in ARM_DEFAULTS:
             print(f"[bench] unknown arm '{arm}', skipping")
             continue
         for t in range(args.trials):
-            print(f"[bench] arm={arm} trial={t+1}/{args.trials}")
-            rec = run_one_trial(arm, ARM_DEFAULTS[arm], args.scenario, args.workspace, args.task, t)
+            reset_workspace()
+            print(f"[bench] arm={arm} trial={t+1}/{args.trials} (workspace reset from snapshot)")
+            rec = run_one_trial(arm, ARM_DEFAULTS[arm], args.scenario, workspace_abs, args.task, t)
             records.append(rec)
             time.sleep(1)  # be polite to APIs
 
