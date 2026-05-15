@@ -1,0 +1,21 @@
+{
+  "arm": "C2",
+  "arm_label": "deepseek + CZL",
+  "scenario": "endpoint_crud",
+  "trial": 2,
+  "backend": "deepseek",
+  "use_czl": true,
+  "result_class": "converged",
+  "converged": true,
+  "iterations": 3,
+  "wall_clock_seconds": 16.5812509059906,
+  "input_tokens": 4785,
+  "output_tokens": 2676,
+  "cost_usd": 0.00108423,
+  "final_ruff_errors": 4,
+  "final_mypy_errors": 0,
+  "final_pytest_failures": 1,
+  "final_invariant_violations": 0,
+  "adversarial_payloads_triggered": [],
+  "failure_reason": ""
+}

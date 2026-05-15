@@ -1,0 +1,21 @@
+{
+  "arm": "D2",
+  "arm_label": "minimax + CZL",
+  "scenario": "endpoint_crud",
+  "trial": 1,
+  "backend": "minimax",
+  "use_czl": true,
+  "result_class": "converged",
+  "converged": true,
+  "iterations": 3,
+  "wall_clock_seconds": 34.88548707962036,
+  "input_tokens": 4487,
+  "output_tokens": 5250,
+  "cost_usd": 0.0050974,
+  "final_ruff_errors": 4,
+  "final_mypy_errors": 0,
+  "final_pytest_failures": 1,
+  "final_invariant_violations": 0,
+  "adversarial_payloads_triggered": [],
+  "failure_reason": ""
+}
