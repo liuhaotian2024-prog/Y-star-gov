@@ -533,6 +533,47 @@ def print_cross_tabs(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     return summary
 
 
+def _write_records_csv(path: str, records: List[Dict[str, Any]]) -> None:
+    """CSV writer robust to per-row key variance (e.g. traceback field on exceptions)."""
+    if not records:
+        with open(path, "w", newline="") as f:
+            f.write("")
+        return
+    keys: List[str] = []
+    for r in records:
+        for k in r:
+            if k not in keys:
+                keys.append(k)
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=keys, extrasaction="ignore")
+        w.writeheader()
+        for r in records:
+            rr = dict(r)
+            rr["adversarial_payloads_triggered"] = ";".join(rr.get("adversarial_payloads_triggered") or [])
+            w.writerow(rr)
+
+
+def regenerate_csv_from_trial_cieu(out_root: str, scenario: str, ts: str = "") -> str:
+    """Rebuild a per-scenario CSV from the trial_cieu JSON files on disk.
+    Used to recover from a crash in main() after trials completed but before CSV write.
+    """
+    cieu_dir = os.path.join(out_root, "trial_cieu")
+    records: List[Dict[str, Any]] = []
+    for fname in sorted(os.listdir(cieu_dir)):
+        if not fname.endswith(".json"):
+            continue
+        if not fname.startswith(f"{scenario}_"):
+            continue
+        with open(os.path.join(cieu_dir, fname), "r", encoding="utf-8") as f:
+            records.append(json.load(f))
+    if not ts:
+        ts = time.strftime("%Y%m%d_%H%M%S")
+    out_csv = os.path.join(out_root, f"six_arm_{scenario}_{ts}_recovered.csv")
+    _write_records_csv(out_csv, records)
+    print(f"[bench] regenerated {out_csv} from {len(records)} trial CIEU files")
+    return out_csv
+
+
 def main():
     p = argparse.ArgumentParser(description="Six-arm CZL benchmark")
     p.add_argument("--scenarios", default="lint_fix_adversarial,bug_fix,endpoint_crud",
@@ -577,31 +618,17 @@ def main():
     for s in scenarios:
         recs = run_scenario_all_arms(s, arms, args.trials, args.workspace_root, args.out)
         all_records.extend(recs)
-        # write per-scenario CSV as we go (allows progressive reporting)
+        # write per-scenario CSV as we go (allows progressive reporting).
+        # Use union-of-keys across all records — some failed trials add a
+        # `traceback` field that's absent from successful trials, and we
+        # don't want the writer to crash on the mismatch.
         sc_csv = os.path.join(args.out, f"six_arm_{s}_{ts}.csv")
-        with open(sc_csv, "w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=list(recs[0].keys()) if recs else [])
-            w.writeheader()
-            for r in recs:
-                rr = dict(r)
-                rr["adversarial_payloads_triggered"] = ";".join(rr.get("adversarial_payloads_triggered") or [])
-                w.writerow(rr)
+        _write_records_csv(sc_csv, recs)
         print(f"[bench] wrote {sc_csv}")
 
     # combined CSV
     combined_csv = os.path.join(args.out, f"six_arm_ALL_{ts}.csv")
-    with open(combined_csv, "w", newline="") as f:
-        keys: List[str] = []
-        for r in all_records:
-            for k in r:
-                if k not in keys:
-                    keys.append(k)
-        w = csv.DictWriter(f, fieldnames=keys)
-        w.writeheader()
-        for r in all_records:
-            rr = dict(r)
-            rr["adversarial_payloads_triggered"] = ";".join(rr.get("adversarial_payloads_triggered") or [])
-            w.writerow(rr)
+    _write_records_csv(combined_csv, all_records)
     print(f"[bench] wrote {combined_csv}")
 
     summary = print_cross_tabs(all_records)
