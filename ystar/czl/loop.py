@@ -163,12 +163,6 @@ def run_scenario(
     # step-by-step driver, because indie tasks have explicit plan structure.
     # ResidualLoopEngine's autonomy_engine integration is reserved for
     # multi-agent setups where the next U is computed by another agent.
-    plan_steps = request.scenario.plan(request.task_description, request.workspace_dir)
-    if not plan_steps:
-        result.failure_reason = "scenario_returned_empty_plan"
-        result.duration_seconds = time.time() - started
-        result.cost_summary_line = _format_cost_summary(result, request.backend)
-        return result
     last_violations: List[VerifierResult] = []
     feedback_block: str = ""
 
@@ -177,7 +171,16 @@ def run_scenario(
     # step with accumulated verifier feedback. Most MVP scenarios emit a
     # single PlanStep — they rely entirely on this re-attempt behaviour for
     # convergence. See docs/CZL_PRODUCT_DESIGN.md §3.
+    #
+    # We re-call scenario.plan() each iteration so user_prompt reflects the
+    # current workspace (post-edit) state — without this, small models keep
+    # seeing the original file content even after they've changed it, and
+    # get confused about what's already been done.
     for step_idx in range(request.max_iterations):
+        plan_steps = request.scenario.plan(request.task_description, request.workspace_dir)
+        if not plan_steps:
+            result.failure_reason = "scenario_returned_empty_plan"
+            break
         step = plan_steps[min(step_idx, len(plan_steps) - 1)]
         result.iterations = step_idx + 1
 
@@ -329,14 +332,33 @@ def _build_cieu_event(
 
 
 def _format_feedback_for_retry(violations: List[VerifierResult]) -> str:
-    """Compose the retry-feedback text block fed back to the LLM next iteration."""
+    """Compose the retry-feedback text block fed back to the LLM next iteration.
+
+    Includes a tail of each failing verifier's stdout so the model sees the
+    concrete failure (e.g. the pytest assertion line) — without this signal,
+    small models cannot distinguish between competing valid fixes that
+    differ only in test-observable behaviour.
+    """
     if not violations:
         return ""
     lines = ["### Previous attempt did NOT converge. Address each issue:"]
     for v in violations[:10]:
         lines.append(f"- [{v.verifier_name}] {v.message}")
+        if v.details:
+            stdout_tail = (v.details.get("stdout") or "")[-1000:]
+            if stdout_tail.strip():
+                lines.append("  verifier output:")
+                lines.append("  ```")
+                for line in stdout_tail.strip().splitlines()[-25:]:
+                    lines.append(f"  {line}")
+                lines.append("  ```")
     lines.append("")
-    lines.append("Re-emit ONLY the corrective changes. Do not restart from scratch.")
+    lines.append(
+        "Re-emit the full corrected content of any file that still has issues. "
+        "Do not restart from scratch. If a pytest failure shows the test "
+        "expects a specific type/value, your fix must produce that — the test "
+        "is the spec, not the type annotation."
+    )
     return "\n".join(lines)
 
 

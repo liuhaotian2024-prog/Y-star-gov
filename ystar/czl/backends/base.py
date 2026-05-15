@@ -243,13 +243,15 @@ class LiteLLMBackend(Backend):
             {"role": "user", "content": user_prompt},
         ]
 
-        # Call LiteLLM (which handles auth, retry, rate-limit per provider)
+        # Call LiteLLM (which handles auth, retry, rate-limit per provider).
+        # temperature=0 is deliberate: small models drift toward "creative
+        # rewrites" of code at higher temperatures, which destroys
+        # convergence under external verification. Deterministic output is
+        # what CZL needs.
         response = litellm.completion(
             model=self.full_model_id,
             messages=messages,
-            # Note: tool-calling support varies by provider. For MVP we use
-            # plain text + parse Aider-style "search/replace" blocks downstream.
-            # Function-calling integration is a follow-up.
+            temperature=0.0,
         )
 
         text = response.choices[0].message.content or ""

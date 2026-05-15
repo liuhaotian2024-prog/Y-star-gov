@@ -196,11 +196,13 @@ class LintFixScenario(Scenario):
 
     def plan(self, task_description: str, workspace_dir: str) -> List[PlanStep]:
         # Enumerate the actual Python files in the workspace and the actual
-        # current ruff/mypy output. Small models hallucinate filenames when
-        # given a vague task; giving them the exact file list + verifier
-        # output keeps their edits scoped.
+        # current ruff/mypy output. Small models hallucinate filenames and
+        # rewrite function bodies when given vague tasks; embedding the
+        # current source verbatim + the verifier output anchors the edit
+        # surface and keeps semantics intact.
         existing_files = self._list_workspace_py_files(workspace_dir)
         baseline = self._collect_baseline_violations(workspace_dir)
+        file_blocks = self._render_file_blocks(workspace_dir, existing_files)
 
         files_listing = "\n".join(f"- {p}" for p in existing_files) or "(none)"
         return [
@@ -208,29 +210,50 @@ class LintFixScenario(Scenario):
                 step_id="fix_lint_and_type",
                 user_prompt=(
                     f"## Task\n{task_description}\n\n"
-                    "## Existing files in this workspace (edit ONLY these — "
-                    "do NOT invent new paths or directories)\n"
+                    "## Editable files (edit ONLY these paths; do NOT invent new ones)\n"
                     f"{files_listing}\n\n"
-                    "## Current ruff/mypy/pytest output to address\n"
+                    "## Current content of each editable file\n"
+                    f"{file_blocks}\n\n"
+                    "## Current ruff/mypy output to address\n"
                     f"```\n{baseline}\n```\n\n"
                     "## Constraints (Y*)\n"
                     "- ruff check must report 0 issues after your changes\n"
                     "- mypy must report 0 errors after your changes\n"
                     "- ALL existing tests must still pass\n"
+                    "- PRESERVE every function name, every function signature, and every "
+                    "function body — only modify lines that ruff or mypy specifically flag. "
+                    "Do NOT rename functions. Do NOT replace function bodies with new logic. "
+                    "Do NOT delete unflagged functions.\n"
                     "- Do NOT modify test files (anything matching `test_*.py`)\n"
-                    "- Do NOT create new files or directories — only edit the files listed above\n"
-                    "- Make minimum-scope edits — fix only what ruff/mypy flag\n\n"
+                    "- Do NOT create new files or directories\n"
+                    "- Make minimum-scope edits — typically just remove unused imports, "
+                    "fix wrong type annotations\n\n"
                     "## Output format\n"
-                    "For each file you change, emit one fenced block using the EXACT path from the list above:\n\n"
+                    "For each file you change, emit one fenced block using the EXACT path "
+                    "from the list above. The body must be the COMPLETE new content of that "
+                    "file (no diff syntax, no ellipses, no placeholders):\n\n"
                     "```edit <relative_path>\n"
                     "<full new file content>\n"
                     "```\n\n"
+                    "If a file needs no changes, omit it from your output. "
                     "If you cannot achieve all constraints, say so honestly — "
                     "do NOT silently leave issues unfixed and claim done."
                 ),
                 expected_action_types=["edit_file"],
             )
         ]
+
+    def _render_file_blocks(self, workspace_dir: str, rel_paths: List[str]) -> str:
+        chunks: List[str] = []
+        for rel in rel_paths:
+            full = os.path.join(workspace_dir, rel)
+            try:
+                with open(full, "r", encoding="utf-8") as f:
+                    body = f.read()
+            except Exception as e:
+                body = f"(could not read: {e})"
+            chunks.append(f"### {rel}\n```python\n{body}```")
+        return "\n\n".join(chunks) if chunks else "(no editable files found)"
 
     def _list_workspace_py_files(self, workspace_dir: str) -> List[str]:
         """Relative paths of .py files in workspace, excluding caches/tests/hidden."""
