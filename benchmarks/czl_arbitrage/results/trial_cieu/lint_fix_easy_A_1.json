@@ -1,0 +1,25 @@
+{
+  "arm": "A",
+  "arm_label": "claude-opus-4-7 bare",
+  "scenario": "lint_fix",
+  "difficulty": "easy",
+  "trial": 1,
+  "backend": "anthropic",
+  "use_czl": false,
+  "converged": true,
+  "iterations": 1,
+  "wall_clock_seconds": 5.0544068813323975,
+  "input_tokens": 830,
+  "output_tokens": 101,
+  "cost_usd": 0.006675,
+  "final_ruff_errors": 0,
+  "final_mypy_errors": 0,
+  "final_pytest_failures": 0,
+  "failure_reason": "",
+  "post_state_files": {
+    "test_stringkit.py": "from stringkit import reverse, count_vowels, to_uppercase\n\n\ndef test_reverse():\n    assert reverse('hello') == 'olleh'\n\n\ndef test_count_vowels():\n    assert count_vowels('hello world') == 3\n\n\ndef test_to_uppercase():\n    assert to_uppercase('abc') == 'ABC'\n",
+    "stringkit.py": "def reverse(s: str) -> str:\n    return s[::-1]\n\n\ndef count_vowels(text: str) -> int:\n    return sum(1 for c in text if c in 'aeiouAEIOU')\n\n\ndef to_uppercase(s):\n    return s.upper()\n"
+  },
+  "semantic_correctness_score": null,
+  "final_invariant_violations": 0
+}

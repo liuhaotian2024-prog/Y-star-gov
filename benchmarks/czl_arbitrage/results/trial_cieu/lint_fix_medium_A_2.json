@@ -1,0 +1,27 @@
+{
+  "arm": "A",
+  "arm_label": "claude-opus-4-7 bare",
+  "scenario": "lint_fix",
+  "difficulty": "medium",
+  "trial": 2,
+  "backend": "anthropic",
+  "use_czl": false,
+  "converged": true,
+  "iterations": 1,
+  "wall_clock_seconds": 7.03470778465271,
+  "input_tokens": 1381,
+  "output_tokens": 388,
+  "cost_usd": 0.016605,
+  "final_ruff_errors": 0,
+  "final_mypy_errors": 0,
+  "final_pytest_failures": 0,
+  "failure_reason": "",
+  "post_state_files": {
+    "test_utils.py": "from text_utils import reverse, split_words, join_with\nfrom math_utils import safe_divide, average, clamp\nfrom list_utils import first_or_none, deduplicate\n\n\ndef test_reverse():\n    assert reverse('hi') == 'ih'\n\n\ndef test_split_words():\n    assert split_words('a b c') == ['a', 'b', 'c']\n\n\ndef test_join_with():\n    assert join_with(['a', 'b']) == 'a, b'\n\n\ndef test_safe_divide_nonzero():\n    assert safe_divide(10, 2) == 5\n\n\ndef test_safe_divide_zero():\n    assert safe_divide(10, 0) is None\n\n\ndef test_average():\n    assert average([1, 2, 3, 4]) == 2.5\n\n\ndef test_clamp():\n    assert clamp(5, 0, 10) == 5\n    assert clamp(-1, 0, 10) == 0\n    assert clamp(99, 0, 10) == 10\n\n\ndef test_first_or_none_empty():\n    assert first_or_none([]) is None\n\n\ndef test_first_or_none_present():\n    assert first_or_none(['x', 'y']) == 'x'\n\n\ndef test_deduplicate():\n    assert deduplicate([1, 2, 1, 3, 2]) == [1, 2, 3]\n",
+    "math_utils.py": "from typing import Optional\n\n\ndef safe_divide(a: int, b: int) -> Optional[float]:\n    if b == 0:\n        return None\n    return a / b\n\n\ndef average(numbers) -> float:\n    return sum(numbers) / len(numbers)\n\n\ndef clamp(value, lo, hi) -> int:\n    return max(lo, min(hi, value))\n",
+    "text_utils.py": "from typing import List\n\n\ndef reverse(s: str) -> str:\n    return s[::-1]\n\n\ndef split_words(text: str) -> list:\n    return text.split()\n\n\ndef join_with(words: List[str], sep: str = ', '):\n    return sep.join(words)\n",
+    "list_utils.py": "from typing import Iterable, Optional\n\n\ndef first_or_none(items: list) -> Optional[str]:\n    return items[0] if items else None\n\n\ndef deduplicate(items: Iterable) -> list:\n    seen = set()\n    out = []\n    for x in items:\n        if x not in seen:\n            seen.add(x)\n            out.append(x)\n    return out\n"
+  },
+  "semantic_correctness_score": null,
+  "final_invariant_violations": 0
+}

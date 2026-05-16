@@ -1,0 +1,19 @@
+arm,arm_label,scenario,difficulty,trial,backend,use_czl,converged,iterations,wall_clock_seconds,input_tokens,output_tokens,cost_usd,final_ruff_errors,final_mypy_errors,final_pytest_failures,failure_reason,semantic_correctness_score,final_invariant_violations
+A,claude-opus-4-7 bare,lint_fix,easy,0,anthropic,False,True,1,5.324136018753052,830,101,0.006675,0,0,0,,,0
+A,claude-opus-4-7 bare,lint_fix,easy,1,anthropic,False,True,1,5.0544068813323975,830,101,0.006675,0,0,0,,,0
+A,claude-opus-4-7 bare,lint_fix,easy,2,anthropic,False,True,1,4.171872854232788,830,101,0.006675,0,0,0,,,0
+B1,gemma4:e4b bare,lint_fix,easy,0,ollama,False,True,1,45.056395053863525,605,966,0.0,0,0,0,,,0
+B1,gemma4:e4b bare,lint_fix,easy,1,ollama,False,True,1,38.33481812477112,605,966,0.0,0,0,0,,,0
+B1,gemma4:e4b bare,lint_fix,easy,2,ollama,False,True,1,38.30513906478882,605,966,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,lint_fix,easy,0,ollama,True,True,1,37.68432402610779,605,966,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,lint_fix,easy,1,ollama,True,True,1,37.26444697380066,605,966,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,lint_fix,easy,2,ollama,True,True,1,37.75262999534607,605,966,0.0,0,0,0,,,0
+C1,deepseek bare,lint_fix,easy,0,deepseek,False,True,1,2.9998130798339844,554,65,5.698e-05,0,0,0,,,0
+C1,deepseek bare,lint_fix,easy,1,deepseek,False,True,1,2.738729953765869,554,65,5.698e-05,0,0,0,,,0
+C1,deepseek bare,lint_fix,easy,2,deepseek,False,True,1,2.9146690368652344,554,65,5.698e-05,0,0,0,,,0
+C2,deepseek + CZL,lint_fix,easy,0,deepseek,True,True,1,3.1136362552642822,554,65,5.698e-05,0,0,0,,,0
+C2,deepseek + CZL,lint_fix,easy,1,deepseek,True,True,1,2.7430951595306396,554,65,5.698e-05,0,0,0,,,0
+C2,deepseek + CZL,lint_fix,easy,2,deepseek,True,True,1,2.84307599067688,554,65,5.698e-05,0,0,0,,,0
+D2,minimax + CZL,lint_fix,easy,0,minimax,True,True,1,10.481353044509888,555,781,0.0007358,0,0,0,,,0
+D2,minimax + CZL,lint_fix,easy,1,minimax,True,True,1,6.980974912643433,555,562,0.0005606000000000001,0,0,0,,,0
+D2,minimax + CZL,lint_fix,easy,2,minimax,True,True,1,4.856405019760132,555,341,0.0003838,0,0,0,,,0
