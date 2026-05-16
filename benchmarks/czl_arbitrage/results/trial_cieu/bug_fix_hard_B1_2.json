@@ -1,0 +1,26 @@
+{
+  "arm": "B1",
+  "arm_label": "gemma4:e4b bare",
+  "scenario": "bug_fix",
+  "difficulty": "hard",
+  "trial": 2,
+  "backend": "ollama",
+  "use_czl": false,
+  "converged": true,
+  "iterations": 1,
+  "wall_clock_seconds": 106.17911982536316,
+  "input_tokens": 1196,
+  "output_tokens": 2543,
+  "cost_usd": 0.0,
+  "final_ruff_errors": 1,
+  "final_mypy_errors": 0,
+  "final_pytest_failures": 0,
+  "failure_reason": "",
+  "post_state_files": {
+    "auth.py": "import hashlib\nimport secrets\n\n\nclass TokenStore:\n    def __init__(self):\n        self._by_token = {}\n\n    def issue(self, user_id: int) -> str:\n        tok = secrets.token_hex(8)\n        self._by_token[tok] = user_id\n        return tok\n\n    def lookup(self, token: str):\n        return self._by_token.get(token)\n\n    def rotate(self, old_token: str) -> tuple[str, int]:\n        user_id = self.lookup(old_token)\n        if user_id is None:\n            raise KeyError(\"Invalid token\")\n        \n        new = secrets.token_hex(8)\n        self._by_token[new] = user_id\n        \n        self.revoke(old_token)\n        \n        return new, user_id\n\n    def revoke(self, token: str) -> bool:\n        return self._by_token.pop(token, None) is not None\n",
+    "test_auth.py": "import pytest\nfrom auth import TokenStore\nfrom session_service import SessionService\n\n\ndef test_rotate_returns_new_token_and_user():\n    store = TokenStore()\n    old = store.issue(42)\n    # rotate must accept old_token and return (new_token, user_id)\n    new, user_id = store.rotate(old)\n    assert isinstance(new, str)\n    assert new != old\n    assert user_id == 42\n\n\ndef test_rotate_invalidates_old_token():\n    store = TokenStore()\n    old = store.issue(7)\n    new, _ = store.rotate(old)\n    assert store.lookup(old) is None\n    assert store.lookup(new) == 7\n\n\ndef test_rotate_rejects_unknown_token():\n    store = TokenStore()\n    with pytest.raises(KeyError):\n        store.rotate('this-token-does-not-exist')\n\n\ndef test_session_refresh_uses_new_rotate_contract():\n    store = TokenStore()\n    svc = SessionService(store)\n    old = svc.login(99)\n    new = svc.refresh(old)\n    assert new != old\n    assert store.lookup(old) is None\n    assert store.lookup(new) == 99\n",
+    "session_service.py": "from auth import TokenStore\n\n\nclass SessionService:\n    def __init__(self, store: TokenStore):\n        self.store = store\n\n    def login(self, user_id: int) -> str:\n        return self.store.issue(user_id)\n\n    def refresh(self, old_token: str) -> str:\n        try:\n            # Pass old_token and unpack (new, user_id). The old token is revoked inside rotate.\n            new, _ = self.store.rotate(old_token)\n            return new\n        except KeyError:\n            # Map the KeyError raised by TokenStore to the original PermissionError\n            raise PermissionError('unknown token')\n\n    def logout(self, token: str) -> bool:\n        return self.store.revoke(token)\n"
+  },
+  "semantic_correctness_score": null,
+  "final_invariant_violations": 0
+}
