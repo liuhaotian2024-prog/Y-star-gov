@@ -77,7 +77,7 @@ def test_compute_e():
 
 
 # === utils/old_api.py ===
-"""Public API: bar() is the canonical name."""
+"""New API: use bar()."""
 
 
 def bar(x: int) -> int:

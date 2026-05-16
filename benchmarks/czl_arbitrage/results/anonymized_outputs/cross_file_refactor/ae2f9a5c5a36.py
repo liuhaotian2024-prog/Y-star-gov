@@ -77,8 +77,5 @@ def test_compute_e():
 
 
 # === utils/old_api.py ===
-"""bar() is the new name."""
-
-
 def bar(x: int) -> int:
     return x * 2

@@ -6,11 +6,11 @@
   "backend": "minimax",
   "use_czl": true,
   "converged": true,
-  "iterations": 2,
-  "wall_clock_seconds": 17.880664110183716,
-  "input_tokens": 1539,
-  "output_tokens": 1552,
-  "cost_usd": 0.0015494000000000003,
+  "iterations": 1,
+  "wall_clock_seconds": 7.992755889892578,
+  "input_tokens": 790,
+  "output_tokens": 741,
+  "cost_usd": 0.0007508000000000001,
   "failure_reason": "",
   "post_state_files": {
     "service_b.py": "from utils.old_api import bar\n\n\ndef compute_b(n: int) -> str:\n    result = bar(n)\n    return f\"calling bar({n}) returned {result}\"\n",
@@ -19,7 +19,7 @@
     "service_d.py": "from utils.old_api import bar\n\n\ndef compute_d(n: int) -> int:\n    return bar(n) - 1\n",
     "service_e.py": "from utils.old_api import bar\n\n\ndef compute_e(n: int) -> int:\n    intermediate = bar(n)\n    return bar(intermediate)\n",
     "service_a.py": "from utils.old_api import bar\n\n\ndef compute_a(n: int) -> int:\n    return bar(n) + 1\n",
-    "utils/old_api.py": "\"\"\"Deprecated: bar() is the new name.\"\"\"\n\ndef bar(x: int) -> int:\n    return x * 2\n",
+    "utils/old_api.py": "\"\"\"bar() is the current function to use.\"\"\"\n\n\ndef bar(x: int) -> int:\n    return x * 2\n",
     "utils/__init__.py": ""
   },
   "objective_metrics": {
@@ -30,7 +30,6 @@
   },
   "stopping_authority": "converged",
   "residual_trajectory": [
-    1.0,
     0.0
   ]
 }

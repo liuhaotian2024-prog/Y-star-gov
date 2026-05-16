@@ -7,7 +7,7 @@
   "use_czl": false,
   "converged": false,
   "iterations": 1,
-  "wall_clock_seconds": 4.939440727233887,
+  "wall_clock_seconds": 4.269859075546265,
   "input_tokens": 806,
   "output_tokens": 236,
   "cost_usd": 0.0001225,

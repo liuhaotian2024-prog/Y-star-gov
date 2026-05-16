@@ -65,10 +65,28 @@ def scan_completion(out_root: str) -> Dict[str, List[Dict[str, Any]]]:
     return by_scenario
 
 
-def per_scenario_marker(out_root: str, scenario: str) -> Optional[Path]:
-    """Return existing quality_assessment marker for this scenario (or None)."""
-    candidates = sorted(Path(out_root).glob(f"seven_arm_{scenario}_*_quality_assessment.json"))
-    return candidates[-1] if candidates else None
+def per_scenario_marker(out_root: str, scenario: str, min_mtime: float = 0.0) -> Optional[Path]:
+    """Return latest quality_assessment marker for this scenario whose mtime
+    is at least `min_mtime` (defaults to 0 = any). The mtime gate is what
+    keeps a re-run watcher from mistaking a previous-bench QA marker for
+    the current bench's marker.
+
+    The bench harness (or driver) is responsible for either (a) cleaning
+    stale markers before launching, OR (b) passing min_mtime = bench_start
+    time to scan_and_emit / scan_completion calls.
+    """
+    candidates = []
+    for p in Path(out_root).glob(f"seven_arm_{scenario}_*_quality_assessment.json"):
+        try:
+            mt = p.stat().st_mtime
+        except OSError:
+            continue
+        if mt >= min_mtime:
+            candidates.append((mt, p))
+    if not candidates:
+        return None
+    candidates.sort()
+    return candidates[-1][1]
 
 
 def _report_version() -> str:
@@ -492,9 +510,14 @@ def emit_final_cieu(all_records: List[Dict[str, Any]], scenario_qas: Dict[str, D
 
 # === driver =================================================================
 
-def scan_and_emit(out_root: str) -> Dict[str, Any]:
+def scan_and_emit(out_root: str, min_mtime: float = 0.0) -> Dict[str, Any]:
     """Single-pass scan. Emits any per-scenario reports newly ready and the
     final report if all 4 are done. Returns a summary dict.
+
+    `min_mtime` filters per-scenario markers: only those last-modified at
+    or after the given epoch seconds count as "this bench's" markers.
+    Defaults to 0 (any marker). Pass time.time() at watcher startup to
+    avoid mistaking a stale previous-bench marker for the current one.
     """
     by_scenario = scan_completion(out_root)
     ts = time.strftime("%Y%m%d_%H%M%S")
@@ -506,7 +529,7 @@ def scan_and_emit(out_root: str) -> Dict[str, Any]:
     }
     scenario_qas: Dict[str, Dict[str, Any]] = {}
     for s, recs in by_scenario.items():
-        marker = per_scenario_marker(out_root, s)
+        marker = per_scenario_marker(out_root, s, min_mtime=min_mtime)
         if len(recs) >= TARGET_PER_SCENARIO:
             if marker is None:
                 paths = emit_per_scenario_report(s, recs, out_root, ts)
@@ -518,8 +541,8 @@ def scan_and_emit(out_root: str) -> Dict[str, Any]:
                     scenario_qas[s] = json.loads(marker.read_text(encoding="utf-8"))
                 except Exception:
                     scenario_qas[s] = {}
-    # Final report only when ALL 4 markers exist
-    if all(per_scenario_marker(out_root, s) for s in SCENARIOS.keys()):
+    # Final report only when ALL 4 markers exist FOR THIS BENCH
+    if all(per_scenario_marker(out_root, s, min_mtime=min_mtime) for s in SCENARIOS.keys()):
         if final_marker(out_root) is None:
             all_records = [r for rs in by_scenario.values() for r in rs]
             emit_final_report(all_records, scenario_qas, out_root)
@@ -534,14 +557,19 @@ def main():
     p.add_argument("--watch", action="store_true")
     p.add_argument("--interval", type=int, default=60, help="seconds between scans in watch mode")
     args = p.parse_args()
+    # Pin "now" so the watcher only considers per-scenario markers written
+    # at or after this point — i.e. markers from THIS bench, not stale
+    # markers from prior runs that may still be on disk.
+    started_at = time.time()
     if not args.watch:
-        s = scan_and_emit(args.out)
+        s = scan_and_emit(args.out, min_mtime=started_at)
         print(json.dumps(s, indent=2, default=str))
         return 0
-    print(f"[incremental] watching {args.out} every {args.interval}s; ctrl-c to stop")
+    print(f"[incremental] watching {args.out} every {args.interval}s "
+          f"(only markers mtime>={int(started_at)} counted); ctrl-c to stop")
     while True:
         try:
-            s = scan_and_emit(args.out)
+            s = scan_and_emit(args.out, min_mtime=started_at)
         except Exception as e:
             print(f"[incremental] scan error: {type(e).__name__}: {e}", flush=True)
             s = {"error": str(e)}

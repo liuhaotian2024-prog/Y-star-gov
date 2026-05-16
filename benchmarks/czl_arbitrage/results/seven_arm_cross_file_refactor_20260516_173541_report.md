@@ -1,26 +1,26 @@
-# v3 incremental report — `cross_file_refactor`_35 trials on disk; 23 converged_### Convergence (converged / total per arm)
+# v3 incremental report — `cross_file_refactor`_35 trials on disk; 21 converged_### Convergence (converged / total per arm)
 
 | arm | converged | rate | mean iters | mean wall (s) |
 |---|---|---|---|---|
-| A | 3/5 | 60% | 1.0 | 8.7 |
-| A2 | 5/5 | 100% | 1.2 | 7.8 |
-| B1 | 0/5 | 0% | 1.0 | 63.4 |
-| B2 | 5/5 | 100% | 2.0 | 108.8 |
-| C1 | 0/5 | 0% | 1.0 | 4.9 |
-| C2 | 5/5 | 100% | 2.8 | 8.2 |
-| D2 | 5/5 | 100% | 1.4 | 18.3 |
+| A | 1/5 | 20% | 1.0 | 7.6 |
+| A2 | 5/5 | 100% | 1.0 | 8.2 |
+| B1 | 0/5 | 0% | 1.0 | 66.3 |
+| B2 | 5/5 | 100% | 2.0 | 107.9 |
+| C1 | 0/5 | 0% | 1.0 | 4.3 |
+| C2 | 5/5 | 100% | 3.0 | 7.8 |
+| D2 | 5/5 | 100% | 1.2 | 11.4 |
 
 ### Cost arbitrage (A / arm), converged trials only
 
 | arm | mean cost | A/this ratio |
 |---|---|---|
-| A | $0.02023 | 1.0x |
-| A2 | $0.02003 | 1.0x |
+| A | $0.01831 | 1.0x |
+| A2 | $0.01965 | 0.9x |
 | B1 | $0.00000 | inf |
 | B2 | $0.00000 | inf |
 | C1 | $0.00000 | inf |
-| C2 | $0.00027 | 74.3x |
-| D2 | $0.00157 | 12.9x |
+| C2 | $0.00028 | 64.6x |
+| D2 | $0.00116 | 15.8x |
 
 ### stopping_authority distribution per arm
 
@@ -41,10 +41,10 @@
 | silent_omission_count | 0 | 0 |
 | over_engineering_score | 0.0 | 0.0 |
 
-_notes: Task描述为空，无法识别具体子需求；两个输出几乎完全相同，唯一差异是utils/old_api.py的docstring措辞（A用'replaces the previous deprecated name'，A2用'is the canonical name'），均无法判断是否存在幻觉完成或遗漏。_
+_notes: Task描述为空，无法评估任何子需求的完成情况；两个输出几乎完全相同，唯一差异是A2将utils/old_api.py的docstring从'Module providing bar()'改为'New API: use bar()'，但由于task为空，无法判断这是否符合要求。_
 
 ### math_verifier ↔ sonnet_judge agreement
 - Cells where math says converged AND sonnet functional_equivalence ≥ 0.85: **3/3** (100%)
 - Target ≥ 95%; PASS
 
-_quality_assessment Sonnet judge cost: $0.0184_
+_quality_assessment Sonnet judge cost: $0.0183_

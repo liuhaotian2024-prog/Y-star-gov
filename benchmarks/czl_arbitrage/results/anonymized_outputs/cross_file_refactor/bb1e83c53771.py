@@ -77,7 +77,7 @@ def test_compute_e():
 
 
 # === utils/old_api.py ===
-"""New API: bar() replaces the previous deprecated name."""
+"""Module providing bar()."""
 
 
 def bar(x: int) -> int:

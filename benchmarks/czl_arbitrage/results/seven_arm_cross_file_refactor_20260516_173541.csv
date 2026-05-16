@@ -1,0 +1,36 @@
+arm,arm_label,scenario,trial,backend,use_czl,converged,iterations,wall_clock_seconds,input_tokens,output_tokens,cost_usd,failure_reason,obj_cyclomatic_complexity_avg,obj_duplicated_lines_pct,obj_test_coverage_pct,obj_mypy_strict_type_coverage_pct,stopping_authority,residual_trajectory
+C1,deepseek bare,cross_file_refactor,4,deepseek,False,False,1,4.269662380218506,806,236,0.0001225,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+C1,deepseek bare,cross_file_refactor,2,deepseek,False,False,1,4.270059108734131,806,236,0.0001225,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+C1,deepseek bare,cross_file_refactor,1,deepseek,False,False,1,4.270184755325317,806,236,0.0001225,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+C1,deepseek bare,cross_file_refactor,0,deepseek,False,False,1,4.270378112792969,806,236,0.0001225,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+C1,deepseek bare,cross_file_refactor,3,deepseek,False,False,1,4.269859075546265,806,236,0.0001225,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+A,claude-opus-4-7 bare,cross_file_refactor,0,anthropic,False,False,1,7.904446840286255,1172,446,0.01701,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: the old foo() name has been removed; use bar() instead.""""""",1,25.0,,100.0,,
+D2,minimax + CZL,cross_file_refactor,3,minimax,True,True,1,7.992755889892578,790,741,0.0007508000000000001,,1,25.0,,100.0,converged,[0.0]
+A,claude-opus-4-7 bare,cross_file_refactor,1,anthropic,False,True,1,8.215324878692627,1172,498,0.01831,,1,25.0,,100.0,,
+A,claude-opus-4-7 bare,cross_file_refactor,2,anthropic,False,False,1,8.418396949768066,1172,528,0.01906,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+D2,minimax + CZL,cross_file_refactor,1,minimax,True,True,1,9.923434019088745,790,1065,0.00101,,1,25.0,,100.0,converged,[0.0]
+D2,minimax + CZL,cross_file_refactor,2,minimax,True,True,1,11.296926021575928,790,1277,0.0011795999999999998,,1,26.3,,100.0,converged,[0.0]
+C2,deepseek + CZL,cross_file_refactor,2,deepseek,True,True,3,7.502335786819458,2340,390,0.000273,,1,25.0,,100.0,converged,"[1.0, 1.0, 0.0]"
+C2,deepseek + CZL,cross_file_refactor,3,deepseek,True,True,3,7.525189161300659,2340,390,0.000273,,1,25.0,,100.0,converged,"[1.0, 1.0, 0.0]"
+C2,deepseek + CZL,cross_file_refactor,0,deepseek,True,True,3,7.535812854766846,2340,390,0.000273,,1,25.0,,100.0,converged,"[1.0, 1.0, 0.0]"
+C2,deepseek + CZL,cross_file_refactor,1,deepseek,True,True,3,7.551635026931763,2340,390,0.000273,,1,25.0,,100.0,converged,"[1.0, 1.0, 0.0]"
+C2,deepseek + CZL,cross_file_refactor,4,deepseek,True,True,3,8.955355882644653,2340,573,0.00032424,,1,25.0,,100.0,converged,"[1.0, 1.0, 0.0]"
+D2,minimax + CZL,cross_file_refactor,0,minimax,True,True,2,13.316119194030762,1539,1312,0.0013574,,1,25.0,,100.0,converged,"[1.0, 0.0]"
+D2,minimax + CZL,cross_file_refactor,4,minimax,True,True,1,14.266594886779785,790,1689,0.0015092,,1,26.3,,100.0,converged,[0.0]
+A,claude-opus-4-7 bare,cross_file_refactor,3,anthropic,False,False,1,6.342814207077026,1172,420,0.01636,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated module: the old foo() name has been removed; use bar() instead.""""""",1,25.0,,100.0,,
+A,claude-opus-4-7 bare,cross_file_refactor,4,anthropic,False,False,1,7.269289970397949,1172,522,0.018910000000000003,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: the old foo() name has been removed; use bar() instead.""""""",1,25.0,,100.0,,
+A2,claude-opus-4-7 + CZL,cross_file_refactor,0,anthropic,True,True,1,7.649524450302124,1172,547,0.019535,,1,25.0,,100.0,converged,[0.0]
+A2,claude-opus-4-7 + CZL,cross_file_refactor,2,anthropic,True,True,1,6.961776971817017,1172,461,0.017384999999999998,,1,25.0,,100.0,converged,[0.0]
+A2,claude-opus-4-7 + CZL,cross_file_refactor,1,anthropic,True,True,1,9.672718048095703,1172,630,0.02161,,1,25.0,,100.0,converged,[0.0]
+A2,claude-opus-4-7 + CZL,cross_file_refactor,3,anthropic,True,True,1,8.728933811187744,1172,560,0.01986,,1,25.0,,100.0,converged,[0.0]
+A2,claude-opus-4-7 + CZL,cross_file_refactor,4,anthropic,True,True,1,8.093631982803345,1172,560,0.01986,,1,25.0,,100.0,converged,[0.0]
+B1,gemma4:e4b bare,cross_file_refactor,0,ollama,False,False,1,76.36187696456909,924,1598,0.0,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+B1,gemma4:e4b bare,cross_file_refactor,1,ollama,False,False,1,65.9364058971405,924,1598,0.0,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+B1,gemma4:e4b bare,cross_file_refactor,2,ollama,False,False,1,61.298295974731445,924,1598,0.0,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+B1,gemma4:e4b bare,cross_file_refactor,3,ollama,False,False,1,64.43376898765564,924,1598,0.0,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+B1,gemma4:e4b bare,cross_file_refactor,4,ollama,False,False,1,63.23930883407593,924,1598,0.0,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+B2,gemma4:e4b + CZL,cross_file_refactor,0,ollama,True,True,2,106.40134286880493,1784,2691,0.0,,1,25.0,,100.0,converged,"[1.0, 0.0]"
+B2,gemma4:e4b + CZL,cross_file_refactor,1,ollama,True,True,2,107.30330109596252,1784,2691,0.0,,1,25.0,,100.0,converged,"[1.0, 0.0]"
+B2,gemma4:e4b + CZL,cross_file_refactor,2,ollama,True,True,2,109.0844783782959,1784,2691,0.0,,1,25.0,,100.0,converged,"[1.0, 0.0]"
+B2,gemma4:e4b + CZL,cross_file_refactor,3,ollama,True,True,2,108.15274596214294,1784,2691,0.0,,1,25.0,,100.0,converged,"[1.0, 0.0]"
+B2,gemma4:e4b + CZL,cross_file_refactor,4,ollama,True,True,2,108.66356492042542,1784,2691,0.0,,1,25.0,,100.0,converged,"[1.0, 0.0]"
