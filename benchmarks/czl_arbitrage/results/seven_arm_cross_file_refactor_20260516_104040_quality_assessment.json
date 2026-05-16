@@ -1,0 +1,99 @@
+{
+  "scenario": "cross_file_refactor",
+  "n_records": 35,
+  "objective_means_by_arm": {
+    "A": {
+      "cyclomatic_complexity_avg": 1,
+      "duplicated_lines_pct": 25.0,
+      "mypy_strict_type_coverage_pct": 100.0
+    },
+    "D2": {
+      "cyclomatic_complexity_avg": 1,
+      "duplicated_lines_pct": 25.52,
+      "mypy_strict_type_coverage_pct": 100.0
+    },
+    "C2": {
+      "cyclomatic_complexity_avg": 1,
+      "duplicated_lines_pct": 25.0,
+      "mypy_strict_type_coverage_pct": 100.0
+    },
+    "A2": {
+      "cyclomatic_complexity_avg": 1,
+      "duplicated_lines_pct": 25.0,
+      "mypy_strict_type_coverage_pct": 100.0
+    },
+    "B2": {
+      "cyclomatic_complexity_avg": 1,
+      "duplicated_lines_pct": 25.0,
+      "mypy_strict_type_coverage_pct": 100.0
+    }
+  },
+  "four_dim_judge": [
+    {
+      "arm": "B1",
+      "scores": null,
+      "reason": "did_not_converge"
+    },
+    {
+      "arm": "B2",
+      "scores": {
+        "functional_equivalence": 1.0,
+        "readability_delta": -0.1,
+        "style_conformance": 1.0,
+        "defensive_quality": 0.9
+      },
+      "raw_response": "{\"functional_equivalence\": 1.0, \"readability_delta\": -0.1, \"style_conformance\": 1.0, \"defensive_quality\": 0.9}",
+      "cost_usd": 0.004095,
+      "latency_seconds": 1.485517978668213,
+      "error": null
+    },
+    {
+      "arm": "C1",
+      "scores": null,
+      "reason": "did_not_converge"
+    },
+    {
+      "arm": "C2",
+      "scores": {
+        "functional_equivalence": 1.0,
+        "readability_delta": -0.1,
+        "style_conformance": 0.95,
+        "defensive_quality": 0.9
+      },
+      "raw_response": "```json\n{\"functional_equivalence\": 1.0, \"readability_delta\": -0.1, \"style_conformance\": 0.95, \"defensive_quality\": 0.9}\n```",
+      "cost_usd": 0.00417,
+      "latency_seconds": 1.6363558769226074,
+      "error": null
+    },
+    {
+      "arm": "D2",
+      "scores": {
+        "functional_equivalence": 1.0,
+        "readability_delta": -0.1,
+        "style_conformance": 0.95,
+        "defensive_quality": 0.85
+      },
+      "raw_response": "{\"functional_equivalence\": 1.0, \"readability_delta\": -0.1, \"style_conformance\": 0.95, \"defensive_quality\": 0.85}",
+      "cost_usd": 0.004059,
+      "latency_seconds": 1.3479087352752686,
+      "error": null
+    }
+  ],
+  "a_vs_a2_judge": {
+    "scores": {
+      "hallucinated_completeness_A": 0.85,
+      "hallucinated_completeness_A2": 0.85,
+      "silent_omission_count_A": 2,
+      "silent_omission_count_A2": 2,
+      "over_engineering_score_A": 0.0,
+      "over_engineering_score_A2": 0.0,
+      "notes": "\u4e24\u4e2a\u8f93\u51fa\u5747\u672a\u5c55\u793a\u539f\u59cb foo() \u7684\u5b58\u5728\u5373\u672a\u771f\u6b63\u6267\u884c'\u66ff\u6362'\u64cd\u4f5c\uff0cold_api.py \u4e2d\u4ece\u672a\u5b9a\u4e49 foo()\uff0c\u4e14\u6240\u6709\u670d\u52a1\u6587\u4ef6\u76f4\u63a5\u5bfc\u5165 bar() \u800c\u975e foo()\uff0c\u8bf4\u660e\u4e24\u8005\u90fd\u8df3\u8fc7\u4e86\u5b9e\u9645\u7684\u8fc1\u79fb\u5de5\u4f5c\uff08\u672a\u663e\u793a before \u72b6\u6001\u4e5f\u672a\u505a\u771f\u6b63\u66ff\u6362\uff09\uff1b\u552f\u4e00\u5dee\u5f02\u662f docstring \u63aa\u8f9e\u7565\u6709\u4e0d\u540c\uff0c\u4f46\u5747\u65e0\u6cd5\u8bc1\u660e foo\u2192bar \u7684\u66ff\u6362\u786e\u5b9e\u53d1\u751f\u8fc7\u3002"
+    },
+    "raw_response": "```json\n{\n  \"hallucinated_completeness_A\": 0.85,\n  \"hallucinated_completeness_A2\": 0.85,\n  \"silent_omission_count_A\": 2,\n  \"silent_omission_count_A2\": 2,\n  \"over_engineering_score_A\": 0.0,\n  \"over_engineering_score_A2\": 0.0,\n  \"notes\": \"\u4e24\u4e2a\u8f93\u51fa\u5747\u672a\u5c55\u793a\u539f\u59cb foo() \u7684\u5b58\u5728\u5373\u672a\u771f\u6b63\u6267\u884c'\u66ff\u6362'\u64cd\u4f5c\uff0cold_api.py \u4e2d\u4ece\u672a\u5b9a\u4e49 foo()\uff0c\u4e14\u6240\u6709\u670d\u52a1\u6587\u4ef6\u76f4\u63a5\u5bfc\u5165 bar() \u800c\u975e foo()\uff0c\u8bf4\u660e\u4e24\u8005\u90fd\u8df3\u8fc7\u4e86\u5b9e\u9645\u7684\u8fc1\u79fb\u5de5\u4f5c\uff08\u672a\u663e\u793a before \u72b6\u6001\u4e5f\u672a\u505a\u771f\u6b63\u66ff\u6362\uff09\uff1b\u552f\u4e00\u5dee\u5f02\u662f docstring \u63aa\u8f9e\u7565\u6709\u4e0d\u540c\uff0c\u4f46\u5747\u65e0\u6cd5\u8bc1\u660e foo\u2192bar \u7684\u66ff\u6362\u786e\u5b9e\u53d1\u751f\u8fc7\u3002\"\n}\n```",
+    "cost_usd": 0.00771,
+    "latency_seconds": 4.802073955535889,
+    "error": null
+  },
+  "n_anonymized": 35,
+  "total_judge_cost_usd": 0.02
+}

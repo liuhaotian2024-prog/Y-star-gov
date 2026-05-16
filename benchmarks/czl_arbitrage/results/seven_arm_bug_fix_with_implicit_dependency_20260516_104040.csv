@@ -1,0 +1,36 @@
+arm,arm_label,scenario,trial,backend,use_czl,converged,iterations,wall_clock_seconds,input_tokens,output_tokens,cost_usd,failure_reason,obj_cyclomatic_complexity_avg,obj_duplicated_lines_pct,obj_test_coverage_pct,obj_mypy_strict_type_coverage_pct,stopping_authority,residual_trajectory
+C1,deepseek bare,bug_fix_with_implicit_dependency,0,deepseek,False,True,1,4.489597797393799,911,258,0.00013601,,1.25,6.7,,65.5,,
+C1,deepseek bare,bug_fix_with_implicit_dependency,1,deepseek,False,True,1,4.397672891616821,910,257,0.00013566,,1.25,6.7,,65.5,,
+C1,deepseek bare,bug_fix_with_implicit_dependency,2,deepseek,False,True,1,4.230501174926758,909,263,0.00013727,,1.25,6.7,,65.5,,
+C1,deepseek bare,bug_fix_with_implicit_dependency,3,deepseek,False,True,1,4.356739044189453,908,272,0.00013972000000000002,,1.25,6.7,,65.5,,
+C1,deepseek bare,bug_fix_with_implicit_dependency,4,deepseek,False,True,1,4.381572961807251,912,263,0.00013748000000000002,,1.25,6.7,,65.5,,
+C2,deepseek + CZL,bug_fix_with_implicit_dependency,0,deepseek,True,True,1,4.297775983810425,910,272,0.00013986,,1.25,6.7,,65.5,converged,[0.0]
+C2,deepseek + CZL,bug_fix_with_implicit_dependency,1,deepseek,True,True,1,4.137639999389648,909,277,0.00014119000000000002,,1.25,6.7,,65.5,converged,[0.0]
+C2,deepseek + CZL,bug_fix_with_implicit_dependency,2,deepseek,True,True,1,3.9342291355133057,911,262,0.00013713,,1.25,6.7,,65.5,converged,[0.0]
+C2,deepseek + CZL,bug_fix_with_implicit_dependency,3,deepseek,True,True,1,3.8184239864349365,911,258,0.00013601,,1.25,6.7,,65.5,converged,[0.0]
+C2,deepseek + CZL,bug_fix_with_implicit_dependency,4,deepseek,True,True,1,4.169271945953369,909,262,0.00013699000000000003,,1.25,6.7,,65.5,converged,[0.0]
+D2,minimax + CZL,bug_fix_with_implicit_dependency,0,minimax,True,True,1,6.0557451248168945,877,608,0.0006618,,1.25,6.7,,65.5,converged,[0.0]
+D2,minimax + CZL,bug_fix_with_implicit_dependency,1,minimax,True,True,1,8.389650821685791,877,851,0.0008562000000000001,,1.25,6.7,,65.5,converged,[0.0]
+D2,minimax + CZL,bug_fix_with_implicit_dependency,2,minimax,True,True,1,6.573455810546875,878,716,0.0007484,,1.25,6.7,,65.5,converged,[0.0]
+D2,minimax + CZL,bug_fix_with_implicit_dependency,3,minimax,True,True,1,8.323040962219238,878,838,0.0008460000000000001,,1.25,6.7,,65.5,converged,[0.0]
+D2,minimax + CZL,bug_fix_with_implicit_dependency,4,minimax,True,True,1,6.516377925872803,882,727,0.000758,,1.25,6.7,,65.5,converged,[0.0]
+A,claude-opus-4-7 bare,bug_fix_with_implicit_dependency,0,anthropic,False,True,1,4.53216290473938,1316,254,0.012929999999999999,,1.25,6.7,,65.5,,
+A,claude-opus-4-7 bare,bug_fix_with_implicit_dependency,1,anthropic,False,True,1,5.201266050338745,1319,254,0.012945,,1.25,6.7,,65.5,,
+A,claude-opus-4-7 bare,bug_fix_with_implicit_dependency,2,anthropic,False,True,1,4.45119571685791,1317,254,0.012935,,1.25,6.7,,65.5,,
+A,claude-opus-4-7 bare,bug_fix_with_implicit_dependency,3,anthropic,False,True,1,4.703210830688477,1320,254,0.01295,,1.25,6.7,,65.5,,
+A,claude-opus-4-7 bare,bug_fix_with_implicit_dependency,4,anthropic,False,True,1,4.62741494178772,1317,254,0.012935,,1.25,6.7,,65.5,,
+A2,claude-opus-4-7 + CZL,bug_fix_with_implicit_dependency,0,anthropic,True,True,1,4.723832130432129,1317,254,0.012935,,1.25,6.7,,65.5,converged,[0.0]
+A2,claude-opus-4-7 + CZL,bug_fix_with_implicit_dependency,1,anthropic,True,True,1,4.633842945098877,1318,254,0.01294,,1.25,6.7,,65.5,converged,[0.0]
+A2,claude-opus-4-7 + CZL,bug_fix_with_implicit_dependency,2,anthropic,True,True,1,4.629801034927368,1318,254,0.01294,,1.25,6.7,,65.5,converged,[0.0]
+A2,claude-opus-4-7 + CZL,bug_fix_with_implicit_dependency,3,anthropic,True,True,1,4.483784198760986,1322,254,0.01296,,1.25,6.7,,65.5,converged,[0.0]
+A2,claude-opus-4-7 + CZL,bug_fix_with_implicit_dependency,4,anthropic,True,True,1,4.66344690322876,1316,254,0.012929999999999999,,1.25,6.7,,65.5,converged,[0.0]
+B1,gemma4:e4b bare,bug_fix_with_implicit_dependency,0,ollama,False,True,1,100.55116820335388,1065,2410,0.0,,1.25,6.7,,65.5,,
+B1,gemma4:e4b bare,bug_fix_with_implicit_dependency,1,ollama,False,True,1,68.98428583145142,1065,1268,0.0,,1.25,6.7,,65.5,,
+B1,gemma4:e4b bare,bug_fix_with_implicit_dependency,2,ollama,False,True,1,65.7564971446991,1063,1599,0.0,,1.25,6.7,,65.5,,
+B1,gemma4:e4b bare,bug_fix_with_implicit_dependency,3,ollama,False,True,1,65.32307195663452,1065,1569,0.0,,1.25,6.7,,65.5,,
+B1,gemma4:e4b bare,bug_fix_with_implicit_dependency,4,ollama,False,True,1,57.74125075340271,1065,1410,0.0,,1.25,6.7,,65.5,,
+B2,gemma4:e4b + CZL,bug_fix_with_implicit_dependency,0,ollama,True,True,1,78.7323956489563,1065,1934,0.0,,1.25,6.7,,65.5,converged,[0.0]
+B2,gemma4:e4b + CZL,bug_fix_with_implicit_dependency,1,ollama,True,True,1,63.18486499786377,1065,1570,0.0,,1.25,6.7,,65.5,converged,[0.0]
+B2,gemma4:e4b + CZL,bug_fix_with_implicit_dependency,2,ollama,True,True,1,89.64851212501526,1062,2151,0.0,,1.25,6.7,,65.5,converged,[0.0]
+B2,gemma4:e4b + CZL,bug_fix_with_implicit_dependency,3,ollama,True,True,1,63.47164511680603,1066,1546,0.0,,1.25,6.7,,65.5,converged,[0.0]
+B2,gemma4:e4b + CZL,bug_fix_with_implicit_dependency,4,ollama,True,True,1,67.55378794670105,1065,1668,0.0,,1.25,6.7,,65.5,converged,[0.0]

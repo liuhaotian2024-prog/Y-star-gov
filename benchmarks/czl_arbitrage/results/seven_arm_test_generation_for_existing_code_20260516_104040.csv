@@ -1,0 +1,36 @@
+arm,arm_label,scenario,trial,backend,use_czl,converged,iterations,wall_clock_seconds,input_tokens,output_tokens,cost_usd,failure_reason,obj_cyclomatic_complexity_avg,obj_duplicated_lines_pct,obj_test_coverage_pct,obj_mypy_strict_type_coverage_pct,stopping_authority,residual_trajectory
+C1,deepseek bare,test_generation_for_existing_code,1,deepseek,False,True,1,11.804397106170654,799,1493,0.00047397000000000004,,2.38,9.3,100.0,0.0,,
+C1,deepseek bare,test_generation_for_existing_code,0,deepseek,False,True,1,12.982084035873413,799,1620,0.00050953,,2.38,9.3,100.0,0.0,,
+C1,deepseek bare,test_generation_for_existing_code,2,deepseek,False,True,1,14.601826906204224,799,1678,0.0005257700000000001,,2.38,9.3,100.0,0.0,,
+C1,deepseek bare,test_generation_for_existing_code,3,deepseek,False,False,1,14.371710062026978,799,1764,0.0005498500000000001,pytest: failures,2.38,9.3,100.0,0.0,,
+C1,deepseek bare,test_generation_for_existing_code,4,deepseek,False,False,1,14.00014591217041,799,1637,0.00051429,pytest: failures,2.38,9.3,100.0,0.0,,
+C2,deepseek + CZL,test_generation_for_existing_code,2,deepseek,True,True,1,14.21248197555542,799,1619,0.00050925,,2.38,9.3,100.0,0.0,converged,[0.0]
+D2,minimax + CZL,test_generation_for_existing_code,0,minimax,True,True,1,26.92062497138977,784,3247,0.0027544,,2.38,9.3,100.0,0.0,converged,[0.0]
+C2,deepseek + CZL,test_generation_for_existing_code,1,deepseek,True,True,1,16.775503873825073,799,1967,0.0006066900000000001,,2.38,9.3,100.0,0.0,converged,[0.0]
+C2,deepseek + CZL,test_generation_for_existing_code,4,deepseek,True,True,1,11.43113112449646,799,1363,0.00043757,,2.38,9.3,100.0,0.0,converged,[0.0]
+C2,deepseek + CZL,test_generation_for_existing_code,0,deepseek,True,True,2,33.17641997337341,1852,3975,0.0012426400000000002,,2.38,9.3,100.0,0.0,converged,"[1.0, 0.0]"
+D2,minimax + CZL,test_generation_for_existing_code,1,minimax,True,True,1,35.59785199165344,784,4812,0.0040064,,2.38,9.3,100.0,0.0,converged,[0.0]
+D2,minimax + CZL,test_generation_for_existing_code,2,minimax,True,True,1,32.690255880355835,784,4226,0.0035375999999999997,,2.38,9.3,96.2,0.0,converged,[0.0]
+D2,minimax + CZL,test_generation_for_existing_code,4,minimax,True,True,1,15.117968797683716,784,1832,0.0016224,,2.38,9.3,100.0,0.0,converged,[0.0]
+C2,deepseek + CZL,test_generation_for_existing_code,3,deepseek,True,True,4,66.76124000549316,3842,8221,0.00257082,,2.38,9.3,100.0,0.0,converged,"[1.0, 2.0, 1.0, 0.0]"
+D2,minimax + CZL,test_generation_for_existing_code,3,minimax,True,True,1,33.495537996292114,784,4574,0.003816,,2.38,9.3,96.2,0.0,converged,[0.0]
+A,claude-opus-4-7 bare,test_generation_for_existing_code,0,anthropic,False,True,1,23.271564722061157,1250,2318,0.06420000000000001,,2.38,9.3,100.0,0.0,,
+A,claude-opus-4-7 bare,test_generation_for_existing_code,1,anthropic,False,True,1,25.02520990371704,1250,2548,0.06995,,2.38,9.3,100.0,0.0,,
+A,claude-opus-4-7 bare,test_generation_for_existing_code,2,anthropic,False,True,1,17.427247285842896,1250,1650,0.0475,,2.38,9.3,100.0,0.0,,
+A,claude-opus-4-7 bare,test_generation_for_existing_code,3,anthropic,False,True,1,18.545220851898193,1250,1847,0.052425,,2.38,9.3,100.0,0.0,,
+A,claude-opus-4-7 bare,test_generation_for_existing_code,4,anthropic,False,True,1,23.984946966171265,1250,2487,0.068425,,2.38,9.3,100.0,0.0,,
+A2,claude-opus-4-7 + CZL,test_generation_for_existing_code,0,anthropic,True,True,1,23.725735902786255,1250,2455,0.067625,,2.38,9.3,100.0,0.0,converged,[0.0]
+A2,claude-opus-4-7 + CZL,test_generation_for_existing_code,1,anthropic,True,True,1,23.856372833251953,1250,2136,0.059649999999999995,,2.38,9.3,100.0,0.0,converged,[0.0]
+A2,claude-opus-4-7 + CZL,test_generation_for_existing_code,2,anthropic,True,True,1,23.233696699142456,1250,2375,0.065625,,2.38,9.3,100.0,0.0,converged,[0.0]
+A2,claude-opus-4-7 + CZL,test_generation_for_existing_code,3,anthropic,True,True,1,22.055402994155884,1250,2227,0.061924999999999994,,2.38,9.3,100.0,0.0,converged,[0.0]
+A2,claude-opus-4-7 + CZL,test_generation_for_existing_code,4,anthropic,True,True,1,22.85815715789795,1250,2352,0.06505,,2.38,9.3,100.0,0.0,converged,[0.0]
+B1,gemma4:e4b bare,test_generation_for_existing_code,0,ollama,False,True,1,166.0100119113922,903,3863,0.0,,2.38,9.3,94.2,0.0,,
+B1,gemma4:e4b bare,test_generation_for_existing_code,1,ollama,False,True,1,163.85127711296082,903,3863,0.0,,2.38,9.3,94.2,0.0,,
+B1,gemma4:e4b bare,test_generation_for_existing_code,2,ollama,False,True,1,165.29769206047058,903,3863,0.0,,2.38,9.3,94.2,0.0,,
+B1,gemma4:e4b bare,test_generation_for_existing_code,3,ollama,False,True,1,164.55351972579956,903,3863,0.0,,2.38,9.3,94.2,0.0,,
+B1,gemma4:e4b bare,test_generation_for_existing_code,4,ollama,False,True,1,165.77226972579956,903,3863,0.0,,2.38,9.3,94.2,0.0,,
+B2,gemma4:e4b + CZL,test_generation_for_existing_code,0,ollama,True,True,1,163.9444510936737,903,3863,0.0,,2.38,9.3,94.2,0.0,converged,[0.0]
+B2,gemma4:e4b + CZL,test_generation_for_existing_code,1,ollama,True,True,1,163.5704231262207,903,3863,0.0,,2.38,9.3,94.2,0.0,converged,[0.0]
+B2,gemma4:e4b + CZL,test_generation_for_existing_code,2,ollama,True,True,1,165.70209217071533,903,3863,0.0,,2.38,9.3,94.2,0.0,converged,[0.0]
+B2,gemma4:e4b + CZL,test_generation_for_existing_code,3,ollama,True,True,1,172.52843308448792,903,3863,0.0,,2.38,9.3,94.2,0.0,converged,[0.0]
+B2,gemma4:e4b + CZL,test_generation_for_existing_code,4,ollama,True,True,1,166.80610299110413,903,3863,0.0,,2.38,9.3,94.2,0.0,converged,[0.0]
