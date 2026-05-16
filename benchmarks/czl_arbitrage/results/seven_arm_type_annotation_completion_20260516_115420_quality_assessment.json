@@ -1,0 +1,12 @@
+{
+  "scenario": "type_annotation_completion",
+  "n_records": 35,
+  "objective_means_by_arm": {},
+  "four_dim_judge": [],
+  "a_vs_a2_judge": {
+    "scores": null,
+    "reason": "no_a_or_a2_converged"
+  },
+  "n_anonymized": 35,
+  "total_judge_cost_usd": 0.0
+}
