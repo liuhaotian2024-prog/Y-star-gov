@@ -84,6 +84,11 @@ class CZLResult:
     duration_seconds: float = 0.0
     # Indie-facing copy: cost comparison string for stdout
     cost_summary_line: str = ""
+    # Why the loop stopped. Explicit field so downstream tooling can
+    # distinguish "shipped at Rt+1=0" from "ran out of iterations" from
+    # other early-exit branches. Pre-v3 callers that only check `converged`
+    # keep working; new callers can branch on this.
+    halted_due_to: str = ""               # converged | max_iter_exhausted | user_rejected_contract | scenario_returned_empty_plan | exception
 
     def to_dict(self) -> Dict[str, Any]:
         d = dict(self.__dict__)
@@ -150,6 +155,7 @@ def run_scenario(
         approved = toast_fn(toast_text, TOAST_TIMEOUT_SECONDS, default_yes=(not request.strict))
         if not approved:
             result.failure_reason = "user_rejected_contract"
+            result.halted_due_to = "user_rejected_contract"
             result.duration_seconds = time.time() - started
             return result
 
@@ -180,6 +186,7 @@ def run_scenario(
         plan_steps = request.scenario.plan(request.task_description, request.workspace_dir)
         if not plan_steps:
             result.failure_reason = "scenario_returned_empty_plan"
+            result.halted_due_to = "scenario_returned_empty_plan"
             break
         step = plan_steps[min(step_idx, len(plan_steps) - 1)]
         result.iterations = step_idx + 1
@@ -217,8 +224,12 @@ def run_scenario(
         result.final_residual = residual
 
         if residual == 0.0:
-            # converged — ship!
+            # converged — ship the current workspace as-is. The break here is
+            # what stops the loop touching a known-good answer; downstream
+            # consumers can rely on halted_due_to=="converged" to know the
+            # post-state files reflect the converged iteration.
             result.converged = True
+            result.halted_due_to = "converged"
             result.final_verifier_report = _summarize_verifiers(verifier_results)
             break
 
@@ -228,6 +239,8 @@ def run_scenario(
 
     # --- Step 5: finalize ---------------------------------------------------
     if not result.converged:
+        if not result.halted_due_to:
+            result.halted_due_to = "max_iter_exhausted"
         result.failure_reason = (
             f"did_not_converge_after_{result.iterations}_iterations: "
             + "; ".join(v.message for v in last_violations[:5])

@@ -187,7 +187,7 @@ class BugFixScenario(Scenario):
                     "- Do NOT modify any file matching `test_*.py`, anything under `tests/`, or `conftest.py`\n"
                     "- Do NOT delete, skip, or `xfail` failing tests\n"
                     "- Do NOT add `except: pass`, `except Exception: pass`, or `pytest.skip` to suppress errors\n"
-                    "- Make minimum-scope edits — fix the bug, not the architecture\n\n"
+                    "- Make whatever change the failing tests demand — including function-signature or interface changes if the tests assert a new contract. The tests are the spec.\n\n"
                     "## Output format\n"
                     "For each source file you change, emit one fenced block with the EXACT path "
                     "and COMPLETE new content (no diff syntax, no ellipses):\n\n"
