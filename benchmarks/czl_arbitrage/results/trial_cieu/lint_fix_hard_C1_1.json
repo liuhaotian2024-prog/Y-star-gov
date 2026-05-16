@@ -1,0 +1,29 @@
+{
+  "arm": "C1",
+  "arm_label": "deepseek bare",
+  "scenario": "lint_fix",
+  "difficulty": "hard",
+  "trial": 1,
+  "backend": "deepseek",
+  "use_czl": false,
+  "converged": false,
+  "iterations": 1,
+  "wall_clock_seconds": 6.643389940261841,
+  "input_tokens": 1837,
+  "output_tokens": 765,
+  "cost_usd": 0.00034279000000000004,
+  "final_ruff_errors": 3,
+  "final_mypy_errors": 0,
+  "final_pytest_failures": 0,
+  "failure_reason": "ruff: 3 issue(s); first: F401 `typing.List` imported but unused",
+  "post_state_files": {
+    "services.py": "from typing import List\nfrom models import User, Post\nfrom repository import UserRepository, PostRepository\n\n\nclass BlogService:\n    def __init__(self, users: UserRepository, posts: PostRepository):\n        self.users = users\n        self.posts = posts\n\n    def register_user(self, user_id: int, name: str, email: str) -> User:\n        user = User(user_id, name, email)\n        self.users.add(user)\n        return user\n\n    def create_post(self, author_id: int, post_id: int, title: str) -> Post:\n        author = self.users.get(author_id)\n        if author is None:\n            raise ValueError('unknown author')\n        post = Post(post_id, author_id, title)\n        self.posts.add(post)\n        return post\n\n    def posts_for(self, author_id: int) -> List[Post]:\n        return self.posts.by_author(author_id)\n",
+    "formatters.py": "from typing import List\nfrom models import User, Post\n\n\ndef format_user(user: User) -> str:\n    return f'{user.name} <{user.email}>'\n\n\ndef format_post_summary(post: Post, author: User) -> str:\n    return f'\\\"{post.title}\\\" by {author.name}'\n\n\ndef format_post_list(posts: list, author: User) -> str:\n    return '\\n'.join(format_post_summary(p, author) for p in posts)\n",
+    "models.py": "from typing import Dict\n\n\nclass User:\n    def __init__(self, user_id: int, name: str, email: str):\n        self.user_id = user_id\n        self.name = name\n        self.email = email\n\n    def to_dict(self) -> Dict:\n        return {'id': self.user_id, 'name': self.name, 'email': self.email}\n\n\nclass Post:\n    def __init__(self, post_id: int, author_id: int, title: str):\n        self.post_id = post_id\n        self.author_id = author_id\n        self.title = title\n\n    def to_dict(self) -> Dict:\n        return {'id': self.post_id, 'author': self.author_id, 'title': self.title}\n",
+    "utils.py": "from typing import Iterable, List, Optional\n\n\ndef first_or_default(items: Iterable, default=None):\n    return next(iter(items), default)\n\n\ndef chunked(items: list, size: int) -> List[list]:\n    return [items[i:i+size] for i in range(0, len(items), size)]\n\n\ndef safe_str(value) -> str:\n    return str(value) if value is not None else ''\n",
+    "repository.py": "from typing import List, Optional\nfrom models import User, Post\n\n\nclass UserRepository:\n    def __init__(self):\n        self._users: List[User] = []\n\n    def add(self, user: User) -> None:\n        self._users.append(user)\n\n    def get(self, user_id: int) -> Optional[User]:\n        for u in self._users:\n            if u.user_id == user_id:\n                return u\n        return None\n\n    def all(self) -> List[User]:\n        return list(self._users)\n\n\nclass PostRepository:\n    def __init__(self):\n        self._posts: List[Post] = []\n\n    def add(self, post: Post) -> Post:\n        self._posts.append(post)\n        return post\n\n    def by_author(self, author_id: int) -> List[Post]:\n        return [p for p in self._posts if p.author_id == author_id]\n",
+    "test_blog.py": "from models import User, Post\nfrom repository import UserRepository, PostRepository\nfrom services import BlogService\nfrom formatters import format_user, format_post_summary, format_post_list\nfrom utils import first_or_default, chunked, safe_str\n\n\ndef _make_service():\n    return BlogService(UserRepository(), PostRepository())\n\n\ndef test_register_user():\n    svc = _make_service()\n    u = svc.register_user(1, 'Alice', 'a@b.com')\n    assert u.name == 'Alice'\n    assert svc.users.get(1).email == 'a@b.com'\n\n\ndef test_create_post():\n    svc = _make_service()\n    svc.register_user(1, 'Alice', 'a@b.com')\n    p = svc.create_post(1, 10, 'Hello')\n    assert p.title == 'Hello'\n    assert len(svc.posts_for(1)) == 1\n\n\ndef test_create_post_unknown_author():\n    svc = _make_service()\n    import pytest\n    with pytest.raises(ValueError):\n        svc.create_post(99, 10, 'x')\n\n\ndef test_format_user():\n    u = User(1, 'Bob', 'b@c.com')\n    assert format_user(u) == 'Bob <b@c.com>'\n\n\ndef test_format_post_list():\n    u = User(1, 'Bob', 'b@c.com')\n    posts = [Post(10, 1, 'A'), Post(11, 1, 'B')]\n    out = format_post_list(posts, u)\n    assert '\\\"A\\\" by Bob' in out\n    assert '\\\"B\\\" by Bob' in out\n\n\ndef test_first_or_default():\n    assert first_or_default([], 'x') == 'x'\n    assert first_or_default([1, 2]) == 1\n\n\ndef test_chunked():\n    assert chunked([1, 2, 3, 4, 5], 2) == [[1, 2], [3, 4], [5]]\n\n\ndef test_safe_str():\n    assert safe_str(42) == '42'\n    assert safe_str(None) == ''\n"
+  },
+  "semantic_correctness_score": null,
+  "final_invariant_violations": 1
+}
