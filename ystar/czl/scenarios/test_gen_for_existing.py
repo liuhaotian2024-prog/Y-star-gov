@@ -217,15 +217,28 @@ class TestGenForExistingScenario(Scenario):
     description = "Write pytest tests for data_pipeline.py; coverage ≥ 80%; exception paths covered"
     default_max_iterations = 6
 
+    # Captured per verify() call so the bench harness can inspect that
+    # mutation_score only fires after inner verifiers all pass (Phase-4
+    # checkpoint 4). Reset at the start of every verify().
+    _last_verifier_call_order: List[str] = []
+
     def y_star_invariants(self) -> Dict[str, Any]:
         return {
             "invariant": [
                 "all_pytest_tests_pass == True",
                 "coverage_pct >= 80",
                 "uses_pytest_raises == True",
+                "mutation_score >= 0.7",
             ],
             "only_paths": ["./"],
             "deny": [".env", ".git/", "secrets"],
+            # Phase-4 mutation-score gate metadata. _mutation_unconditional
+            # intentionally omitted (defaults to False); production uses
+            # selective git-diff to gate activation (which counts test-file
+            # writes too, since model produces tests not source here).
+            "_mutation_target_file": "data_pipeline.py",
+            "_mutation_test_command": "python3.11 -m pytest -x -q --tb=no --no-header",
+            "_mutation_target_wall_seconds": 10.0,
         }
 
     def plan(self, task_description: str, workspace_dir: str) -> List[PlanStep]:
@@ -261,10 +274,45 @@ class TestGenForExistingScenario(Scenario):
         )]
 
     def verify(self, workspace_dir: str, contract: Dict[str, Any]) -> List[VerifierResult]:
+        """v3 + Phase-4 verifier chain:
+
+            pytest_pass -> coverage80 -> has_exception_tests
+            -> contract_consistency -> differential   (the inner verifiers)
+            -> [if all inner passed]  mutation_score  (final gate)
+
+        Final-gate logic: mutation_score runs ONLY when every inner
+        verifier passed. A failure at the gate returns passed=False so
+        the CZL loop iterates once more with the surviving-mutants diff as
+        feedback; no_progress halt protects against unbounded retries.
+        """
         results: List[VerifierResult] = []
-        for v in (PytestPassVerifier(), Coverage80Verifier(), HasExceptionTestsVerifier()):
-            if v.is_applicable(workspace_dir):
-                results.append(v.run(workspace_dir, contract))
+        call_order: List[str] = []
+
+        inner = [
+            PytestPassVerifier(),
+            Coverage80Verifier(),
+            HasExceptionTestsVerifier(),
+            ContractConsistencyVerifier(),
+            DifferentialVerifier(),
+        ]
+        for v in inner:
+            if not v.is_applicable(workspace_dir):
+                continue
+            r = v.run(workspace_dir, contract)
+            results.append(r)
+            call_order.append(v.name)
+
+        all_inner_passed = bool(results) and all(r.passed for r in results)
+
+        if all_inner_passed:
+            target_wall = float((contract or {}).get("_mutation_target_wall_seconds") or 10.0)
+            mut = MutationScoreVerifier(target_wall_seconds=target_wall, score_threshold=0.7)
+            if mut.is_applicable(workspace_dir, contract):
+                mr = mut.run(workspace_dir, contract)
+                results.append(mr)
+                call_order.append(mut.name)
+
+        self._last_verifier_call_order = list(call_order)
         return results
 
     def apply_action(self, action: Dict[str, Any], workspace_dir: str) -> None:

@@ -213,26 +213,65 @@ def _parse_json_response(text: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+_RETRY_BACKOFFS_SECONDS: List[float] = [0.5, 2.0, 8.0]
+
+
 def _sonnet_call(prompt: str, max_tokens: int = 400) -> Dict[str, Any]:
+    """Sonnet completion with exponential-backoff retry on transient API
+    failures. 3 retries (0.5s, 2s, 8s). After exhaustion, returns a result
+    with error=API_UNAVAILABLE_AFTER_RETRIES so consumers can exclude this
+    call from agreement denominators rather than counting it as a real
+    semantic disagreement.
+
+    Retryable conditions:
+      - any exception from litellm.completion()
+      - empty response text
+      - HTTP 5xx (litellm raises these as exceptions, covered above)
+    """
     try:
         import litellm
     except ImportError:
-        return {"text": "", "cost_usd": 0.0, "error": "litellm not installed"}
-    t0 = time.time()
-    try:
-        r = litellm.completion(
-            model=JUDGE_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=max_tokens,
-        )
-    except Exception as e:
-        return {"text": "", "cost_usd": 0.0, "error": f"{type(e).__name__}: {e}"}
-    text = (r.choices[0].message.content or "").strip()
-    usage = getattr(r, "usage", None)
-    in_tok = getattr(usage, "prompt_tokens", 0) if usage else 0
-    out_tok = getattr(usage, "completion_tokens", 0) if usage else 0
-    cost = (in_tok / 1_000_000) * 3.0 + (out_tok / 1_000_000) * 15.0
-    return {"text": text, "cost_usd": cost, "latency_seconds": time.time() - t0}
+        return {"text": "", "cost_usd": 0.0,
+                "error": "litellm not installed", "retries": 0}
+    attempt_log: List[str] = []
+    last_error: Optional[str] = None
+    sleep_schedule = [0.0] + _RETRY_BACKOFFS_SECONDS
+    for attempt_idx, sleep_before in enumerate(sleep_schedule):
+        if sleep_before > 0:
+            time.sleep(sleep_before)
+        t0 = time.time()
+        try:
+            r = litellm.completion(
+                model=JUDGE_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=max_tokens,
+            )
+        except Exception as e:
+            last_error = f"{type(e).__name__}: {str(e)[:120]}"
+            attempt_log.append(f"attempt {attempt_idx + 1}: exception {last_error}")
+            continue
+        text = (r.choices[0].message.content or "").strip() if r.choices else ""
+        if not text:
+            last_error = "empty_response"
+            attempt_log.append(f"attempt {attempt_idx + 1}: empty response")
+            continue
+        usage = getattr(r, "usage", None)
+        in_tok = getattr(usage, "prompt_tokens", 0) if usage else 0
+        out_tok = getattr(usage, "completion_tokens", 0) if usage else 0
+        cost = (in_tok / 1_000_000) * 3.0 + (out_tok / 1_000_000) * 15.0
+        return {
+            "text": text, "cost_usd": cost,
+            "latency_seconds": time.time() - t0,
+            "retries": attempt_idx,
+            "retry_log": attempt_log if attempt_idx > 0 else [],
+        }
+    return {
+        "text": "", "cost_usd": 0.0,
+        "latency_seconds": 0.0,
+        "error": f"API_UNAVAILABLE_AFTER_RETRIES({len(_RETRY_BACKOFFS_SECONDS)}): {last_error}",
+        "retries": len(sleep_schedule) - 1,
+        "retry_log": attempt_log,
+    }
 
 
 def sonnet_judge_4dim(
@@ -248,13 +287,17 @@ def sonnet_judge_4dim(
         task_description=task_description,
     )
     raw = _sonnet_call(prompt, max_tokens=200)
-    parsed = _parse_json_response(raw["text"])
+    parsed = _parse_json_response(raw["text"]) if raw["text"] else None
+    api_unavailable = (raw.get("error") or "").startswith("API_UNAVAILABLE_AFTER_RETRIES")
     return {
         "scores": parsed,
         "raw_response": raw["text"],
         "cost_usd": raw["cost_usd"],
         "latency_seconds": raw.get("latency_seconds"),
         "error": raw.get("error"),
+        "retries": raw.get("retries", 0),
+        "retry_log": raw.get("retry_log", []),
+        "api_unavailable": api_unavailable,
     }
 
 
@@ -269,13 +312,17 @@ def sonnet_judge_a_vs_a2(
         task_description=task_description,
     )
     raw = _sonnet_call(prompt, max_tokens=400)
-    parsed = _parse_json_response(raw["text"])
+    parsed = _parse_json_response(raw["text"]) if raw["text"] else None
+    api_unavailable = (raw.get("error") or "").startswith("API_UNAVAILABLE_AFTER_RETRIES")
     return {
         "scores": parsed,
         "raw_response": raw["text"],
         "cost_usd": raw["cost_usd"],
         "latency_seconds": raw.get("latency_seconds"),
         "error": raw.get("error"),
+        "retries": raw.get("retries", 0),
+        "retry_log": raw.get("retry_log", []),
+        "api_unavailable": api_unavailable,
     }
 
 

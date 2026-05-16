@@ -71,8 +71,14 @@ def per_scenario_marker(out_root: str, scenario: str) -> Optional[Path]:
     return candidates[-1] if candidates else None
 
 
+def _report_version() -> str:
+    """Version label for the FINAL report filename. Defaults to v3 for
+    backwards compat; set YSTAR_REPORT_VERSION=v3.1 in env for re-runs."""
+    return os.environ.get("YSTAR_REPORT_VERSION", "v3")
+
+
 def final_marker(out_root: str) -> Optional[Path]:
-    p = Path(out_root) / "v3_FINAL_REPORT.md"
+    p = Path(out_root) / f"{_report_version()}_FINAL_REPORT.md"
     return p if p.exists() else None
 
 
@@ -114,17 +120,27 @@ def _stopping_authority_distribution(records: List[Dict[str, Any]]) -> Dict[str,
 
 
 def _math_vs_sonnet_agreement_for_qa(qa_dict: Dict[str, Any]) -> Tuple[int, int]:
-    """For each (cell, candidate arm) where math says converged AND we have a
-    sonnet judge result, check if sonnet functional_equivalence >= 0.85.
-    Returns (agreement_count, total_comparisons)."""
+    """Agreement = (# where math says converged AND sonnet says
+    functional_equivalence ≥ 0.85) / (# where sonnet returned a real
+    numeric score).
+
+    Critically: trials where the Sonnet API was unavailable after retry-
+    with-backoff are EXCLUDED from both numerator and denominator. Those
+    are infrastructure flakes, not real semantic disagreements. The
+    api_unavailable flag is set by quality_assessment._sonnet_call after 3
+    exponential-backoff retries (0.5s / 2s / 8s) exhaust.
+    """
     agree = 0
     total = 0
     for entry in qa_dict.get("four_dim_judge") or []:
+        # exclude API failures from denominator entirely
+        if entry.get("api_unavailable"):
+            continue
         scores = entry.get("scores")
         if not scores:
             continue
         fe = scores.get("functional_equivalence")
-        if fe is None:
+        if not isinstance(fe, (int, float)):
             continue
         total += 1
         if fe >= 0.85:
@@ -441,7 +457,7 @@ def emit_final_report(all_records: List[Dict[str, Any]], scenario_qas: Dict[str,
         md.append(f"- `{k}`: {v}\n")
     md.append("\n")
 
-    out_path = Path(out_root) / "v3_FINAL_REPORT.md"
+    out_path = Path(out_root) / f"{_report_version()}_FINAL_REPORT.md"
     out_path.write_text("".join(md), encoding="utf-8")
     print(f"[incremental] wrote {out_path}")
     return out_path
@@ -454,9 +470,10 @@ def emit_final_cieu(all_records: List[Dict[str, Any]], scenario_qas: Dict[str, D
         a, t = _math_vs_sonnet_agreement_for_qa(scenario_qas[s] or {})
         g_agree += a
         g_total += t
+    version = _report_version()
     return append_event(
-        milestone_id="step_v3_final_report",
-        y_star="all 4 scenarios complete + v3_FINAL_REPORT.md written + 10 cross-tabs emitted",
+        milestone_id=f"step_{version}_final_report",
+        y_star=f"all 4 scenarios complete + {version}_FINAL_REPORT.md written + 10 cross-tabs emitted",
         actions_taken=[
             f"all 4 scenarios reached 35/35 trials ({len(all_records)} total trial JSONs aggregated)",
             "wrote v3_FINAL_REPORT.md with cross-tabs 1-10 + math/sonnet agreement gate + failure-mode distribution",
