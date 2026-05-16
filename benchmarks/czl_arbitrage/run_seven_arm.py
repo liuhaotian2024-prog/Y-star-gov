@@ -39,8 +39,10 @@ import shutil
 import statistics
 import subprocess
 import sys
+import threading
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -68,6 +70,21 @@ ARMS: Dict[str, Dict[str, Any]] = {
     "C2": {"backend": "deepseek",  "use_czl": True,  "label": "deepseek + CZL"},
     "D2": {"backend": "minimax",   "use_czl": True,  "label": "minimax + CZL"},
 }
+
+
+# Each arm routes to one provider pool. Ollama serial (one daemon), API
+# providers concurrent within per-provider rate-limit headroom.
+ARM_TO_PROVIDER: Dict[str, str] = {
+    "A":  "anthropic", "A2": "anthropic",
+    "B1": "ollama",    "B2": "ollama",
+    "C1": "deepseek",  "C2": "deepseek",
+    "D2": "minimax",
+}
+
+
+# Lock guards trial-CIEU writes (per-trial JSON path is unique, so no lock
+# strictly required there) AND any shared mutable state under as_completed.
+_TRIAL_WRITE_LOCK = threading.Lock()
 
 
 # === scenario registry =======================================================
@@ -126,10 +143,26 @@ V3_TRIAL_DIR = "v3_trial_cieu"
 
 def write_trial_cieu(out_root: str, record: Dict[str, Any]) -> None:
     d = Path(out_root) / V3_TRIAL_DIR
-    d.mkdir(parents=True, exist_ok=True)
     p = d / f"{record['scenario']}_{record['arm']}_{record['trial']}.json"
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump(record, f, indent=2, default=str)
+    with _TRIAL_WRITE_LOCK:
+        d.mkdir(parents=True, exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(record, f, indent=2, default=str)
+
+
+def trial_already_done(out_root: str, scenario: str, arm: str, trial: int) -> bool:
+    p = Path(out_root) / V3_TRIAL_DIR / f"{scenario}_{arm}_{trial}.json"
+    return p.exists()
+
+
+def load_trial_record(out_root: str, scenario: str, arm: str, trial: int) -> Optional[Dict[str, Any]]:
+    p = Path(out_root) / V3_TRIAL_DIR / f"{scenario}_{arm}_{trial}.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
 
 
 def _capture_workspace_files(workspace_dir: str) -> Dict[str, str]:
@@ -157,6 +190,8 @@ def run_one_trial(
     workspace_dir: str,
     trial_idx: int,
     out_root: str,
+    max_iterations: int,
+    no_progress_window: int,
 ) -> Dict[str, Any]:
     arm_cfg = ARMS[arm_key]
     scenario = get_scenario(scenario_name)
@@ -195,7 +230,8 @@ def run_one_trial(
                 scenario=scenario,
                 backend=backend,
                 workspace_dir=workspace_dir,
-                max_iterations=8,
+                max_iterations=max_iterations,
+                no_progress_window=no_progress_window,
                 strict=False,
                 auto_undo_on_failure=False,
             )
@@ -206,6 +242,8 @@ def run_one_trial(
             record["output_tokens"] = result.total_output_tokens
             record["cost_usd"] = result.total_cost_usd
             record["failure_reason"] = result.failure_reason
+            record["stopping_authority"] = getattr(result, "stopping_authority", "")
+            record["residual_trajectory"] = list(getattr(result, "residual_trajectory", []))
         else:
             plan_steps = scenario.plan(task_description, workspace_dir)
             first_prompt = plan_steps[0].user_prompt if plan_steps else task_description
@@ -254,7 +292,13 @@ def run_scenario_all_arms(
     trials: int,
     workspace_root: str,
     out_root: str,
+    max_iterations: int,
+    no_progress_window: int,
 ) -> Tuple[List[Dict[str, Any]], str]:
+    """Legacy sequential entry point. Kept for backwards-compat with single-
+    threaded callers. The pooled v3 main() does not use this — it builds
+    140 isolated workspaces and dispatches each trial to a per-provider pool.
+    """
     workspace_dir = os.path.abspath(os.path.join(workspace_root, scenario_name))
     if os.path.isdir(workspace_dir):
         shutil.rmtree(workspace_dir)
@@ -274,10 +318,81 @@ def run_scenario_all_arms(
                 workspace_dir=workspace_dir,
                 trial_idx=t,
                 out_root=out_root,
+                max_iterations=max_iterations,
+                no_progress_window=no_progress_window,
             )
             records.append(rec)
             time.sleep(0.5)
     return records, task_description
+
+
+# === parallel pool design ====================================================
+
+def _prepare_per_trial_workspaces(
+    scenarios: List[str], arms: List[str], trials: int, workspace_root: str,
+) -> List[Dict[str, Any]]:
+    """Materialize one isolated workspace per (scenario, arm, trial) and
+    git_init each. Returns a flat task list with materialized task_description.
+
+    Per-trial isolation removes the need for inter-trial git reset and lets
+    us fire all 140 trials concurrently across pools without lock contention
+    on a shared workspace.
+    """
+    tasks: List[Dict[str, Any]] = []
+    for s in scenarios:
+        for a in arms:
+            for t in range(trials):
+                ws = os.path.abspath(os.path.join(workspace_root, s, a, str(t)))
+                if os.path.isdir(ws):
+                    shutil.rmtree(ws)
+                os.makedirs(ws, exist_ok=True)
+                td = materialize_for_scenario(s, ws)
+                git_init_baseline(ws)
+                tasks.append({
+                    "scenario": s, "arm": a, "trial": t,
+                    "ws": ws, "task_description": td,
+                })
+    return tasks
+
+
+def _trial_runner(
+    *,
+    arm_key: str,
+    scenario_name: str,
+    task_description: str,
+    workspace_dir: str,
+    trial_idx: int,
+    out_root: str,
+    max_iterations: int,
+    no_progress_window: int,
+) -> Dict[str, Any]:
+    """Thread-target wrapper: exception-isolated call into run_one_trial."""
+    try:
+        return run_one_trial(
+            arm_key=arm_key,
+            scenario_name=scenario_name,
+            task_description=task_description,
+            workspace_dir=workspace_dir,
+            trial_idx=trial_idx,
+            out_root=out_root,
+            max_iterations=max_iterations,
+            no_progress_window=no_progress_window,
+        )
+    except Exception as exc:
+        rec = {
+            "arm": arm_key, "scenario": scenario_name, "trial": trial_idx,
+            "converged": False, "iterations": 0,
+            "wall_clock_seconds": 0.0,
+            "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0,
+            "failure_reason": f"thread_exception: {type(exc).__name__}: {exc}"[:500],
+            "traceback": traceback.format_exc()[-2000:],
+            "post_state_files": _capture_workspace_files(workspace_dir),
+            "objective_metrics": {},
+            "stopping_authority": "exception",
+            "residual_trajectory": [],
+        }
+        write_trial_cieu(out_root, rec)
+        return rec
 
 
 # === CSV writer (no post_state_files / objective_metrics dict in CSV) =======
@@ -317,9 +432,22 @@ def main():
                    help="comma-separated scenario names")
     p.add_argument("--arms", default="A,A2,B1,B2,C1,C2,D2")
     p.add_argument("--trials", type=int, default=5)
+    p.add_argument("--max-iterations", type=int, default=50,
+                   help="CZL loop iteration cap; trajectory no-progress halt fires sooner if model plateaus")
+    p.add_argument("--no-progress-window", type=int, default=3,
+                   help="halt with stopping_authority=no_progress after this many consecutive non-decreasing residuals (0 to disable)")
+    # Per-provider pool worker counts. Each pool runs independently in main
+    # thread's asyncio-free ThreadPoolExecutor; trials in different pools
+    # run truly in parallel.
+    p.add_argument("--anthropic-workers", type=int, default=3)
+    p.add_argument("--deepseek-workers",  type=int, default=5)
+    p.add_argument("--minimax-workers",   type=int, default=5)
+    p.add_argument("--ollama-workers",    type=int, default=1)
     p.add_argument("--workspace-root", default="/tmp/czl_seven_arm")
     p.add_argument("--out", default="benchmarks/czl_arbitrage/results")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--sequential", action="store_true",
+                   help="bypass pools and run sequentially (legacy behaviour)")
     args = p.parse_args()
     arms = [a.strip() for a in args.arms.split(",")]
     scenarios = [s.strip() for s in args.scenarios.split(",")]
@@ -349,22 +477,125 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     ts = time.strftime("%Y%m%d_%H%M%S")
     all_records: List[Dict[str, Any]] = []
-    for s in scenarios:
-        recs, task_desc = run_scenario_all_arms(s, arms, args.trials, args.workspace_root, args.out)
-        all_records.extend(recs)
-        scenario_csv = os.path.join(args.out, f"seven_arm_{s}_{ts}.csv")
-        _write_records_csv(scenario_csv, recs)
-        print(f"[bench] wrote {scenario_csv}")
 
-        # quality_assessment hook — mandated per CZL self-protocol
-        qa = run_quality_assessment(
-            scenario=s, all_records=recs, out_root=args.out,
-            task_description=task_desc,
-            source_module=SCENARIOS[s].get("source_module"),
-        )
-        qa_path = os.path.join(args.out, f"seven_arm_{s}_{ts}_quality_assessment.json")
-        Path(qa_path).write_text(json.dumps(qa, indent=2, default=str), encoding="utf-8")
-        print(f"[bench] wrote {qa_path}")
+    if args.sequential:
+        # legacy sequential path
+        for s in scenarios:
+            recs, task_desc = run_scenario_all_arms(
+                s, arms, args.trials, args.workspace_root, args.out,
+                max_iterations=args.max_iterations,
+                no_progress_window=args.no_progress_window,
+            )
+            all_records.extend(recs)
+            scenario_csv = os.path.join(args.out, f"seven_arm_{s}_{ts}.csv")
+            _write_records_csv(scenario_csv, recs)
+            print(f"[bench] wrote {scenario_csv}")
+            qa = run_quality_assessment(
+                scenario=s, all_records=recs, out_root=args.out,
+                task_description=task_desc,
+                source_module=SCENARIOS[s].get("source_module"),
+            )
+            qa_path = os.path.join(args.out, f"seven_arm_{s}_{ts}_quality_assessment.json")
+            Path(qa_path).write_text(json.dumps(qa, indent=2, default=str), encoding="utf-8")
+            print(f"[bench] wrote {qa_path}")
+    else:
+        # === parallel pool path: 4 per-provider ThreadPoolExecutors fire all
+        # 140 trials concurrently; Ollama serialised by pool size=1 so its
+        # daemon isn't oversaturated, API arms run truly in parallel. ===
+        print(f"[bench] preparing {len(scenarios) * len(arms) * args.trials} per-trial workspaces...")
+        all_tasks = _prepare_per_trial_workspaces(scenarios, arms, args.trials, args.workspace_root)
+        task_desc_for_scenario: Dict[str, str] = {}
+        for t in all_tasks:
+            task_desc_for_scenario.setdefault(t["scenario"], t["task_description"])
+
+        # Resume skip — honour previously-written trial JSONs verbatim
+        todo: List[Dict[str, Any]] = []
+        already: List[Dict[str, Any]] = []
+        for t in all_tasks:
+            if trial_already_done(args.out, t["scenario"], t["arm"], t["trial"]):
+                rec = load_trial_record(args.out, t["scenario"], t["arm"], t["trial"])
+                if rec is not None:
+                    already.append(rec)
+                    continue
+            todo.append(t)
+        all_records.extend(already)
+        if already:
+            print(f"[bench] resume-skip: {len(already)} trial(s) already on disk; running {len(todo)} new")
+
+        pools = {
+            "anthropic": ThreadPoolExecutor(max_workers=args.anthropic_workers, thread_name_prefix="anth"),
+            "ollama":    ThreadPoolExecutor(max_workers=args.ollama_workers,    thread_name_prefix="ollm"),
+            "deepseek":  ThreadPoolExecutor(max_workers=args.deepseek_workers,  thread_name_prefix="ds"),
+            "minimax":   ThreadPoolExecutor(max_workers=args.minimax_workers,   thread_name_prefix="mm"),
+        }
+        print(f"[bench] pool workers: anthropic={args.anthropic_workers} ollama={args.ollama_workers} "
+              f"deepseek={args.deepseek_workers} minimax={args.minimax_workers}")
+
+        futures: Dict[Any, Dict[str, Any]] = {}
+        for t in todo:
+            provider = ARM_TO_PROVIDER[t["arm"]]
+            fut = pools[provider].submit(
+                _trial_runner,
+                arm_key=t["arm"],
+                scenario_name=t["scenario"],
+                task_description=t["task_description"],
+                workspace_dir=t["ws"],
+                trial_idx=t["trial"],
+                out_root=args.out,
+                max_iterations=args.max_iterations,
+                no_progress_window=args.no_progress_window,
+            )
+            futures[fut] = t
+
+        completed = 0
+        total = len(futures)
+        t_bench_start = time.time()
+        for fut in as_completed(futures):
+            completed += 1
+            task = futures[fut]
+            try:
+                rec = fut.result()
+                if rec.get("converged"):
+                    status = "CONVERGED"
+                elif rec.get("stopping_authority") == "no_progress":
+                    status = "no_progress"
+                else:
+                    status = "failed"
+                wall = rec.get("wall_clock_seconds", 0.0)
+                cost = rec.get("cost_usd", 0.0)
+                iters = rec.get("iterations", 0)
+            except Exception as exc:
+                rec = None
+                status = f"EXC:{type(exc).__name__}"
+                wall = 0.0; cost = 0.0; iters = 0
+            elapsed = time.time() - t_bench_start
+            print(
+                f"[{completed:>3}/{total}] {task['scenario'][:25]:25s} arm={task['arm']:3s} "
+                f"trial={task['trial']} {status:10s} iters={iters:>2} "
+                f"trial_wall={wall:>6.1f}s cost=${cost:.5f} "
+                f"bench_elapsed={elapsed:>5.0f}s queue={total - completed}",
+                flush=True,
+            )
+            if rec is not None:
+                all_records.append(rec)
+
+        for pool in pools.values():
+            pool.shutdown(wait=True)
+
+        # Per-scenario CSV + quality_assessment (serial, post-trials)
+        for s in scenarios:
+            recs_for_s = [r for r in all_records if r.get("scenario") == s]
+            scenario_csv = os.path.join(args.out, f"seven_arm_{s}_{ts}.csv")
+            _write_records_csv(scenario_csv, recs_for_s)
+            print(f"[bench] wrote {scenario_csv}")
+            qa = run_quality_assessment(
+                scenario=s, all_records=recs_for_s, out_root=args.out,
+                task_description=task_desc_for_scenario.get(s, ""),
+                source_module=SCENARIOS[s].get("source_module"),
+            )
+            qa_path = os.path.join(args.out, f"seven_arm_{s}_{ts}_quality_assessment.json")
+            Path(qa_path).write_text(json.dumps(qa, indent=2, default=str), encoding="utf-8")
+            print(f"[bench] wrote {qa_path}")
 
     combined_csv = os.path.join(args.out, f"seven_arm_ALL_{ts}.csv")
     _write_records_csv(combined_csv, all_records)

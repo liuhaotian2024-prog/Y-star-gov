@@ -1,4 +1,0 @@
-arm,arm_label,scenario,trial,backend,use_czl,converged,iterations,wall_clock_seconds,input_tokens,output_tokens,cost_usd,failure_reason,obj_cyclomatic_complexity_avg,obj_duplicated_lines_pct,obj_test_coverage_pct,obj_mypy_strict_type_coverage_pct
-A,claude-opus-4-7 bare,bug_fix_with_implicit_dependency,0,anthropic,False,True,1,6.3015758991241455,1320,254,0.01295,,1.25,6.7,,65.5
-A2,claude-opus-4-7 + CZL,bug_fix_with_implicit_dependency,0,anthropic,True,True,1,5.20108699798584,1319,254,0.012945,,1.25,6.7,,65.5
-C1,deepseek bare,bug_fix_with_implicit_dependency,0,deepseek,False,True,1,3.687551259994507,907,255,0.00013489000000000003,,1.25,6.7,,65.5

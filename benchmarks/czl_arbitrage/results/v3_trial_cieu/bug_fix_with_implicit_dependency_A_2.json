@@ -1,13 +1,13 @@
 {
-  "arm": "A2",
-  "arm_label": "claude-opus-4-7 + CZL",
+  "arm": "A",
+  "arm_label": "claude-opus-4-7 bare",
   "scenario": "bug_fix_with_implicit_dependency",
-  "trial": 0,
+  "trial": 2,
   "backend": "anthropic",
-  "use_czl": true,
+  "use_czl": false,
   "converged": true,
   "iterations": 1,
-  "wall_clock_seconds": 4.723832130432129,
+  "wall_clock_seconds": 4.45119571685791,
   "input_tokens": 1317,
   "output_tokens": 254,
   "cost_usd": 0.012935,
@@ -22,9 +22,5 @@
     "duplicated_lines_pct": 6.7,
     "test_coverage_pct": null,
     "mypy_strict_type_coverage_pct": 65.5
-  },
-  "stopping_authority": "converged",
-  "residual_trajectory": [
-    0.0
-  ]
+  }
 }

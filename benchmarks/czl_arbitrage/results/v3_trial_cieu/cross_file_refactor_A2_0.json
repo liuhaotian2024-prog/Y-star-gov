@@ -1,0 +1,35 @@
+{
+  "arm": "A2",
+  "arm_label": "claude-opus-4-7 + CZL",
+  "scenario": "cross_file_refactor",
+  "trial": 0,
+  "backend": "anthropic",
+  "use_czl": true,
+  "converged": true,
+  "iterations": 1,
+  "wall_clock_seconds": 7.360742092132568,
+  "input_tokens": 1172,
+  "output_tokens": 520,
+  "cost_usd": 0.018860000000000002,
+  "failure_reason": "",
+  "post_state_files": {
+    "service_b.py": "from utils.old_api import bar\n\n\ndef compute_b(n: int) -> str:\n    result = bar(n)\n    return f\"calling bar({n}) returned {result}\"\n",
+    "service_c.py": "from utils.old_api import bar\n\n\ndef describe_c(n: int) -> str:\n    return f\"after bar({n}) we get {bar(n)}\"\n",
+    "test_services.py": "from service_a import compute_a\nfrom service_b import compute_b\nfrom service_c import describe_c\nfrom service_d import compute_d\nfrom service_e import compute_e\n\n\ndef test_compute_a():\n    assert compute_a(3) == 7\n\n\ndef test_compute_b():\n    s = compute_b(3)\n    assert '6' in s and '3' in s\n\n\ndef test_describe_c():\n    s = describe_c(4)\n    assert '8' in s and '4' in s\n\n\ndef test_compute_d():\n    assert compute_d(5) == 9\n\n\ndef test_compute_e():\n    assert compute_e(2) == 8\n",
+    "service_d.py": "from utils.old_api import bar\n\n\ndef compute_d(n: int) -> int:\n    return bar(n) - 1\n",
+    "service_e.py": "from utils.old_api import bar\n\n\ndef compute_e(n: int) -> int:\n    intermediate = bar(n)\n    return bar(intermediate)\n",
+    "service_a.py": "from utils.old_api import bar\n\n\ndef compute_a(n: int) -> int:\n    return bar(n) + 1\n",
+    "utils/old_api.py": "\"\"\"Public API: bar() is the canonical name.\"\"\"\n\n\ndef bar(x: int) -> int:\n    return x * 2\n",
+    "utils/__init__.py": ""
+  },
+  "objective_metrics": {
+    "cyclomatic_complexity_avg": 1,
+    "duplicated_lines_pct": 25.0,
+    "test_coverage_pct": null,
+    "mypy_strict_type_coverage_pct": 100.0
+  },
+  "stopping_authority": "converged",
+  "residual_trajectory": [
+    0.0
+  ]
+}
