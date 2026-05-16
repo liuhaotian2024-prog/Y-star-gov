@@ -1,0 +1,163 @@
+arm,arm_label,scenario,difficulty,trial,backend,use_czl,converged,iterations,wall_clock_seconds,input_tokens,output_tokens,cost_usd,final_ruff_errors,final_mypy_errors,final_pytest_failures,failure_reason,semantic_correctness_score,final_invariant_violations
+A,claude-opus-4-7 bare,lint_fix,easy,0,anthropic,False,True,1,5.324136018753052,830,101,0.006675,0,0,0,,,0
+A,claude-opus-4-7 bare,lint_fix,easy,1,anthropic,False,True,1,5.0544068813323975,830,101,0.006675,0,0,0,,,0
+A,claude-opus-4-7 bare,lint_fix,easy,2,anthropic,False,True,1,4.171872854232788,830,101,0.006675,0,0,0,,,0
+B1,gemma4:e4b bare,lint_fix,easy,0,ollama,False,True,1,45.056395053863525,605,966,0.0,0,0,0,,,0
+B1,gemma4:e4b bare,lint_fix,easy,1,ollama,False,True,1,38.33481812477112,605,966,0.0,0,0,0,,,0
+B1,gemma4:e4b bare,lint_fix,easy,2,ollama,False,True,1,38.30513906478882,605,966,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,lint_fix,easy,0,ollama,True,True,1,37.68432402610779,605,966,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,lint_fix,easy,1,ollama,True,True,1,37.26444697380066,605,966,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,lint_fix,easy,2,ollama,True,True,1,37.75262999534607,605,966,0.0,0,0,0,,,0
+C1,deepseek bare,lint_fix,easy,0,deepseek,False,True,1,2.9998130798339844,554,65,5.698e-05,0,0,0,,,0
+C1,deepseek bare,lint_fix,easy,1,deepseek,False,True,1,2.738729953765869,554,65,5.698e-05,0,0,0,,,0
+C1,deepseek bare,lint_fix,easy,2,deepseek,False,True,1,2.9146690368652344,554,65,5.698e-05,0,0,0,,,0
+C2,deepseek + CZL,lint_fix,easy,0,deepseek,True,True,1,3.1136362552642822,554,65,5.698e-05,0,0,0,,,0
+C2,deepseek + CZL,lint_fix,easy,1,deepseek,True,True,1,2.7430951595306396,554,65,5.698e-05,0,0,0,,,0
+C2,deepseek + CZL,lint_fix,easy,2,deepseek,True,True,1,2.84307599067688,554,65,5.698e-05,0,0,0,,,0
+D2,minimax + CZL,lint_fix,easy,0,minimax,True,True,1,10.481353044509888,555,781,0.0007358,0,0,0,,,0
+D2,minimax + CZL,lint_fix,easy,1,minimax,True,True,1,6.980974912643433,555,562,0.0005606000000000001,0,0,0,,,0
+D2,minimax + CZL,lint_fix,easy,2,minimax,True,True,1,4.856405019760132,555,341,0.0003838,0,0,0,,,0
+A,claude-opus-4-7 bare,lint_fix,medium,0,anthropic,False,True,1,6.272830963134766,1381,347,0.01558,0,0,0,,,0
+A,claude-opus-4-7 bare,lint_fix,medium,1,anthropic,False,True,1,5.795073986053467,1381,347,0.01558,0,0,0,,,0
+A,claude-opus-4-7 bare,lint_fix,medium,2,anthropic,False,True,1,7.03470778465271,1381,388,0.016605,0,0,0,,,0
+B1,gemma4:e4b bare,lint_fix,medium,0,ollama,False,True,1,112.67926597595215,1082,2693,0.0,0,0,0,,,0
+B1,gemma4:e4b bare,lint_fix,medium,1,ollama,False,True,1,109.45464515686035,1082,2693,0.0,0,0,0,,,0
+B1,gemma4:e4b bare,lint_fix,medium,2,ollama,False,True,1,110.5264151096344,1082,2693,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,lint_fix,medium,0,ollama,True,True,1,111.10006904602051,1082,2693,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,lint_fix,medium,1,ollama,True,True,1,110.77457308769226,1082,2693,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,lint_fix,medium,2,ollama,True,True,1,111.04163885116577,1082,2693,0.0,0,0,0,,,0
+C1,deepseek bare,lint_fix,medium,0,deepseek,False,False,1,3.827820062637329,979,240,0.00013573000000000003,1,0,0,ruff: 1 issue(s); first: F401 `typing.Union` imported but unused,,1
+C1,deepseek bare,lint_fix,medium,1,deepseek,False,False,1,3.926801919937134,979,240,0.00013573000000000003,1,0,0,ruff: 1 issue(s); first: F401 `typing.Union` imported but unused,,1
+C1,deepseek bare,lint_fix,medium,2,deepseek,False,True,1,3.792166233062744,979,238,0.00013517000000000002,0,0,0,,,0
+C2,deepseek + CZL,lint_fix,medium,0,deepseek,True,True,2,5.974435806274414,1935,325,0.00022645000000000003,0,0,0,,,0
+C2,deepseek + CZL,lint_fix,medium,1,deepseek,True,True,2,5.909734010696411,1935,325,0.00022645000000000003,0,0,0,,,0
+C2,deepseek + CZL,lint_fix,medium,2,deepseek,True,True,1,3.561781883239746,979,236,0.00013461000000000001,0,0,0,,,0
+D2,minimax + CZL,lint_fix,medium,0,minimax,True,True,1,76.28061604499817,946,7802,0.0064307999999999995,0,0,0,,,0
+D2,minimax + CZL,lint_fix,medium,1,minimax,True,True,2,16.72088122367859,1985,1791,0.0018298,0,0,0,,,0
+D2,minimax + CZL,lint_fix,medium,2,minimax,True,True,2,26.082735061645508,2054,2516,0.0024235999999999997,0,0,0,,,0
+A,claude-opus-4-7 bare,lint_fix,hard,0,anthropic,False,False,1,13.156215190887451,2522,1011,0.037885,1,0,0,ruff: 1 issue(s); first: F401 `formatters.format_post_summary` imported but unused,,1
+A,claude-opus-4-7 bare,lint_fix,hard,1,anthropic,False,False,1,12.43916392326355,2522,1011,0.037885,1,0,0,ruff: 1 issue(s); first: F401 `formatters.format_post_summary` imported but unused,,1
+A,claude-opus-4-7 bare,lint_fix,hard,2,anthropic,False,False,1,12.231068849563599,2522,1108,0.04031,1,0,0,ruff: 1 issue(s); first: F401 `formatters.format_post_summary` imported but unused,,1
+B1,gemma4:e4b bare,lint_fix,hard,0,ollama,False,False,1,130.3222839832306,2095,2901,0.0,16,7,0,"ruff: 16 issue(s); first: F401 `json` imported but unused; mypy: 7 error(s); first: utils.py:14: error: Incompatible return value type (got ""str"", expected ""int"")  [return-value]",,2
+B1,gemma4:e4b bare,lint_fix,hard,1,ollama,False,False,1,131.10845112800598,2095,2901,0.0,16,7,0,"ruff: 16 issue(s); first: F401 `json` imported but unused; mypy: 7 error(s); first: utils.py:14: error: Incompatible return value type (got ""str"", expected ""int"")  [return-value]",,2
+B1,gemma4:e4b bare,lint_fix,hard,2,ollama,False,False,1,132.07911324501038,2095,2901,0.0,16,7,0,"ruff: 16 issue(s); first: F401 `json` imported but unused; mypy: 7 error(s); first: utils.py:14: error: Incompatible return value type (got ""str"", expected ""int"")  [return-value]",,2
+B2,gemma4:e4b + CZL,lint_fix,hard,0,ollama,True,False,8,983.4790959358215,21219,21003,0.0,16,7,0,"did_not_converge_after_8_iterations: ruff: 16 issue(s); first: F401 `json` imported but unused; mypy: 7 error(s); first: utils.py:14: error: Incompatible return value type (got ""str"", expected ""int"")  [return-value]",,2
+B2,gemma4:e4b + CZL,lint_fix,hard,1,ollama,True,False,8,981.5243420600891,21219,21003,0.0,16,7,0,"did_not_converge_after_8_iterations: ruff: 16 issue(s); first: F401 `json` imported but unused; mypy: 7 error(s); first: utils.py:14: error: Incompatible return value type (got ""str"", expected ""int"")  [return-value]",,2
+B2,gemma4:e4b + CZL,lint_fix,hard,2,ollama,True,False,8,982.1857471466064,21219,21003,0.0,16,7,0,"did_not_converge_after_8_iterations: ruff: 16 issue(s); first: F401 `json` imported but unused; mypy: 7 error(s); first: utils.py:14: error: Incompatible return value type (got ""str"", expected ""int"")  [return-value]",,2
+C1,deepseek bare,lint_fix,hard,0,deepseek,False,False,1,6.562273979187012,1837,749,0.00033831000000000003,5,0,0,ruff: 5 issue(s); first: F401 `typing.List` imported but unused,,1
+C1,deepseek bare,lint_fix,hard,1,deepseek,False,False,1,6.643389940261841,1837,765,0.00034279000000000004,3,0,0,ruff: 3 issue(s); first: F401 `typing.List` imported but unused,,1
+C1,deepseek bare,lint_fix,hard,2,deepseek,False,False,1,6.483654022216797,1837,747,0.00033775000000000005,4,0,0,ruff: 4 issue(s); first: F401 `typing.List` imported but unused,,1
+C2,deepseek + CZL,lint_fix,hard,0,deepseek,True,False,8,73.78781414031982,13041,8322,0.00324303,1,0,0,did_not_converge_after_8_iterations: ruff: 1 issue(s); first: F401 `formatters.format_post_summary` imported but unused,,1
+C2,deepseek + CZL,lint_fix,hard,1,deepseek,True,False,8,56.12735104560852,12840,5871,0.0025426800000000003,1,0,0,did_not_converge_after_8_iterations: ruff: 1 issue(s); first: F401 `formatters.format_post_summary` imported but unused,,1
+C2,deepseek + CZL,lint_fix,hard,2,deepseek,True,False,8,67.81407499313354,12799,7871,0.0030998100000000006,1,0,0,did_not_converge_after_8_iterations: ruff: 1 issue(s); first: F401 `formatters.format_post_summary` imported but unused,,1
+D2,minimax + CZL,lint_fix,hard,0,minimax,True,False,8,649.1170978546143,12994,83447,0.06935640000000001,1,0,0,did_not_converge_after_8_iterations: ruff: 1 issue(s); first: F401 `formatters.format_post_summary` imported but unused,,1
+D2,minimax + CZL,lint_fix,hard,1,minimax,True,False,8,717.7640328407288,12832,91926,0.07610720000000001,1,0,0,did_not_converge_after_8_iterations: ruff: 1 issue(s); first: F401 `formatters.format_post_summary` imported but unused,,1
+D2,minimax + CZL,lint_fix,hard,2,minimax,True,False,8,179.38389706611633,12962,17448,0.0165508,3,0,0,did_not_converge_after_8_iterations: ruff: 3 issue(s); first: F401 `formatters.format_user` imported but unused,,1
+A,claude-opus-4-7 bare,bug_fix,easy,0,anthropic,False,True,1,8.123061180114746,838,110,0.00694,0,0,0,,,0
+A,claude-opus-4-7 bare,bug_fix,easy,1,anthropic,False,True,1,3.38618803024292,838,54,0.00554,0,0,0,,,0
+A,claude-opus-4-7 bare,bug_fix,easy,2,anthropic,False,True,1,4.445426940917969,838,117,0.007115,0,0,0,,,0
+B1,gemma4:e4b bare,bug_fix,easy,0,ollama,False,True,1,31.049708127975464,649,615,0.0,0,0,0,,,0
+B1,gemma4:e4b bare,bug_fix,easy,1,ollama,False,True,1,25.47827696800232,649,615,0.0,0,0,0,,,0
+B1,gemma4:e4b bare,bug_fix,easy,2,ollama,False,True,1,25.263745069503784,649,615,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,bug_fix,easy,0,ollama,True,True,1,24.554786920547485,649,615,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,bug_fix,easy,1,ollama,True,True,1,24.893105268478394,649,615,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,bug_fix,easy,2,ollama,True,True,1,24.70648193359375,649,615,0.0,0,0,0,,,0
+C1,deepseek bare,bug_fix,easy,0,deepseek,False,True,1,3.3184282779693604,574,82,6.314e-05,0,0,0,,,0
+C1,deepseek bare,bug_fix,easy,1,deepseek,False,True,1,3.2276742458343506,574,82,6.314e-05,0,0,0,,,0
+C1,deepseek bare,bug_fix,easy,2,deepseek,False,True,1,3.3438940048217773,574,82,6.314e-05,0,0,0,,,0
+C2,deepseek + CZL,bug_fix,easy,0,deepseek,True,True,1,3.421433687210083,574,82,6.314e-05,0,0,0,,,0
+C2,deepseek + CZL,bug_fix,easy,1,deepseek,True,True,1,3.2378339767456055,574,82,6.314e-05,0,0,0,,,0
+C2,deepseek + CZL,bug_fix,easy,2,deepseek,True,True,1,3.348494052886963,574,82,6.314e-05,0,0,0,,,0
+D2,minimax + CZL,bug_fix,easy,0,minimax,True,True,1,10.396613836288452,564,651,0.0006336,0,0,0,,,0
+D2,minimax + CZL,bug_fix,easy,1,minimax,True,True,1,7.536813020706177,564,567,0.0005664,0,0,0,,,0
+D2,minimax + CZL,bug_fix,easy,2,minimax,True,True,1,7.9263880252838135,564,626,0.0006136000000000001,0,0,0,,,0
+A,claude-opus-4-7 bare,bug_fix,medium,0,anthropic,False,True,1,10.725888013839722,1537,548,0.021385,0,0,0,,,0
+A,claude-opus-4-7 bare,bug_fix,medium,1,anthropic,False,True,1,18.870861053466797,1537,1217,0.03811,0,0,0,,,0
+A,claude-opus-4-7 bare,bug_fix,medium,2,anthropic,False,True,1,17.127588987350464,1537,1056,0.034085000000000004,0,0,0,,,0
+B1,gemma4:e4b bare,bug_fix,medium,0,ollama,False,True,1,114.81225609779358,1215,2665,0.0,0,0,0,,,0
+B1,gemma4:e4b bare,bug_fix,medium,1,ollama,False,True,1,110.29148125648499,1215,2665,0.0,0,0,0,,,0
+B1,gemma4:e4b bare,bug_fix,medium,2,ollama,False,True,1,110.19283986091614,1215,2665,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,bug_fix,medium,0,ollama,True,True,1,110.14126992225647,1215,2665,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,bug_fix,medium,1,ollama,True,True,1,109.2946949005127,1215,2665,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,bug_fix,medium,2,ollama,True,True,1,112.25695705413818,1215,2665,0.0,0,0,0,,,0
+C1,deepseek bare,bug_fix,medium,0,deepseek,False,True,1,11.736602783203125,1081,990,0.00035287000000000003,0,0,0,,,0
+C1,deepseek bare,bug_fix,medium,1,deepseek,False,True,1,5.4264209270477295,1081,341,0.00017115,0,0,0,,,0
+C1,deepseek bare,bug_fix,medium,2,deepseek,False,True,1,5.511854887008667,1081,370,0.00017927,0,0,0,,,0
+C2,deepseek + CZL,bug_fix,medium,0,deepseek,True,True,1,7.261765718460083,1081,551,0.00022994999999999998,0,0,0,,,0
+C2,deepseek + CZL,bug_fix,medium,1,deepseek,True,True,1,5.588389158248901,1081,446,0.00020055000000000002,0,0,0,,,0
+C2,deepseek + CZL,bug_fix,medium,2,deepseek,True,True,2,8.65900707244873,2115,646,0.00032893,0,0,0,,,0
+D2,minimax + CZL,bug_fix,medium,0,minimax,True,True,1,10.450675964355469,1061,836,0.0008810000000000002,0,0,0,,,0
+D2,minimax + CZL,bug_fix,medium,1,minimax,True,True,1,15.01228404045105,1061,1335,0.0012802000000000002,0,0,0,,,0
+D2,minimax + CZL,bug_fix,medium,2,minimax,True,True,1,10.33049988746643,1061,1015,0.0010242,0,0,0,,,0
+A,claude-opus-4-7 bare,bug_fix,hard,0,anthropic,False,True,1,8.962419986724854,1584,535,0.021295,1,0,0,,,0
+A,claude-opus-4-7 bare,bug_fix,hard,1,anthropic,False,True,1,6.7288901805877686,1584,458,0.01937,1,0,0,,,0
+A,claude-opus-4-7 bare,bug_fix,hard,2,anthropic,False,True,1,7.356804132461548,1584,465,0.019545,1,0,0,,,0
+B1,gemma4:e4b bare,bug_fix,hard,0,ollama,False,True,1,84.6766951084137,1196,2034,0.0,1,0,0,,,0
+B1,gemma4:e4b bare,bug_fix,hard,1,ollama,False,True,1,103.91448092460632,1196,2543,0.0,1,0,0,,,0
+B1,gemma4:e4b bare,bug_fix,hard,2,ollama,False,True,1,106.17911982536316,1196,2543,0.0,1,0,0,,,0
+B2,gemma4:e4b + CZL,bug_fix,hard,0,ollama,True,False,8,670.3941721916199,12991,16051,0.0,1,2,4,did_not_converge_after_8_iterations: pytest: 4 failing,,1
+B2,gemma4:e4b + CZL,bug_fix,hard,1,ollama,True,False,8,679.684675693512,12809,16118,0.0,1,2,4,did_not_converge_after_8_iterations: pytest: 4 failing,,1
+B2,gemma4:e4b + CZL,bug_fix,hard,2,ollama,True,False,8,677.2398133277893,12809,16118,0.0,1,2,4,did_not_converge_after_8_iterations: pytest: 4 failing,,1
+C1,deepseek bare,bug_fix,hard,0,deepseek,False,True,1,5.134971857070923,1050,358,0.00017374,1,0,0,,,0
+C1,deepseek bare,bug_fix,hard,1,deepseek,False,True,1,5.011436939239502,1050,358,0.00017374,1,0,0,,,0
+C1,deepseek bare,bug_fix,hard,2,deepseek,False,True,1,4.791470050811768,1050,359,0.00017402,1,0,0,,,0
+C2,deepseek + CZL,bug_fix,hard,0,deepseek,True,False,8,32.1969940662384,11109,2940,0.0016008300000000001,1,2,4,did_not_converge_after_8_iterations: pytest: 4 failing,,1
+C2,deepseek + CZL,bug_fix,hard,1,deepseek,True,False,8,31.861972093582153,11109,2925,0.0015966300000000004,1,2,4,did_not_converge_after_8_iterations: pytest: 4 failing,,1
+C2,deepseek + CZL,bug_fix,hard,2,deepseek,True,False,8,31.936495780944824,11109,2945,0.0016022299999999998,1,2,4,did_not_converge_after_8_iterations: pytest: 4 failing,,1
+D2,minimax + CZL,bug_fix,hard,0,minimax,True,False,8,71.45766878128052,10640,8158,0.0086544,1,2,4,did_not_converge_after_8_iterations: pytest: 4 failing,,1
+D2,minimax + CZL,bug_fix,hard,1,minimax,True,False,8,71.96106886863708,10717,7977,0.008525000000000001,1,2,4,did_not_converge_after_8_iterations: pytest: 4 failing,,1
+D2,minimax + CZL,bug_fix,hard,2,minimax,True,False,8,66.97495579719543,10718,6724,0.0075228000000000005,1,2,4,did_not_converge_after_8_iterations: pytest: 4 failing,,1
+A,claude-opus-4-7 bare,test_gen,easy,0,anthropic,False,True,1,9.665373086929321,695,558,0.017425,0,0,0,,,0
+A,claude-opus-4-7 bare,test_gen,easy,1,anthropic,False,True,1,9.590472936630249,695,689,0.0207,0,0,0,,,0
+A,claude-opus-4-7 bare,test_gen,easy,2,anthropic,False,True,1,8.372191190719604,695,563,0.01755,0,0,0,,,0
+B1,gemma4:e4b bare,test_gen,easy,0,ollama,False,False,1,62.030593156814575,511,1477,0.0,0,0,1,pytest: failures present,,1
+B1,gemma4:e4b bare,test_gen,easy,1,ollama,False,False,1,56.182318925857544,511,1477,0.0,0,0,1,pytest: failures present,,1
+B1,gemma4:e4b bare,test_gen,easy,2,ollama,False,False,1,56.21911025047302,511,1477,0.0,0,0,1,pytest: failures present,,1
+B2,gemma4:e4b + CZL,test_gen,easy,0,ollama,True,True,5,361.3552598953247,4006,9148,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,test_gen,easy,1,ollama,True,True,6,440.90302419662476,4914,10995,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,test_gen,easy,2,ollama,True,True,6,437.9591290950775,4914,10995,0.0,0,0,0,,,0
+C1,deepseek bare,test_gen,easy,0,deepseek,False,False,1,7.051241874694824,471,814,0.00026089000000000006,10,0,1,pytest: failures present,,1
+C1,deepseek bare,test_gen,easy,1,deepseek,False,False,1,5.910386085510254,471,634,0.00021049000000000003,1,0,1,pytest: failures present,,1
+C1,deepseek bare,test_gen,easy,2,deepseek,False,True,1,6.830607891082764,471,786,0.00025305,0,0,0,,,0
+C2,deepseek + CZL,test_gen,easy,0,deepseek,True,True,2,15.113833904266357,1184,1764,0.0005768,11,0,0,,,0
+C2,deepseek + CZL,test_gen,easy,1,deepseek,True,True,1,6.64000391960144,471,723,0.00023541000000000002,0,0,0,,,0
+C2,deepseek + CZL,test_gen,easy,2,deepseek,True,True,2,13.945591926574707,1183,1607,0.0005327700000000001,11,0,0,,,0
+D2,minimax + CZL,test_gen,easy,0,minimax,True,True,2,22.082016944885254,1294,2784,0.002486,1,0,0,,,0
+D2,minimax + CZL,test_gen,easy,1,minimax,True,True,4,42.137348890304565,2783,5346,0.0048334,1,0,0,,,0
+D2,minimax + CZL,test_gen,easy,2,minimax,True,True,7,64.79317378997803,5167,8483,0.0078198,1,0,0,,,0
+A,claude-opus-4-7 bare,test_gen,medium,0,anthropic,False,True,1,16.6089289188385,1009,1448,0.041245000000000004,2,0,0,,,0
+A,claude-opus-4-7 bare,test_gen,medium,1,anthropic,False,True,1,14.828977108001709,1009,1407,0.04022,2,0,0,,,0
+A,claude-opus-4-7 bare,test_gen,medium,2,anthropic,False,True,1,15.025110721588135,1009,1388,0.039744999999999996,1,0,0,,,0
+B1,gemma4:e4b bare,test_gen,medium,0,ollama,False,True,1,71.77161073684692,751,1802,0.0,2,1,0,,,0
+B1,gemma4:e4b bare,test_gen,medium,1,ollama,False,True,1,69.97351503372192,751,1802,0.0,2,1,0,,,0
+B1,gemma4:e4b bare,test_gen,medium,2,ollama,False,True,1,69.865553855896,751,1802,0.0,2,1,0,,,0
+B2,gemma4:e4b + CZL,test_gen,medium,0,ollama,True,True,1,71.09541392326355,751,1802,0.0,2,1,0,,,0
+B2,gemma4:e4b + CZL,test_gen,medium,1,ollama,True,True,1,73.10908102989197,751,1802,0.0,2,1,0,,,0
+B2,gemma4:e4b + CZL,test_gen,medium,2,ollama,True,True,1,71.4165358543396,751,1802,0.0,2,1,0,,,0
+C1,deepseek bare,test_gen,medium,0,deepseek,False,False,1,10.10719895362854,686,1130,0.00036442,1,0,1,pytest: failures present,,1
+C1,deepseek bare,test_gen,medium,1,deepseek,False,True,1,8.067223072052002,686,951,0.00031430000000000005,2,0,0,,,0
+C1,deepseek bare,test_gen,medium,2,deepseek,False,True,1,6.525697946548462,686,818,0.00027706000000000003,1,0,0,,,0
+C2,deepseek + CZL,test_gen,medium,0,deepseek,True,True,1,9.312343835830688,686,1112,0.00035938,2,0,0,,,0
+C2,deepseek + CZL,test_gen,medium,1,deepseek,True,True,1,9.055155992507935,686,1083,0.00035126000000000005,1,0,0,,,0
+C2,deepseek + CZL,test_gen,medium,2,deepseek,True,True,1,9.905602931976318,686,1101,0.00035630000000000004,2,0,0,,,0
+D2,minimax + CZL,test_gen,medium,0,minimax,True,True,2,23.935972929000854,1729,3159,0.002873,1,0,0,,,0
+D2,minimax + CZL,test_gen,medium,1,minimax,True,True,1,11.343768119812012,678,1510,0.0013436000000000001,2,0,0,,,0
+D2,minimax + CZL,test_gen,medium,2,minimax,True,True,1,16.456182956695557,678,2234,0.0019228000000000001,1,0,0,,,0
+A,claude-opus-4-7 bare,test_gen,hard,0,anthropic,False,False,1,19.359336853027344,1279,1377,0.040819999999999995,0,0,1,pytest: failures present,,1
+A,claude-opus-4-7 bare,test_gen,hard,1,anthropic,False,False,1,15.356918811798096,1279,1342,0.039945,0,0,1,pytest: failures present,,1
+A,claude-opus-4-7 bare,test_gen,hard,2,anthropic,False,False,1,15.314168930053711,1279,1415,0.04177,0,2,1,pytest: failures present,,1
+B1,gemma4:e4b bare,test_gen,hard,0,ollama,False,False,1,111.24297785758972,983,2703,0.0,2,0,1,pytest: failures present; no test_* functions found,,2
+B1,gemma4:e4b bare,test_gen,hard,1,ollama,False,False,1,108.62319207191467,983,2703,0.0,2,0,1,pytest: failures present; no test_* functions found,,2
+B1,gemma4:e4b bare,test_gen,hard,2,ollama,False,False,1,109.12215685844421,983,2703,0.0,2,0,1,pytest: failures present; no test_* functions found,,2
+B2,gemma4:e4b + CZL,test_gen,hard,0,ollama,True,False,8,894.3827540874481,10856,21304,0.0,2,0,8,did_not_converge_after_8_iterations: pytest: failures present; no test_* functions found,,2
+B2,gemma4:e4b + CZL,test_gen,hard,1,ollama,True,False,8,923.2232220172882,10856,21938,0.0,13,0,10,did_not_converge_after_8_iterations: pytest: failures present; no test_* functions found,,2
+B2,gemma4:e4b + CZL,test_gen,hard,2,ollama,True,False,8,898.1650168895721,10856,21304,0.0,2,0,8,did_not_converge_after_8_iterations: pytest: failures present; no test_* functions found,,2
+C1,deepseek bare,test_gen,hard,0,deepseek,False,False,1,8.754761934280396,870,1047,0.00035406000000000006,0,0,1,pytest: failures present; no test_* functions found,,2
+C1,deepseek bare,test_gen,hard,1,deepseek,False,False,1,8.452335834503174,870,1007,0.00034286000000000006,0,0,1,pytest: failures present; no test_* functions found,,2
+C1,deepseek bare,test_gen,hard,2,deepseek,False,False,1,8.37398099899292,870,1007,0.00034286000000000006,0,0,1,pytest: failures present; no test_* functions found,,2
+C2,deepseek + CZL,test_gen,hard,0,deepseek,True,False,8,58.96055889129639,9678,8197,0.00297262,2,0,1,did_not_converge_after_8_iterations: pytest: failures present; no test_* functions found,,2
+C2,deepseek + CZL,test_gen,hard,1,deepseek,True,False,8,74.48993992805481,8624,10543,0.00355572,0,0,0,did_not_converge_after_8_iterations: no test_* functions found,,1
+C2,deepseek + CZL,test_gen,hard,2,deepseek,True,False,8,67.63068795204163,7804,9680,0.0032566800000000005,2,0,0,did_not_converge_after_8_iterations: no test_* functions found,,1
+D2,minimax + CZL,test_gen,hard,0,minimax,True,True,8,111.15158486366272,8673,15148,0.013853000000000002,0,0,0,,,0
+D2,minimax + CZL,test_gen,hard,1,minimax,True,False,8,96.1628737449646,7878,13571,0.0124324,0,0,2,did_not_converge_after_8_iterations: pytest: failures present; no test_* functions found,,2
+D2,minimax + CZL,test_gen,hard,2,minimax,True,False,8,109.36738300323486,7612,15895,0.0142384,0,0,0,did_not_converge_after_8_iterations: no test_* functions found,,1

@@ -1,0 +1,1090 @@
+{
+  "n_trials": 162,
+  "n_cells": 9,
+  "n_arms": 6,
+  "tables": {
+    "1_convergence": {
+      "A": {
+        "bug_fix/easy": {
+          "converged": 3,
+          "total": 3
+        },
+        "bug_fix/hard": {
+          "converged": 3,
+          "total": 3
+        },
+        "bug_fix/medium": {
+          "converged": 3,
+          "total": 3
+        },
+        "lint_fix/easy": {
+          "converged": 3,
+          "total": 3
+        },
+        "lint_fix/hard": {
+          "converged": 0,
+          "total": 3
+        },
+        "lint_fix/medium": {
+          "converged": 3,
+          "total": 3
+        },
+        "test_gen/easy": {
+          "converged": 3,
+          "total": 3
+        },
+        "test_gen/hard": {
+          "converged": 0,
+          "total": 3
+        },
+        "test_gen/medium": {
+          "converged": 3,
+          "total": 3
+        }
+      },
+      "B1": {
+        "bug_fix/easy": {
+          "converged": 3,
+          "total": 3
+        },
+        "bug_fix/hard": {
+          "converged": 3,
+          "total": 3
+        },
+        "bug_fix/medium": {
+          "converged": 3,
+          "total": 3
+        },
+        "lint_fix/easy": {
+          "converged": 3,
+          "total": 3
+        },
+        "lint_fix/hard": {
+          "converged": 0,
+          "total": 3
+        },
+        "lint_fix/medium": {
+          "converged": 3,
+          "total": 3
+        },
+        "test_gen/easy": {
+          "converged": 0,
+          "total": 3
+        },
+        "test_gen/hard": {
+          "converged": 0,
+          "total": 3
+        },
+        "test_gen/medium": {
+          "converged": 3,
+          "total": 3
+        }
+      },
+      "B2": {
+        "bug_fix/easy": {
+          "converged": 3,
+          "total": 3
+        },
+        "bug_fix/hard": {
+          "converged": 0,
+          "total": 3
+        },
+        "bug_fix/medium": {
+          "converged": 3,
+          "total": 3
+        },
+        "lint_fix/easy": {
+          "converged": 3,
+          "total": 3
+        },
+        "lint_fix/hard": {
+          "converged": 0,
+          "total": 3
+        },
+        "lint_fix/medium": {
+          "converged": 3,
+          "total": 3
+        },
+        "test_gen/easy": {
+          "converged": 3,
+          "total": 3
+        },
+        "test_gen/hard": {
+          "converged": 0,
+          "total": 3
+        },
+        "test_gen/medium": {
+          "converged": 3,
+          "total": 3
+        }
+      },
+      "C1": {
+        "bug_fix/easy": {
+          "converged": 3,
+          "total": 3
+        },
+        "bug_fix/hard": {
+          "converged": 3,
+          "total": 3
+        },
+        "bug_fix/medium": {
+          "converged": 3,
+          "total": 3
+        },
+        "lint_fix/easy": {
+          "converged": 3,
+          "total": 3
+        },
+        "lint_fix/hard": {
+          "converged": 0,
+          "total": 3
+        },
+        "lint_fix/medium": {
+          "converged": 1,
+          "total": 3
+        },
+        "test_gen/easy": {
+          "converged": 1,
+          "total": 3
+        },
+        "test_gen/hard": {
+          "converged": 0,
+          "total": 3
+        },
+        "test_gen/medium": {
+          "converged": 2,
+          "total": 3
+        }
+      },
+      "C2": {
+        "bug_fix/easy": {
+          "converged": 3,
+          "total": 3
+        },
+        "bug_fix/hard": {
+          "converged": 0,
+          "total": 3
+        },
+        "bug_fix/medium": {
+          "converged": 3,
+          "total": 3
+        },
+        "lint_fix/easy": {
+          "converged": 3,
+          "total": 3
+        },
+        "lint_fix/hard": {
+          "converged": 0,
+          "total": 3
+        },
+        "lint_fix/medium": {
+          "converged": 3,
+          "total": 3
+        },
+        "test_gen/easy": {
+          "converged": 3,
+          "total": 3
+        },
+        "test_gen/hard": {
+          "converged": 0,
+          "total": 3
+        },
+        "test_gen/medium": {
+          "converged": 3,
+          "total": 3
+        }
+      },
+      "D2": {
+        "bug_fix/easy": {
+          "converged": 3,
+          "total": 3
+        },
+        "bug_fix/hard": {
+          "converged": 0,
+          "total": 3
+        },
+        "bug_fix/medium": {
+          "converged": 3,
+          "total": 3
+        },
+        "lint_fix/easy": {
+          "converged": 3,
+          "total": 3
+        },
+        "lint_fix/hard": {
+          "converged": 0,
+          "total": 3
+        },
+        "lint_fix/medium": {
+          "converged": 3,
+          "total": 3
+        },
+        "test_gen/easy": {
+          "converged": 3,
+          "total": 3
+        },
+        "test_gen/hard": {
+          "converged": 1,
+          "total": 3
+        },
+        "test_gen/medium": {
+          "converged": 3,
+          "total": 3
+        }
+      }
+    },
+    "2_cost": {
+      "bug_fix/easy": {
+        "means": {
+          "A": 0.0065316666666666665,
+          "B1": 0.0,
+          "B2": 0.0,
+          "C1": 6.314e-05,
+          "C2": 6.314e-05,
+          "D2": 0.0006045333333333334
+        },
+        "C2/A": 103.4473656424876,
+        "D2/A": 10.804477282752536
+      },
+      "bug_fix/hard": {
+        "means": {
+          "A": 0.02007,
+          "B1": 0.0,
+          "B2": 0.0,
+          "C1": 0.00017383333333333332,
+          "C2": 0.0,
+          "D2": 0.0
+        },
+        "C2/A": null,
+        "D2/A": null
+      },
+      "bug_fix/medium": {
+        "means": {
+          "A": 0.031193333333333333,
+          "B1": 0.0,
+          "B2": 0.0,
+          "C1": 0.00023443000000000002,
+          "C2": 0.0002531433333333333,
+          "D2": 0.0010618000000000001
+        },
+        "C2/A": 123.22399694507723,
+        "D2/A": 29.377786149306207
+      },
+      "lint_fix/easy": {
+        "means": {
+          "A": 0.006675,
+          "B1": 0.0,
+          "B2": 0.0,
+          "C1": 5.698e-05,
+          "C2": 5.698e-05,
+          "D2": 0.0005600666666666667
+        },
+        "C2/A": 117.14636714636715,
+        "D2/A": 11.918224020949888
+      },
+      "lint_fix/hard": {
+        "means": {
+          "A": 0.0,
+          "B1": 0.0,
+          "B2": 0.0,
+          "C1": 0.0,
+          "C2": 0.0,
+          "D2": 0.0
+        },
+        "C2/A": null,
+        "D2/A": null
+      },
+      "lint_fix/medium": {
+        "means": {
+          "A": 0.015921666666666667,
+          "B1": 0.0,
+          "B2": 0.0,
+          "C1": 0.00013517000000000002,
+          "C2": 0.00019583666666666668,
+          "D2": 0.0035613999999999997
+        },
+        "C2/A": 81.30074381712652,
+        "D2/A": 4.470620168098688
+      },
+      "test_gen/easy": {
+        "means": {
+          "A": 0.018558333333333333,
+          "B1": 0.0,
+          "B2": 0.0,
+          "C1": 0.00025305,
+          "C2": 0.0004483266666666667,
+          "D2": 0.0050463999999999995
+        },
+        "C2/A": 41.39466757870005,
+        "D2/A": 3.6775391037835554
+      },
+      "test_gen/hard": {
+        "means": {
+          "A": 0.0,
+          "B1": 0.0,
+          "B2": 0.0,
+          "C1": 0.0,
+          "C2": 0.0,
+          "D2": 0.013853000000000002
+        },
+        "C2/A": null,
+        "D2/A": 0.0
+      },
+      "test_gen/medium": {
+        "means": {
+          "A": 0.04040333333333333,
+          "B1": 0.0,
+          "B2": 0.0,
+          "C1": 0.00029568000000000004,
+          "C2": 0.0003556466666666667,
+          "D2": 0.0020464666666666666
+        },
+        "C2/A": 113.60526365118938,
+        "D2/A": 19.74297162589178
+      }
+    },
+    "3_walltime": {
+      "bug_fix/easy": {
+        "A": 5.318225383758545,
+        "B1": 27.263910055160522,
+        "B2": 24.718124707539875,
+        "C1": 3.2966655095418296,
+        "C2": 3.335920572280884,
+        "D2": 8.619938294092814
+      },
+      "bug_fix/hard": {
+        "A": 7.68270476659139,
+        "B1": 98.25676528612773,
+        "B2": 675.7728870709738,
+        "C1": 4.9792929490407305,
+        "C2": 31.99848731358846,
+        "D2": 70.13123114903767
+      },
+      "bug_fix/medium": {
+        "A": 15.574779351552328,
+        "B1": 111.76552573839824,
+        "B2": 110.56430729230244,
+        "C1": 7.558292865753174,
+        "C2": 7.169720649719238,
+        "D2": 11.931153297424316
+      },
+      "lint_fix/easy": {
+        "A": 4.850138584772746,
+        "B1": 40.56545074780782,
+        "B2": 37.56713366508484,
+        "C1": 2.884404023488363,
+        "C2": 2.899935801823934,
+        "D2": 7.43957765897115
+      },
+      "lint_fix/hard": {
+        "A": 12.608815987904867,
+        "B1": 131.1699494520823,
+        "B2": 982.3963950475057,
+        "C1": 6.563105980555217,
+        "C2": 65.90974672635396,
+        "D2": 515.4216759204865
+      },
+      "lint_fix/medium": {
+        "A": 6.3675375779469805,
+        "B1": 110.88677541414897,
+        "B2": 110.97209366162618,
+        "C1": 3.8489294052124023,
+        "C2": 5.148650566736857,
+        "D2": 39.69474411010742
+      },
+      "test_gen/easy": {
+        "A": 9.209345738093058,
+        "B1": 58.144007444381714,
+        "B2": 413.40580439567566,
+        "C1": 6.59741195042928,
+        "C2": 11.899809916814169,
+        "D2": 43.00417987505595
+      },
+      "test_gen/hard": {
+        "A": 16.67680819829305,
+        "B1": 109.66277559598286,
+        "B2": 905.2569976647695,
+        "C1": 8.527026255925497,
+        "C2": 67.02706225713094,
+        "D2": 105.56061387062073
+      },
+      "test_gen/medium": {
+        "A": 15.487672249476114,
+        "B1": 70.53689320882161,
+        "B2": 71.87367693583171,
+        "C1": 8.233373324076334,
+        "C2": 9.424367586771647,
+        "D2": 17.24530800183614
+      }
+    },
+    "4_ablation": {
+      "bug_fix/easy": {
+        "B1->B2": 0.0,
+        "C1->C2": 0.0
+      },
+      "bug_fix/hard": {
+        "B1->B2": -100.0,
+        "C1->C2": -100.0
+      },
+      "bug_fix/medium": {
+        "B1->B2": 0.0,
+        "C1->C2": 0.0
+      },
+      "lint_fix/easy": {
+        "B1->B2": 0.0,
+        "C1->C2": 0.0
+      },
+      "lint_fix/hard": {
+        "B1->B2": 0.0,
+        "C1->C2": 0.0
+      },
+      "lint_fix/medium": {
+        "B1->B2": 0.0,
+        "C1->C2": 66.66666666666667
+      },
+      "test_gen/easy": {
+        "B1->B2": 100.0,
+        "C1->C2": 66.66666666666667
+      },
+      "test_gen/hard": {
+        "B1->B2": 0.0,
+        "C1->C2": 0.0
+      },
+      "test_gen/medium": {
+        "B1->B2": 0.0,
+        "C1->C2": 33.333333333333336
+      }
+    },
+    "5_non_converged": {
+      "bug_fix/easy": {
+        "A": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "B1": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "B2": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "C1": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "C2": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "D2": {
+          "non_converged": 0,
+          "total": 3
+        }
+      },
+      "bug_fix/hard": {
+        "A": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "B1": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "B2": {
+          "non_converged": 3,
+          "total": 3
+        },
+        "C1": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "C2": {
+          "non_converged": 3,
+          "total": 3
+        },
+        "D2": {
+          "non_converged": 3,
+          "total": 3
+        }
+      },
+      "bug_fix/medium": {
+        "A": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "B1": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "B2": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "C1": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "C2": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "D2": {
+          "non_converged": 0,
+          "total": 3
+        }
+      },
+      "lint_fix/easy": {
+        "A": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "B1": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "B2": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "C1": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "C2": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "D2": {
+          "non_converged": 0,
+          "total": 3
+        }
+      },
+      "lint_fix/hard": {
+        "A": {
+          "non_converged": 3,
+          "total": 3
+        },
+        "B1": {
+          "non_converged": 3,
+          "total": 3
+        },
+        "B2": {
+          "non_converged": 3,
+          "total": 3
+        },
+        "C1": {
+          "non_converged": 3,
+          "total": 3
+        },
+        "C2": {
+          "non_converged": 3,
+          "total": 3
+        },
+        "D2": {
+          "non_converged": 3,
+          "total": 3
+        }
+      },
+      "lint_fix/medium": {
+        "A": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "B1": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "B2": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "C1": {
+          "non_converged": 2,
+          "total": 3
+        },
+        "C2": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "D2": {
+          "non_converged": 0,
+          "total": 3
+        }
+      },
+      "test_gen/easy": {
+        "A": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "B1": {
+          "non_converged": 3,
+          "total": 3
+        },
+        "B2": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "C1": {
+          "non_converged": 2,
+          "total": 3
+        },
+        "C2": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "D2": {
+          "non_converged": 0,
+          "total": 3
+        }
+      },
+      "test_gen/hard": {
+        "A": {
+          "non_converged": 3,
+          "total": 3
+        },
+        "B1": {
+          "non_converged": 3,
+          "total": 3
+        },
+        "B2": {
+          "non_converged": 3,
+          "total": 3
+        },
+        "C1": {
+          "non_converged": 3,
+          "total": 3
+        },
+        "C2": {
+          "non_converged": 3,
+          "total": 3
+        },
+        "D2": {
+          "non_converged": 2,
+          "total": 3
+        }
+      },
+      "test_gen/medium": {
+        "A": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "B1": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "B2": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "C1": {
+          "non_converged": 1,
+          "total": 3
+        },
+        "C2": {
+          "non_converged": 0,
+          "total": 3
+        },
+        "D2": {
+          "non_converged": 0,
+          "total": 3
+        }
+      }
+    },
+    "6_iterations": {
+      "bug_fix/easy": {
+        "B2": 1,
+        "C2": 1,
+        "D2": 1
+      },
+      "bug_fix/hard": {
+        "B2": 8,
+        "C2": 8,
+        "D2": 8
+      },
+      "bug_fix/medium": {
+        "B2": 1,
+        "C2": 1.3333333333333333,
+        "D2": 1
+      },
+      "lint_fix/easy": {
+        "B2": 1,
+        "C2": 1,
+        "D2": 1
+      },
+      "lint_fix/hard": {
+        "B2": 8,
+        "C2": 8,
+        "D2": 8
+      },
+      "lint_fix/medium": {
+        "B2": 1,
+        "C2": 1.6666666666666667,
+        "D2": 1.6666666666666667
+      },
+      "test_gen/easy": {
+        "B2": 5.666666666666667,
+        "C2": 1.6666666666666667,
+        "D2": 4.333333333333333
+      },
+      "test_gen/hard": {
+        "B2": 8,
+        "C2": 8,
+        "D2": 8
+      },
+      "test_gen/medium": {
+        "B2": 1,
+        "C2": 1,
+        "D2": 1.3333333333333333
+      }
+    },
+    "7_semantic_judge": {
+      "calls": 35,
+      "total_cost_usd": 0.14157300000000003,
+      "errors": [
+        "no converged A trial for lint_fix/hard \u2014 skipping cell",
+        "no converged A trial for test_gen/hard \u2014 skipping cell"
+      ],
+      "results": [
+        {
+          "scenario": "bug_fix",
+          "difficulty": "easy",
+          "arm": "B1",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.0015630000000000002,
+          "latency_seconds": 0.7320601940155029,
+          "error": null
+        },
+        {
+          "scenario": "bug_fix",
+          "difficulty": "easy",
+          "arm": "B2",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.0015630000000000002,
+          "latency_seconds": 0.9842078685760498,
+          "error": null
+        },
+        {
+          "scenario": "bug_fix",
+          "difficulty": "easy",
+          "arm": "C1",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.0015630000000000002,
+          "latency_seconds": 0.822969913482666,
+          "error": null
+        },
+        {
+          "scenario": "bug_fix",
+          "difficulty": "easy",
+          "arm": "C2",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.0015630000000000002,
+          "latency_seconds": 0.713554859161377,
+          "error": null
+        },
+        {
+          "scenario": "bug_fix",
+          "difficulty": "easy",
+          "arm": "D2",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.0015630000000000002,
+          "latency_seconds": 0.7161071300506592,
+          "error": null
+        },
+        {
+          "scenario": "bug_fix",
+          "difficulty": "hard",
+          "arm": "B1",
+          "score": 0.85,
+          "raw_response": "0.85",
+          "cost_usd": 0.004914,
+          "latency_seconds": 0.7403090000152588,
+          "error": null
+        },
+        {
+          "scenario": "bug_fix",
+          "difficulty": "hard",
+          "arm": "B2",
+          "score": null,
+          "reason": "did_not_converge"
+        },
+        {
+          "scenario": "bug_fix",
+          "difficulty": "hard",
+          "arm": "C1",
+          "score": 0.9,
+          "raw_response": "0.9",
+          "cost_usd": 0.00477,
+          "latency_seconds": 0.7961690425872803,
+          "error": null
+        },
+        {
+          "scenario": "bug_fix",
+          "difficulty": "hard",
+          "arm": "C2",
+          "score": null,
+          "reason": "did_not_converge"
+        },
+        {
+          "scenario": "bug_fix",
+          "difficulty": "hard",
+          "arm": "D2",
+          "score": null,
+          "reason": "did_not_converge"
+        },
+        {
+          "scenario": "bug_fix",
+          "difficulty": "medium",
+          "arm": "B1",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.004071,
+          "latency_seconds": 0.9214060306549072,
+          "error": null
+        },
+        {
+          "scenario": "bug_fix",
+          "difficulty": "medium",
+          "arm": "B2",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.004071,
+          "latency_seconds": 1.023853063583374,
+          "error": null
+        },
+        {
+          "scenario": "bug_fix",
+          "difficulty": "medium",
+          "arm": "C1",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.0039030000000000002,
+          "latency_seconds": 1.4358630180358887,
+          "error": null
+        },
+        {
+          "scenario": "bug_fix",
+          "difficulty": "medium",
+          "arm": "C2",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.0039030000000000002,
+          "latency_seconds": 1.001861810684204,
+          "error": null
+        },
+        {
+          "scenario": "bug_fix",
+          "difficulty": "medium",
+          "arm": "D2",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.0039030000000000002,
+          "latency_seconds": 0.8387577533721924,
+          "error": null
+        },
+        {
+          "scenario": "lint_fix",
+          "difficulty": "easy",
+          "arm": "B1",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.001641,
+          "latency_seconds": 2.2522759437561035,
+          "error": null
+        },
+        {
+          "scenario": "lint_fix",
+          "difficulty": "easy",
+          "arm": "B2",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.001641,
+          "latency_seconds": 2.458888053894043,
+          "error": null
+        },
+        {
+          "scenario": "lint_fix",
+          "difficulty": "easy",
+          "arm": "C1",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.001641,
+          "latency_seconds": 0.7146060466766357,
+          "error": null
+        },
+        {
+          "scenario": "lint_fix",
+          "difficulty": "easy",
+          "arm": "C2",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.001641,
+          "latency_seconds": 0.8203341960906982,
+          "error": null
+        },
+        {
+          "scenario": "lint_fix",
+          "difficulty": "easy",
+          "arm": "D2",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.001641,
+          "latency_seconds": 1.4334678649902344,
+          "error": null
+        },
+        {
+          "scenario": "lint_fix",
+          "difficulty": "medium",
+          "arm": "B1",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.004551,
+          "latency_seconds": 1.023841142654419,
+          "error": null
+        },
+        {
+          "scenario": "lint_fix",
+          "difficulty": "medium",
+          "arm": "B2",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.004551,
+          "latency_seconds": 1.49949312210083,
+          "error": null
+        },
+        {
+          "scenario": "lint_fix",
+          "difficulty": "medium",
+          "arm": "C1",
+          "score": 0.6,
+          "raw_response": "0.6",
+          "cost_usd": 0.004554,
+          "latency_seconds": 1.0952517986297607,
+          "error": null
+        },
+        {
+          "scenario": "lint_fix",
+          "difficulty": "medium",
+          "arm": "C2",
+          "score": 1.0,
+          "raw_response": "\u6211\u6765\u5206\u6790\u4e24\u4e2a\u5b9e\u73b0\u7684\u5dee\u5f02\uff1a\n\n1. **list_utils",
+          "cost_usd": 0.004749,
+          "latency_seconds": 1.1265699863433838,
+          "error": null
+        },
+        {
+          "scenario": "lint_fix",
+          "difficulty": "medium",
+          "arm": "D2",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.00453,
+          "latency_seconds": 0.9927487373352051,
+          "error": null
+        },
+        {
+          "scenario": "test_gen",
+          "difficulty": "easy",
+          "arm": "B1",
+          "score": null,
+          "reason": "did_not_converge"
+        },
+        {
+          "scenario": "test_gen",
+          "difficulty": "easy",
+          "arm": "B2",
+          "score": 0.9,
+          "raw_response": "0.9",
+          "cost_usd": 0.00513,
+          "latency_seconds": 1.1309289932250977,
+          "error": null
+        },
+        {
+          "scenario": "test_gen",
+          "difficulty": "easy",
+          "arm": "C1",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.005529,
+          "latency_seconds": 1.0135278701782227,
+          "error": null
+        },
+        {
+          "scenario": "test_gen",
+          "difficulty": "easy",
+          "arm": "C2",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.005901,
+          "latency_seconds": 1.125805139541626,
+          "error": null
+        },
+        {
+          "scenario": "test_gen",
+          "difficulty": "easy",
+          "arm": "D2",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.0058260000000000004,
+          "latency_seconds": 0.8315427303314209,
+          "error": null
+        },
+        {
+          "scenario": "test_gen",
+          "difficulty": "medium",
+          "arm": "B1",
+          "score": 0.85,
+          "raw_response": "0.85",
+          "cost_usd": 0.010169999999999998,
+          "latency_seconds": 1.5274670124053955,
+          "error": null
+        },
+        {
+          "scenario": "test_gen",
+          "difficulty": "medium",
+          "arm": "B2",
+          "score": 0.85,
+          "raw_response": "0.85",
+          "cost_usd": 0.010169999999999998,
+          "latency_seconds": 0.9180757999420166,
+          "error": null
+        },
+        {
+          "scenario": "test_gen",
+          "difficulty": "medium",
+          "arm": "C1",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.009935999999999999,
+          "latency_seconds": 0.92183518409729,
+          "error": null
+        },
+        {
+          "scenario": "test_gen",
+          "difficulty": "medium",
+          "arm": "C2",
+          "score": 1.0,
+          "raw_response": "1.0",
+          "cost_usd": 0.010509,
+          "latency_seconds": 1.845163106918335,
+          "error": null
+        },
+        {
+          "scenario": "test_gen",
+          "difficulty": "medium",
+          "arm": "D2",
+          "score": 0.9,
+          "raw_response": "0.9",
+          "cost_usd": 0.009911999999999999,
+          "latency_seconds": 1.2295889854431152,
+          "error": null
+        }
+      ]
+    }
+  }
+}
