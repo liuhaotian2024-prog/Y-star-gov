@@ -3,27 +3,33 @@
 
 # === data_ops.py ===
 from collections import defaultdict
-from typing import Any, Callable, Dict, Hashable, Iterable, List, Optional, Set, TypeVar, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Protocol, Sequence, Set, TypeVar, Union
 
-K = TypeVar('K')
-V = TypeVar('V')
-T = TypeVar('T')
+K = TypeVar("K")
+V = TypeVar("V")
+T = TypeVar("T")
+T_co = TypeVar("T_co", covariant=True)
+S = TypeVar("S", bound="_SupportsGT")
+
+
+class _SupportsGT(Protocol):
+    def __gt__(self, other: Any) -> bool: ...
 
 
 class Cache:
     def __init__(self) -> None:
-        self._store: Dict[Hashable, Any] = {}
+        self._store: Dict[Any, Any] = {}
 
-    def get(self, key: Hashable, default: Any = None) -> Any:
+    def get(self, key: Any, default: Any = None) -> Any:
         return self._store.get(key, default)
 
-    def put(self, key: Hashable, value: Any) -> None:
+    def put(self, key: Any, value: Any) -> None:
         self._store[key] = value
 
-    def remove(self, key: Hashable) -> Optional[Any]:
+    def remove(self, key: Any) -> Any:
         return self._store.pop(key, None)
 
-    def keys(self) -> List[Hashable]:
+    def keys(self) -> List[Any]:
         return list(self._store.keys())
 
 
@@ -50,7 +56,7 @@ def group_by(items: Iterable[T], key_fn: Callable[[T], K]) -> Dict[K, List[T]]:
     return dict(groups)
 
 
-def first_or_none(items: List[T]) -> Optional[T]:
+def first_or_none(items: Sequence[T]) -> Optional[T]:
     return items[0] if items else None
 
 
@@ -73,7 +79,7 @@ def safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
-def chunked(items: List[T], size: int) -> List[List[T]]:
+def chunked(items: Sequence[T], size: int) -> List[Sequence[T]]:
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
@@ -91,12 +97,12 @@ def histogram(items: Iterable[T]) -> Dict[T, int]:
     return counts
 
 
-def best_by(items: Iterable[T], score_fn: Callable[[T], float]) -> Optional[T]:
+def best_by(items: Iterable[T], score_fn: Callable[[T], S]) -> Optional[T]:
     best: Optional[T] = None
-    best_score: Optional[float] = None
+    best_score: Optional[S] = None
     for x in items:
         score = score_fn(x)
-        if best is None or best_score is None or score > best_score:
+        if best is None or (best_score is not None and score > best_score):
             best = x
             best_score = score
     return best

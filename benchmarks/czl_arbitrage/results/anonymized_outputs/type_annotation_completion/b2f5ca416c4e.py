@@ -3,9 +3,9 @@
 
 # === data_ops.py ===
 from collections import defaultdict
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, TypeVar, Union
+from typing import Any, Callable, Dict, Hashable, Iterable, Iterator, List, Optional, Sequence, Tuple, TypeVar, Union
 
-K = TypeVar("K")
+K = TypeVar("K", bound=Hashable)
 V = TypeVar("V")
 T = TypeVar("T")
 S = TypeVar("S")
@@ -13,18 +13,18 @@ S = TypeVar("S")
 
 class Cache:
     def __init__(self) -> None:
-        self._store: Dict[str, Any] = {}
+        self._store: Dict[Hashable, Any] = {}
 
-    def get(self, key: str, default: Any = None) -> Any:
+    def get(self, key: Hashable, default: Any = None) -> Any:
         return self._store.get(key, default)
 
-    def put(self, key: str, value: Any) -> None:
+    def put(self, key: Hashable, value: Any) -> None:
         self._store[key] = value
 
-    def remove(self, key: str) -> Any:
+    def remove(self, key: Hashable) -> Any:
         return self._store.pop(key, None)
 
-    def keys(self) -> List[str]:
+    def keys(self) -> List[Hashable]:
         return list(self._store.keys())
 
 
@@ -84,8 +84,8 @@ def flatten(nested: Iterable[Iterable[T]]) -> List[T]:
     return out
 
 
-def histogram(items: Iterable[T]) -> Dict[T, int]:
-    counts: Dict[T, int] = {}
+def histogram(items: Iterable[Hashable]) -> Dict[Hashable, int]:
+    counts: Dict[Hashable, int] = {}
     for x in items:
         counts[x] = counts.get(x, 0) + 1
     return counts
@@ -93,10 +93,10 @@ def histogram(items: Iterable[T]) -> Dict[T, int]:
 
 def best_by(items: Iterable[T], score_fn: Callable[[T], float]) -> Optional[T]:
     best: Optional[T] = None
-    best_score: Optional[float] = None
+    best_score: float = float('-inf')
     for x in items:
         score = score_fn(x)
-        if best is None or (best_score is not None and score > best_score):
+        if best is None or score > best_score:
             best = x
             best_score = score
     return best

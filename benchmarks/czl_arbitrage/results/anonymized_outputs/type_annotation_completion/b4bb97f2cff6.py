@@ -8,7 +8,6 @@ from typing import Any, Callable, Hashable, Iterable, Optional, TypeVar
 T = TypeVar("T")
 K = TypeVar("K", bound=Hashable)
 H = TypeVar("H", bound=Hashable)
-S = TypeVar("S")
 
 
 class Cache:
@@ -28,8 +27,8 @@ class Cache:
         return list(self._store.keys())
 
 
-def normalize_record(row: dict[K, Any]) -> dict[K, Any]:
-    out: dict[K, Any] = {}
+def normalize_record(row: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
     for k, v in row.items():
         if isinstance(v, str):
             out[k] = v.strip().lower()
@@ -45,7 +44,7 @@ def merge_dicts(a: dict[K, T], b: dict[K, T]) -> dict[K, T]:
 
 
 def group_by(items: Iterable[T], key_fn: Callable[[T], K]) -> dict[K, list[T]]:
-    groups: dict[K, list[T]] = defaultdict(list)
+    groups: defaultdict[K, list[T]] = defaultdict(list)
     for item in items:
         groups[key_fn(item)].append(item)
     return dict(groups)

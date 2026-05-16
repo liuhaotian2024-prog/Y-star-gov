@@ -3,11 +3,11 @@
 
 # === data_ops.py ===
 from collections import defaultdict
-from typing import Any, Callable, Dict, Generic, Iterable, List, Optional, TypeVar
+from typing import Any, Callable, Dict, Generic, Iterable, List, Optional, TypeVar, Union
 
-K = TypeVar('K')
-V = TypeVar('V')
-T = TypeVar('T')
+K = TypeVar("K")
+V = TypeVar("V")
+T = TypeVar("T")
 
 
 class Cache(Generic[K, V]):
@@ -37,20 +37,20 @@ def normalize_record(row: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def merge_dicts(a: Dict[K, V], b: Dict[K, V]) -> Dict[K, V]:
+def merge_dicts(a: Dict[str, V], b: Dict[str, V]) -> Dict[str, V]:
     result = dict(a)
     result.update(b)
     return result
 
 
 def group_by(items: Iterable[T], key_fn: Callable[[T], K]) -> Dict[K, List[T]]:
-    groups = defaultdict(list)
+    groups: Dict[K, List[T]] = defaultdict(list)
     for item in items:
         groups[key_fn(item)].append(item)
     return dict(groups)
 
 
-def first_or_none(items: List[T]) -> Optional[T]:
+def first_or_none(items: List[Optional[T]]) -> Optional[T]:
     return items[0] if items else None
 
 
@@ -62,7 +62,8 @@ def find_one(items: Iterable[T], predicate: Callable[[T], bool]) -> Optional[T]:
 
 
 def filter_keys(d: Dict[K, V], allowed: Iterable[K]) -> Dict[K, V]:
-    return {k: v for k, v in d.items() if k in allowed}
+    allowed_set = set(allowed)
+    return {k: v for k, v in d.items() if k in allowed_set}
 
 
 def safe_int(value: Any, default: int = 0) -> int:
@@ -76,8 +77,8 @@ def chunked(items: List[T], size: int) -> List[List[T]]:
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
-def flatten(nested: List[List[T]]) -> List[T]:
-    out = []
+def flatten(nested: Iterable[Iterable[T]]) -> List[T]:
+    out: List[T] = []
     for sub in nested:
         out.extend(sub)
     return out
@@ -90,12 +91,12 @@ def histogram(items: Iterable[T]) -> Dict[T, int]:
     return counts
 
 
-def best_by(items: Iterable[T], score_fn: Callable[[T], Any]) -> Optional[T]:
-    best = None
-    best_score = None
+def best_by(items: Iterable[T], score_fn: Callable[[T], float]) -> Optional[T]:
+    best: Optional[T] = None
+    best_score: Optional[float] = None
     for x in items:
         score = score_fn(x)
-        if best is None or score > best_score:
+        if best is None or score > best_score:  # type: ignore[operator]
             best = x
             best_score = score
     return best

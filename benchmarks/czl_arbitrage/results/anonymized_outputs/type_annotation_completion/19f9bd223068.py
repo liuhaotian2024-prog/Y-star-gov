@@ -7,7 +7,6 @@ from typing import Any, Callable, Hashable, Iterable, Optional, TypeVar
 
 T = TypeVar("T")
 K = TypeVar("K", bound=Hashable)
-V = TypeVar("V")
 H = TypeVar("H", bound=Hashable)
 S = TypeVar("S")
 
@@ -39,7 +38,7 @@ def normalize_record(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def merge_dicts(a: dict[K, V], b: dict[K, V]) -> dict[K, V]:
+def merge_dicts(a: dict[K, T], b: dict[K, T]) -> dict[K, T]:
     result = dict(a)
     result.update(b)
     return result
@@ -63,7 +62,7 @@ def find_one(items: Iterable[T], predicate: Callable[[T], bool]) -> Optional[T]:
     return None
 
 
-def filter_keys(d: dict[K, V], allowed: Iterable[K]) -> dict[K, V]:
+def filter_keys(d: dict[K, T], allowed: Iterable[K]) -> dict[K, T]:
     return {k: v for k, v in d.items() if k in allowed}
 
 

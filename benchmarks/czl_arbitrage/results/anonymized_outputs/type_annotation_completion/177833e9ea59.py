@@ -91,9 +91,9 @@ def histogram(items: Iterable[T]) -> Dict[T, int]:
     return counts
 
 
-def best_by(items: Iterable[T], score_fn: Callable[[T], float]) -> Optional[T]:
+def best_by(items: Iterable[T], score_fn: Callable[[T], V]) -> Optional[T]:
     best: Optional[T] = None
-    best_score: Optional[float] = None
+    best_score: Optional[V] = None
     for x in items:
         score = score_fn(x)
         if best is None or score > best_score:

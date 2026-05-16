@@ -3,20 +3,12 @@
 
 # === data_ops.py ===
 from collections import defaultdict
-from typing import Any, Callable, Hashable, Iterable, Optional, Protocol, TypeVar
+from typing import Any, Callable, Hashable, Iterable, Optional, TypeVar
 
-
-K = TypeVar("K")
-V = TypeVar("V")
 T = TypeVar("T")
+K = TypeVar("K", bound=Hashable)
 H = TypeVar("H", bound=Hashable)
-
-
-class _Comparable(Protocol):
-    def __gt__(self, other: Any, /) -> bool: ...
-
-
-C = TypeVar("C", bound=_Comparable)
+S = TypeVar("S")
 
 
 class Cache:
@@ -36,8 +28,8 @@ class Cache:
         return list(self._store.keys())
 
 
-def normalize_record(row: dict[K, Any]) -> dict[K, Any]:
-    out: dict[K, Any] = {}
+def normalize_record(row: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
     for k, v in row.items():
         if isinstance(v, str):
             out[k] = v.strip().lower()
@@ -46,14 +38,14 @@ def normalize_record(row: dict[K, Any]) -> dict[K, Any]:
     return out
 
 
-def merge_dicts(a: dict[K, V], b: dict[K, V]) -> dict[K, V]:
+def merge_dicts(a: dict[K, T], b: dict[K, T]) -> dict[K, T]:
     result = dict(a)
     result.update(b)
     return result
 
 
-def group_by(items: Iterable[T], key_fn: Callable[[T], H]) -> dict[H, list[T]]:
-    groups: defaultdict[H, list[T]] = defaultdict(list)
+def group_by(items: Iterable[T], key_fn: Callable[[T], K]) -> dict[K, list[T]]:
+    groups: defaultdict[K, list[T]] = defaultdict(list)
     for item in items:
         groups[key_fn(item)].append(item)
     return dict(groups)
@@ -70,8 +62,9 @@ def find_one(items: Iterable[T], predicate: Callable[[T], bool]) -> Optional[T]:
     return None
 
 
-def filter_keys(d: dict[K, V], allowed: Iterable[K]) -> dict[K, V]:
-    return {k: v for k, v in d.items() if k in allowed}
+def filter_keys(d: dict[K, T], allowed: Iterable[K]) -> dict[K, T]:
+    allowed_set = set(allowed)
+    return {k: v for k, v in d.items() if k in allowed_set}
 
 
 def safe_int(value: Any, default: int = 0) -> int:
@@ -99,12 +92,12 @@ def histogram(items: Iterable[H]) -> dict[H, int]:
     return counts
 
 
-def best_by(items: Iterable[T], score_fn: Callable[[T], C]) -> Optional[T]:
+def best_by(items: Iterable[T], score_fn: Callable[[T], Any]) -> Optional[T]:
     best: Optional[T] = None
-    best_score: Optional[C] = None
+    best_score: Any = None
     for x in items:
         score = score_fn(x)
-        if best_score is None or score > best_score:
+        if best is None or score > best_score:
             best = x
             best_score = score
     return best

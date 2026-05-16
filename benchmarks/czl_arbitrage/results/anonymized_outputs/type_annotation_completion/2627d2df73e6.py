@@ -3,16 +3,19 @@
 
 # === data_ops.py ===
 from collections import defaultdict
-from typing import Any, Callable, Hashable, Iterable, Optional, TypeVar
+from typing import Any, Callable, Dict, Hashable, Iterable, List, Optional, Sequence, TypeVar
+
 
 T = TypeVar("T")
 K = TypeVar("K", bound=Hashable)
+V = TypeVar("V")
 H = TypeVar("H", bound=Hashable)
+S = TypeVar("S")
 
 
 class Cache:
     def __init__(self) -> None:
-        self._store: dict[Any, Any] = {}
+        self._store: Dict[Any, Any] = {}
 
     def get(self, key: Any, default: Any = None) -> Any:
         return self._store.get(key, default)
@@ -23,12 +26,12 @@ class Cache:
     def remove(self, key: Any) -> Any:
         return self._store.pop(key, None)
 
-    def keys(self) -> list[Any]:
+    def keys(self) -> List[Any]:
         return list(self._store.keys())
 
 
-def normalize_record(row: dict[str, Any]) -> dict[str, Any]:
-    out: dict[str, Any] = {}
+def normalize_record(row: Dict[K, Any]) -> Dict[K, Any]:
+    out: Dict[K, Any] = {}
     for k, v in row.items():
         if isinstance(v, str):
             out[k] = v.strip().lower()
@@ -37,20 +40,20 @@ def normalize_record(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def merge_dicts(a: dict[K, T], b: dict[K, T]) -> dict[K, T]:
+def merge_dicts(a: Dict[K, V], b: Dict[K, V]) -> Dict[K, V]:
     result = dict(a)
     result.update(b)
     return result
 
 
-def group_by(items: Iterable[T], key_fn: Callable[[T], K]) -> dict[K, list[T]]:
-    groups: defaultdict[K, list[T]] = defaultdict(list)
+def group_by(items: Iterable[T], key_fn: Callable[[T], K]) -> Dict[K, List[T]]:
+    groups: "defaultdict[K, List[T]]" = defaultdict(list)
     for item in items:
         groups[key_fn(item)].append(item)
     return dict(groups)
 
 
-def first_or_none(items: list[T]) -> Optional[T]:
+def first_or_none(items: Sequence[T]) -> Optional[T]:
     return items[0] if items else None
 
 
@@ -61,7 +64,7 @@ def find_one(items: Iterable[T], predicate: Callable[[T], bool]) -> Optional[T]:
     return None
 
 
-def filter_keys(d: dict[K, T], allowed: Iterable[K]) -> dict[K, T]:
+def filter_keys(d: Dict[K, V], allowed: Iterable[K]) -> Dict[K, V]:
     allowed_set = set(allowed)
     return {k: v for k, v in d.items() if k in allowed_set}
 
@@ -73,30 +76,30 @@ def safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
-def chunked(items: list[T], size: int) -> list[list[T]]:
+def chunked(items: Sequence[T], size: int) -> List[Sequence[T]]:
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
-def flatten(nested: Iterable[Iterable[T]]) -> list[T]:
-    out: list[T] = []
+def flatten(nested: Iterable[Iterable[T]]) -> List[T]:
+    out: List[T] = []
     for sub in nested:
         out.extend(sub)
     return out
 
 
-def histogram(items: Iterable[H]) -> dict[H, int]:
-    counts: dict[H, int] = {}
+def histogram(items: Iterable[H]) -> Dict[H, int]:
+    counts: Dict[H, int] = {}
     for x in items:
         counts[x] = counts.get(x, 0) + 1
     return counts
 
 
-def best_by(items: Iterable[T], score_fn: Callable[[T], Any]) -> Optional[T]:
+def best_by(items: Iterable[T], score_fn: Callable[[T], S]) -> Optional[T]:
     best: Optional[T] = None
-    best_score: Any = None
+    best_score: Optional[S] = None
     for x in items:
         score = score_fn(x)
-        if best is None or score > best_score:
+        if best is None or score > best_score:  # type: ignore[operator]
             best = x
             best_score = score
     return best

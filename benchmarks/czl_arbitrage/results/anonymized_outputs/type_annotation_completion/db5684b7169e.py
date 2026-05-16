@@ -6,9 +6,9 @@ from collections import defaultdict
 from typing import Any, Callable, Hashable, Iterable, Optional, TypeVar
 
 
-T = TypeVar("T")
-K = TypeVar("K", bound=Hashable)
+K = TypeVar("K")
 V = TypeVar("V")
+T = TypeVar("T")
 H = TypeVar("H", bound=Hashable)
 S = TypeVar("S")
 
@@ -30,11 +30,11 @@ class Cache:
         return list(self._store.keys())
 
 
-def normalize_record(row: dict[K, Any]) -> dict[K, Any]:
-    out: dict[K, Any] = {}
+def normalize_record(row: dict[K, V]) -> dict[K, V]:
+    out: dict[K, V] = {}
     for k, v in row.items():
         if isinstance(v, str):
-            out[k] = v.strip().lower()
+            out[k] = v.strip().lower()  # type: ignore[assignment]
         else:
             out[k] = v
     return out
@@ -46,8 +46,8 @@ def merge_dicts(a: dict[K, V], b: dict[K, V]) -> dict[K, V]:
     return result
 
 
-def group_by(items: Iterable[T], key_fn: Callable[[T], K]) -> dict[K, list[T]]:
-    groups: defaultdict[K, list[T]] = defaultdict(list)
+def group_by(items: Iterable[T], key_fn: Callable[[T], H]) -> dict[H, list[T]]:
+    groups: defaultdict[H, list[T]] = defaultdict(list)
     for item in items:
         groups[key_fn(item)].append(item)
     return dict(groups)

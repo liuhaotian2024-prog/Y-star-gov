@@ -5,31 +5,31 @@
 from collections import defaultdict
 from typing import Any, Callable, Dict, Hashable, Iterable, Iterator, List, Optional, Sequence, Tuple, TypeVar, Union
 
+T = TypeVar("T")
 K = TypeVar("K", bound=Hashable)
 V = TypeVar("V")
-T = TypeVar("T")
-S = TypeVar("S")
+R = TypeVar("R")
 
 
 class Cache:
     def __init__(self) -> None:
-        self._store: Dict[Hashable, Any] = {}
+        self._store: Dict[Any, Any] = {}
 
-    def get(self, key: Hashable, default: Any = None) -> Any:
+    def get(self, key: Any, default: Any = None) -> Any:
         return self._store.get(key, default)
 
-    def put(self, key: Hashable, value: Any) -> None:
+    def put(self, key: Any, value: Any) -> None:
         self._store[key] = value
 
-    def remove(self, key: Hashable) -> Any:
+    def remove(self, key: Any) -> Any:
         return self._store.pop(key, None)
 
-    def keys(self) -> List[Hashable]:
+    def keys(self) -> List[Any]:
         return list(self._store.keys())
 
 
-def normalize_record(row: Dict[K, Any]) -> Dict[K, Any]:
-    out: Dict[K, Any] = {}
+def normalize_record(row: Dict[Any, Any]) -> Dict[Any, Any]:
+    out: Dict[Any, Any] = {}
     for k, v in row.items():
         if isinstance(v, str):
             out[k] = v.strip().lower()

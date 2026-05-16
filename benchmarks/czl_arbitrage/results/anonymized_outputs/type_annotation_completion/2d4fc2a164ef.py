@@ -3,39 +3,37 @@
 
 # === data_ops.py ===
 from collections import defaultdict
-from typing import Any, Callable, Dict, Hashable, Iterable, Iterator, List, Optional, Protocol, Sequence, Tuple, TypeVar, Union
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Protocol, Sequence, TypeVar, Union
 
-K = TypeVar("K", bound=Hashable)
+K = TypeVar("K")
 V = TypeVar("V")
 T = TypeVar("T")
+R = TypeVar("R", bound="Comparable")
 
 
 class Comparable(Protocol):
     def __gt__(self, other: Any) -> bool: ...
 
 
-R = TypeVar("R", bound=Comparable)
-
-
 class Cache:
     def __init__(self) -> None:
-        self._store: Dict[Any, Any] = {}
+        self._store: Dict[str, Any] = {}
 
-    def get(self, key: Any, default: Any = None) -> Any:
+    def get(self, key: str, default: Any = None) -> Any:
         return self._store.get(key, default)
 
-    def put(self, key: Any, value: Any) -> None:
+    def put(self, key: str, value: Any) -> None:
         self._store[key] = value
 
-    def remove(self, key: Any) -> Any:
+    def remove(self, key: str) -> Any:
         return self._store.pop(key, None)
 
-    def keys(self) -> List[Any]:
+    def keys(self) -> List[str]:
         return list(self._store.keys())
 
 
-def normalize_record(row: Dict[Any, Any]) -> Dict[Any, Any]:
-    out: Dict[Any, Any] = {}
+def normalize_record(row: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
     for k, v in row.items():
         if isinstance(v, str):
             out[k] = v.strip().lower()
@@ -90,8 +88,8 @@ def flatten(nested: Iterable[Iterable[T]]) -> List[T]:
     return out
 
 
-def histogram(items: Iterable[Hashable]) -> Dict[Hashable, int]:
-    counts: Dict[Hashable, int] = {}
+def histogram(items: Iterable[T]) -> Dict[T, int]:
+    counts: Dict[T, int] = {}
     for x in items:
         counts[x] = counts.get(x, 0) + 1
     return counts
@@ -102,7 +100,7 @@ def best_by(items: Iterable[T], score_fn: Callable[[T], R]) -> Optional[T]:
     best_score: Optional[R] = None
     for x in items:
         score = score_fn(x)
-        if best is None or score > best_score:
+        if best is None or (best_score is None or score > best_score):
             best = x
             best_score = score
     return best

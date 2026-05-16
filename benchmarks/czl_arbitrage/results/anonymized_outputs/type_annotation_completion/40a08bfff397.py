@@ -3,18 +3,11 @@
 
 # === data_ops.py ===
 from collections import defaultdict
-from typing import TypeVar, Dict, List, Any, Callable, Optional, Iterable, Set, Generic, Protocol
+from typing import TypeVar, Generic, Callable, Iterable, Optional, Dict, List, Any
 
 K = TypeVar('K')
 V = TypeVar('V')
 T = TypeVar('T')
-
-
-class SupportsDunderGT(Protocol):
-    def __gt__(self, other: Any) -> bool: ...
-
-
-R = TypeVar('R', bound='SupportsDunderGT')
 
 
 class Cache(Generic[K, V]):
@@ -69,8 +62,7 @@ def find_one(items: Iterable[T], predicate: Callable[[T], bool]) -> Optional[T]:
 
 
 def filter_keys(d: Dict[K, V], allowed: Iterable[K]) -> Dict[K, V]:
-    allowed_set: Set[K] = set(allowed)
-    return {k: v for k, v in d.items() if k in allowed_set}
+    return {k: v for k, v in d.items() if k in allowed}
 
 
 def safe_int(value: Any, default: int = 0) -> int:
@@ -98,12 +90,12 @@ def histogram(items: Iterable[T]) -> Dict[T, int]:
     return counts
 
 
-def best_by(items: Iterable[T], score_fn: Callable[[T], R]) -> Optional[T]:
+def best_by(items: Iterable[T], score_fn: Callable[[T], float]) -> Optional[T]:
     best: Optional[T] = None
-    best_score: Optional[R] = None
+    best_score: Optional[float] = None
     for x in items:
         score = score_fn(x)
-        if best is None or (best_score is not None and score > best_score):
+        if best is None or best_score is None or score > best_score:
             best = x
             best_score = score
     return best

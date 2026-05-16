@@ -3,33 +3,33 @@
 
 # === data_ops.py ===
 from collections import defaultdict
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, TypeVar, Union
+from typing import Any, Callable, Dict, Hashable, Iterable, Iterator, List, Optional, Sequence, Tuple, TypeVar, Union
 
-K = TypeVar("K")
-V = TypeVar("V")
 T = TypeVar("T")
-S = TypeVar("S")
+K = TypeVar("K", bound=Hashable)
+V = TypeVar("V")
+R = TypeVar("R")
 
 
 class Cache:
     def __init__(self) -> None:
-        self._store: Dict[str, Any] = {}
+        self._store: Dict[Any, Any] = {}
 
-    def get(self, key: str, default: Any = None) -> Any:
+    def get(self, key: Any, default: Any = None) -> Any:
         return self._store.get(key, default)
 
-    def put(self, key: str, value: Any) -> None:
+    def put(self, key: Any, value: Any) -> None:
         self._store[key] = value
 
-    def remove(self, key: str) -> Any:
+    def remove(self, key: Any) -> Any:
         return self._store.pop(key, None)
 
-    def keys(self) -> List[str]:
+    def keys(self) -> List[Any]:
         return list(self._store.keys())
 
 
-def normalize_record(row: Dict[str, Any]) -> Dict[str, Any]:
-    out: Dict[str, Any] = {}
+def normalize_record(row: Dict[Any, Any]) -> Dict[Any, Any]:
+    out: Dict[Any, Any] = {}
     for k, v in row.items():
         if isinstance(v, str):
             out[k] = v.strip().lower()
@@ -84,16 +84,16 @@ def flatten(nested: Iterable[Iterable[T]]) -> List[T]:
     return out
 
 
-def histogram(items: Iterable[T]) -> Dict[T, int]:
-    counts: Dict[T, int] = {}
+def histogram(items: Iterable[Hashable]) -> Dict[Hashable, int]:
+    counts: Dict[Hashable, int] = {}
     for x in items:
         counts[x] = counts.get(x, 0) + 1
     return counts
 
 
-def best_by(items: Iterable[T], score_fn: Callable[[T], S]) -> Optional[T]:
+def best_by(items: Iterable[T], score_fn: Callable[[T], R]) -> Optional[T]:
     best: Optional[T] = None
-    best_score: Optional[S] = None
+    best_score: Optional[R] = None
     for x in items:
         score = score_fn(x)
         if best is None or score > best_score:

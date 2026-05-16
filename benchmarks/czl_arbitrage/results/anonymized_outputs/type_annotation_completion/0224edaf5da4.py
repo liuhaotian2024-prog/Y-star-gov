@@ -10,6 +10,7 @@ K = TypeVar("K", bound=Hashable)
 V = TypeVar("V")
 T = TypeVar("T")
 H = TypeVar("H", bound=Hashable)
+S = TypeVar("S")
 
 
 class Cache:

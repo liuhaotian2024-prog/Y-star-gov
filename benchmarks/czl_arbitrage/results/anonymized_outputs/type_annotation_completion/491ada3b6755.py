@@ -13,23 +13,23 @@ S = TypeVar("S")
 
 class Cache:
     def __init__(self) -> None:
-        self._store: Dict[str, Any] = {}
+        self._store: Dict[Any, Any] = {}
 
-    def get(self, key: str, default: Any = None) -> Any:
+    def get(self, key: Any, default: Any = None) -> Any:
         return self._store.get(key, default)
 
-    def put(self, key: str, value: Any) -> None:
+    def put(self, key: Any, value: Any) -> None:
         self._store[key] = value
 
-    def remove(self, key: str) -> Any:
+    def remove(self, key: Any) -> Any:
         return self._store.pop(key, None)
 
-    def keys(self) -> List[str]:
+    def keys(self) -> List[Any]:
         return list(self._store.keys())
 
 
-def normalize_record(row: Dict[str, Any]) -> Dict[str, Any]:
-    out: Dict[str, Any] = {}
+def normalize_record(row: Dict[Any, Any]) -> Dict[Any, Any]:
+    out: Dict[Any, Any] = {}
     for k, v in row.items():
         if isinstance(v, str):
             out[k] = v.strip().lower()
@@ -91,9 +91,9 @@ def histogram(items: Iterable[T]) -> Dict[T, int]:
     return counts
 
 
-def best_by(items: Iterable[T], score_fn: Callable[[T], float]) -> Optional[T]:
+def best_by(items: Iterable[T], score_fn: Callable[[T], V]) -> Optional[T]:
     best: Optional[T] = None
-    best_score: Optional[float] = None
+    best_score: Optional[V] = None
     for x in items:
         score = score_fn(x)
         if best is None or score > best_score:

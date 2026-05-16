@@ -3,13 +3,19 @@
 
 # === data_ops.py ===
 from collections import defaultdict
-from typing import Any, Callable, Hashable, Iterable, Optional, TypeVar
+from typing import Any, Callable, Iterable, Optional, Protocol, TypeVar
 
 T = TypeVar("T")
-K = TypeVar("K", bound=Hashable)
+K = TypeVar("K")
 V = TypeVar("V")
-H = TypeVar("H", bound=Hashable)
-S = TypeVar("S")
+H = TypeVar("H", bound=object)
+
+
+class _Comparable(Protocol):
+    def __gt__(self, other: Any, /) -> bool: ...
+
+
+S = TypeVar("S", bound=_Comparable)
 
 
 class Cache:
@@ -29,8 +35,8 @@ class Cache:
         return list(self._store.keys())
 
 
-def normalize_record(row: dict[str, Any]) -> dict[str, Any]:
-    out: dict[str, Any] = {}
+def normalize_record(row: dict[K, Any]) -> dict[K, Any]:
+    out: dict[K, Any] = {}
     for k, v in row.items():
         if isinstance(v, str):
             out[k] = v.strip().lower()
@@ -93,12 +99,12 @@ def histogram(items: Iterable[H]) -> dict[H, int]:
     return counts
 
 
-def best_by(items: Iterable[T], score_fn: Callable[[T], Any]) -> Optional[T]:
+def best_by(items: Iterable[T], score_fn: Callable[[T], S]) -> Optional[T]:
     best: Optional[T] = None
-    best_score: Any = None
+    best_score: Optional[S] = None
     for x in items:
         score = score_fn(x)
-        if best is None or score > best_score:
+        if best_score is None or score > best_score:
             best = x
             best_score = score
     return best

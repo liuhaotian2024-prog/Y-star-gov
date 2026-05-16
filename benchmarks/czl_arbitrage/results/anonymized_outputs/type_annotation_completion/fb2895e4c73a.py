@@ -3,12 +3,12 @@
 
 # === data_ops.py ===
 from collections import defaultdict
-from typing import Any, Callable, Dict, Hashable, Iterable, Iterator, List, Optional, Sequence, Tuple, TypeVar, Union
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, TypeVar, Union
 
-K = TypeVar("K", bound=Hashable)
+K = TypeVar("K")
 V = TypeVar("V")
 T = TypeVar("T")
-R = TypeVar("R")
+S = TypeVar("S")
 
 
 class Cache:
@@ -28,8 +28,8 @@ class Cache:
         return list(self._store.keys())
 
 
-def normalize_record(row: Dict[K, Any]) -> Dict[K, Any]:
-    out: Dict[K, Any] = {}
+def normalize_record(row: Dict[Any, Any]) -> Dict[Any, Any]:
+    out: Dict[Any, Any] = {}
     for k, v in row.items():
         if isinstance(v, str):
             out[k] = v.strip().lower()
@@ -84,19 +84,19 @@ def flatten(nested: Iterable[Iterable[T]]) -> List[T]:
     return out
 
 
-def histogram(items: Iterable[Hashable]) -> Dict[Hashable, int]:
-    counts: Dict[Hashable, int] = {}
+def histogram(items: Iterable[T]) -> Dict[T, int]:
+    counts: Dict[T, int] = {}
     for x in items:
         counts[x] = counts.get(x, 0) + 1
     return counts
 
 
-def best_by(items: Iterable[T], score_fn: Callable[[T], float]) -> Optional[T]:
+def best_by(items: Iterable[T], score_fn: Callable[[T], V]) -> Optional[T]:
     best: Optional[T] = None
-    best_score: Optional[float] = None
+    best_score: Optional[V] = None
     for x in items:
         score = score_fn(x)
-        if best is None or (best_score is not None and score > best_score):
+        if best_score is None or score > best_score:
             best = x
             best_score = score
     return best
