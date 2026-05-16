@@ -547,6 +547,16 @@ def main():
             )
             futures[fut] = t
 
+        # Track per-scenario completion to trigger early reports.
+        scenario_done_count: Dict[str, int] = {s: 0 for s in scenarios}
+        emitted_for_scenario: set = set()
+        # Pre-populate count from resume-skip records.
+        for r in already:
+            scn = r.get("scenario")
+            if scn in scenario_done_count:
+                scenario_done_count[scn] += 1
+        target_per_scenario = len(arms) * args.trials
+
         completed = 0
         total = len(futures)
         t_bench_start = time.time()
@@ -578,6 +588,25 @@ def main():
             )
             if rec is not None:
                 all_records.append(rec)
+                scn = rec.get("scenario") or task["scenario"]
+                scenario_done_count[scn] = scenario_done_count.get(scn, 0) + 1
+                # Early per-scenario report when 35/35 lands. Best-effort:
+                # if it fails (e.g. judge API down) we log and continue —
+                # do NOT halt the bench because reporting tripped.
+                if scenario_done_count[scn] >= target_per_scenario and scn not in emitted_for_scenario:
+                    emitted_for_scenario.add(scn)
+                    try:
+                        from benchmarks.czl_arbitrage.incremental_report import (
+                            emit_per_scenario_report as _emit_ps, emit_per_scenario_cieu as _emit_cieu,
+                        )
+                        scn_records = [r for r in all_records if r.get("scenario") == scn]
+                        print(f"[bench] scenario {scn} reached {target_per_scenario}/{target_per_scenario}; "
+                              f"emitting incremental report inline", flush=True)
+                        paths = _emit_ps(scn, scn_records, args.out, ts)
+                        _emit_cieu(scn, scn_records, paths["qa_obj"])
+                    except Exception as exc:
+                        print(f"[bench] WARN: inline scenario report for {scn} failed: "
+                              f"{type(exc).__name__}: {exc}", flush=True)
 
         for pool in pools.values():
             pool.shutdown(wait=True)

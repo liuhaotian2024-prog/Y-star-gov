@@ -1,0 +1,99 @@
+{
+  "scenario": "cross_file_refactor",
+  "n_records": 35,
+  "objective_means_by_arm": {
+    "A2": {
+      "cyclomatic_complexity_avg": 1,
+      "duplicated_lines_pct": 25.0,
+      "mypy_strict_type_coverage_pct": 100.0
+    },
+    "A": {
+      "cyclomatic_complexity_avg": 1,
+      "duplicated_lines_pct": 25.0,
+      "mypy_strict_type_coverage_pct": 100.0
+    },
+    "B2": {
+      "cyclomatic_complexity_avg": 1,
+      "duplicated_lines_pct": 25.0,
+      "mypy_strict_type_coverage_pct": 100.0
+    },
+    "C2": {
+      "cyclomatic_complexity_avg": 1,
+      "duplicated_lines_pct": 25.0,
+      "mypy_strict_type_coverage_pct": 100.0
+    },
+    "D2": {
+      "cyclomatic_complexity_avg": 1,
+      "duplicated_lines_pct": 25.52,
+      "mypy_strict_type_coverage_pct": 100.0
+    }
+  },
+  "four_dim_judge": [
+    {
+      "arm": "B1",
+      "scores": null,
+      "reason": "did_not_converge"
+    },
+    {
+      "arm": "B2",
+      "scores": {
+        "functional_equivalence": 1.0,
+        "readability_delta": -0.1,
+        "style_conformance": 0.95,
+        "defensive_quality": 1.0
+      },
+      "raw_response": "{\"functional_equivalence\": 1.0, \"readability_delta\": -0.1, \"style_conformance\": 0.95, \"defensive_quality\": 1.0}",
+      "cost_usd": 0.003885,
+      "latency_seconds": 1.5189051628112793,
+      "error": null
+    },
+    {
+      "arm": "C1",
+      "scores": null,
+      "reason": "did_not_converge"
+    },
+    {
+      "arm": "C2",
+      "scores": {
+        "functional_equivalence": 1.0,
+        "readability_delta": -0.1,
+        "style_conformance": 0.95,
+        "defensive_quality": 1.0
+      },
+      "raw_response": "{\"functional_equivalence\": 1.0, \"readability_delta\": -0.1, \"style_conformance\": 0.95, \"defensive_quality\": 1.0}",
+      "cost_usd": 0.003906,
+      "latency_seconds": 1.5959548950195312,
+      "error": null
+    },
+    {
+      "arm": "D2",
+      "scores": {
+        "functional_equivalence": 1.0,
+        "readability_delta": 0.0,
+        "style_conformance": 0.98,
+        "defensive_quality": 1.0
+      },
+      "raw_response": "{\"functional_equivalence\": 1.0, \"readability_delta\": 0.0, \"style_conformance\": 0.98, \"defensive_quality\": 1.0}",
+      "cost_usd": 0.003876,
+      "latency_seconds": 1.622169017791748,
+      "error": null
+    }
+  ],
+  "a_vs_a2_judge": {
+    "scores": {
+      "hallucinated_completeness_A": 0.0,
+      "hallucinated_completeness_A2": 0.0,
+      "silent_omission_count_A": 0,
+      "silent_omission_count_A2": 0,
+      "over_engineering_score_A": 0.0,
+      "over_engineering_score_A2": 0.0,
+      "notes": "Task\u63cf\u8ff0\u4e3a\u7a7a\uff0c\u65e0\u6cd5\u8bc6\u522b\u5177\u4f53\u5b50\u9700\u6c42\uff1b\u4e24\u4e2a\u8f93\u51fa\u51e0\u4e4e\u5b8c\u5168\u76f8\u540c\uff0c\u552f\u4e00\u5dee\u5f02\u662futils/old_api.py\u7684docstring\u63aa\u8f9e\uff08A\u7528'replaces the previous deprecated name'\uff0cA2\u7528'is the canonical name'\uff09\uff0c\u5747\u65e0\u6cd5\u5224\u65ad\u662f\u5426\u5b58\u5728\u5e7b\u89c9\u5b8c\u6210\u6216\u9057\u6f0f\u3002"
+    },
+    "raw_response": "```json\n{\n  \"hallucinated_completeness_A\": 0.0,\n  \"hallucinated_completeness_A2\": 0.0,\n  \"silent_omission_count_A\": 0,\n  \"silent_omission_count_A2\": 0,\n  \"over_engineering_score_A\": 0.0,\n  \"over_engineering_score_A2\": 0.0,\n  \"notes\": \"Task\u63cf\u8ff0\u4e3a\u7a7a\uff0c\u65e0\u6cd5\u8bc6\u522b\u5177\u4f53\u5b50\u9700\u6c42\uff1b\u4e24\u4e2a\u8f93\u51fa\u51e0\u4e4e\u5b8c\u5168\u76f8\u540c\uff0c\u552f\u4e00\u5dee\u5f02\u662futils/old_api.py\u7684docstring\u63aa\u8f9e\uff08A\u7528'replaces the previous deprecated name'\uff0cA2\u7528'is the canonical name'\uff09\uff0c\u5747\u65e0\u6cd5\u5224\u65ad\u662f\u5426\u5b58\u5728\u5e7b\u89c9\u5b8c\u6210\u6216\u9057\u6f0f\u3002\"\n}\n```",
+    "cost_usd": 0.006765,
+    "latency_seconds": 3.6841647624969482,
+    "error": null
+  },
+  "n_anonymized": 35,
+  "total_judge_cost_usd": 0.0184
+}
