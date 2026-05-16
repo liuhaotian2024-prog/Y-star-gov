@@ -1,0 +1,25 @@
+{
+  "arm": "B2",
+  "arm_label": "gemma4:e4b + CZL",
+  "scenario": "test_gen",
+  "difficulty": "easy",
+  "trial": 0,
+  "backend": "ollama",
+  "use_czl": true,
+  "converged": true,
+  "iterations": 5,
+  "wall_clock_seconds": 361.3552598953247,
+  "input_tokens": 4006,
+  "output_tokens": 9148,
+  "cost_usd": 0.0,
+  "final_ruff_errors": 0,
+  "final_mypy_errors": 0,
+  "final_pytest_failures": 0,
+  "failure_reason": "",
+  "post_state_files": {
+    "test_stringkit.py": "import pytest\nfrom stringkit import reverse, count_vowels, title_case, starts_with_vowel\n\n# ==============================================================================\n# Test reverse(s: str)\n# ==============================================================================\n\n@pytest.mark.parametrize(\"input_str, expected_output\", [\n    (\"hello\", \"olleh\"),\n    (\"Python\", \"nohtyP\"),\n    (\"racecar\", \"racecar\"),\n    (\"a\", \"a\"),\n    (\"\", \"\"),\n    (\"MixedCase\", \"esaCdexiM\"),  # FIX: Corrected expected output for MixedCase\n])\ndef test_reverse_normal_cases(input_str, expected_output):\n    \"\"\"Tests basic and edge cases for string reversal.\"\"\"\n    assert reverse(input_str) == expected_output\n\n# ==============================================================================\n# Test count_vowels(text: str)\n# ==============================================================================\n\n@pytest.mark.parametrize(\"text, expected_count\", [\n    (\"Hello World\", 3),  # e, o, o\n    (\"aeiouAEIOU\", 10),\n    (\"rhythm\", 0),\n    (\"\", 0),\n    (\"A B C D E\", 2),  # FIX: Corrected expected count (A and E)\n    (\"Vowels are fun\", 5), # o, e, a, e, u\n    (\"PYTHON\", 1), # O\n])\ndef test_count_vowels_various_inputs(text, expected_count):\n    \"\"\"Tests counting vowels in various strings, handling case and non-alphabetic chars.\"\"\"\n    assert count_vowels(text) == expected_count\n\n# ==============================================================================\n# Test title_case(text: str)\n# ==============================================================================\n\n@pytest.mark.parametrize(\"input_text, expected_output\", [\n    (\"hello world test\", \"Hello World Test\"),\n    (\"a simple sentence\", \"A Simple Sentence\"),\n    (\"alllowercase\", \"Alllowercase\"),\n    (\"MiXeDcaSe\", \"Mixedcase\"), # Note: title_case capitalizes the first letter of each word, but leaves subsequent letters as they were in the original word structure if they were already capitalized, but since we split and capitalize, it should be fully capitalized except for the first letter.\n    (\"singleword\", \"Singleword\"),\n    (\"\", \"\"),\n    (\"   leading spaces\", \"Leading Spaces\"), # Handles multiple spaces\n    (\"trailing spaces   \", \"Trailing Spaces\"),\n])\ndef test_title_case_various_inputs(input_text, expected_output):\n    \"\"\"Tests title casing functionality, handling spacing and capitalization.\"\"\"\n    assert title_case(input_text) == expected_output\n\n# ==============================================================================\n# Test starts_with_vowel(word: str)\n# ==============================================================================\n\n@pytest.mark.parametrize(\"word, expected\", [\n    (\"apple\", True),\n    (\"orange\", True),\n    (\"banana\", False),\n    (\"rhythm\", False),\n    (\"A\", True),\n    (\"z\", False),\n    (\"\", False), # Edge case: empty string\n    (\"aeiou\", True),\n    (\"BCDEFGHI\", False),\n])\ndef test_starts_with_vowel_various_inputs(word, expected):\n    \"\"\"Tests if a word starts with a vowel (case insensitive).\"\"\"\n    assert starts_with_vowel(word) == expected\n",
+    "stringkit.py": "def reverse(s: str) -> str:\n    return s[::-1]\n\n\ndef count_vowels(text: str) -> int:\n    return sum(1 for c in text.lower() if c in 'aeiou')\n\n\ndef title_case(text: str) -> str:\n    return ' '.join(w.capitalize() for w in text.split())\n\n\ndef starts_with_vowel(word: str) -> bool:\n    return bool(word) and word[0].lower() in 'aeiou'\n"
+  },
+  "semantic_correctness_score": null,
+  "final_invariant_violations": 0
+}

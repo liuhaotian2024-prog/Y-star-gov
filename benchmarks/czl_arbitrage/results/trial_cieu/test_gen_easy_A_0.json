@@ -1,0 +1,25 @@
+{
+  "arm": "A",
+  "arm_label": "claude-opus-4-7 bare",
+  "scenario": "test_gen",
+  "difficulty": "easy",
+  "trial": 0,
+  "backend": "anthropic",
+  "use_czl": false,
+  "converged": true,
+  "iterations": 1,
+  "wall_clock_seconds": 9.665373086929321,
+  "input_tokens": 695,
+  "output_tokens": 558,
+  "cost_usd": 0.017425,
+  "final_ruff_errors": 0,
+  "final_mypy_errors": 0,
+  "final_pytest_failures": 0,
+  "failure_reason": "",
+  "post_state_files": {
+    "test_stringkit.py": "import pytest\n\nfrom stringkit import reverse, count_vowels, title_case, starts_with_vowel\n\n\n@pytest.mark.parametrize(\"s,expected\", [\n    (\"\", \"\"),\n    (\"a\", \"a\"),\n    (\"hello\", \"olleh\"),\n    (\"ab cd\", \"dc ba\"),\n    (\"racecar\", \"racecar\"),\n])\ndef test_reverse(s, expected):\n    assert reverse(s) == expected\n\n\n@pytest.mark.parametrize(\"text,expected\", [\n    (\"\", 0),\n    (\"bcdfg\", 0),\n    (\"aeiou\", 5),\n    (\"AEIOU\", 5),\n    (\"Hello World\", 3),\n    (\"Python\", 1),\n])\ndef test_count_vowels(text, expected):\n    assert count_vowels(text) == expected\n\n\n@pytest.mark.parametrize(\"text,expected\", [\n    (\"\", \"\"),\n    (\"hello world\", \"Hello World\"),\n    (\"HELLO WORLD\", \"Hello World\"),\n    (\"python is fun\", \"Python Is Fun\"),\n    (\"  spaced   out  \", \"Spaced Out\"),\n    (\"a\", \"A\"),\n])\ndef test_title_case(text, expected):\n    assert title_case(text) == expected\n\n\n@pytest.mark.parametrize(\"word,expected\", [\n    (\"apple\", True),\n    (\"Orange\", True),\n    (\"ELEPHANT\", True),\n    (\"banana\", False),\n    (\"Xylophone\", False),\n    (\"\", False),\n    (\"u\", True),\n    (\"y\", False),\n])\ndef test_starts_with_vowel(word, expected):\n    assert starts_with_vowel(word) is expected\n",
+    "stringkit.py": "def reverse(s: str) -> str:\n    return s[::-1]\n\n\ndef count_vowels(text: str) -> int:\n    return sum(1 for c in text.lower() if c in 'aeiou')\n\n\ndef title_case(text: str) -> str:\n    return ' '.join(w.capitalize() for w in text.split())\n\n\ndef starts_with_vowel(word: str) -> bool:\n    return bool(word) and word[0].lower() in 'aeiou'\n"
+  },
+  "semantic_correctness_score": null,
+  "final_invariant_violations": 0
+}

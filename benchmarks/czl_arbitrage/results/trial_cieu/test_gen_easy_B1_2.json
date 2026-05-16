@@ -1,0 +1,25 @@
+{
+  "arm": "B1",
+  "arm_label": "gemma4:e4b bare",
+  "scenario": "test_gen",
+  "difficulty": "easy",
+  "trial": 2,
+  "backend": "ollama",
+  "use_czl": false,
+  "converged": false,
+  "iterations": 1,
+  "wall_clock_seconds": 56.21911025047302,
+  "input_tokens": 511,
+  "output_tokens": 1477,
+  "cost_usd": 0.0,
+  "final_ruff_errors": 0,
+  "final_mypy_errors": 0,
+  "final_pytest_failures": 1,
+  "failure_reason": "pytest: failures present",
+  "post_state_files": {
+    "test_stringkit.py": "import pytest\nfrom stringkit import reverse, count_vowels, title_case, starts_with_vowel\n\n# ==============================================================================\n# Test reverse(s: str)\n# ==============================================================================\n\n@pytest.mark.parametrize(\"input_str, expected_output\", [\n    (\"hello\", \"olleh\"),\n    (\"python\", \"nohtyp\"),\n    (\"racecar\", \"racecar\"),  # Palindrome\n    (\"a\", \"a\"),               # Single character\n    (\"\", \"\"),                 # Empty string\n    (\"12345\", \"54321\"),       # Numbers\n    (\"MixedCase\", \"esaCekciM\"), # Mixed case\n])\ndef test_reverse_normal_cases(input_str, expected_output):\n    \"\"\"Tests the reverse function with various inputs.\"\"\"\n    assert reverse(input_str) == expected_output\n\n# ==============================================================================\n# Test count_vowels(text: str)\n# ==============================================================================\n\n@pytest.mark.parametrize(\"text, expected_count\", [\n    (\"hello world\", 3),  # e, o, o\n    (\"aeiouAEIOU\", 10),   # All vowels, mixed case\n    (\"rhythm\", 0),        # No vowels\n    (\"Apple Pie\", 4),     # A, e, i, e\n    (\"Programming\", 3),  # o, a, i\n    (\"\", 0),              # Empty string\n    (\"Vowels are fun\", 5), # o, e, a, e, u\n])\ndef test_count_vowels_various_inputs(text, expected_count):\n    \"\"\"Tests the count_vowels function with different inputs.\"\"\"\n    assert count_vowels(text) == expected_count\n\n# ==============================================================================\n# Test title_case(text: str)\n# ==============================================================================\n\n@pytest.mark.parametrize(\"input_text, expected_output\", [\n    (\"hello world test\", \"Hello World Test\"), # Normal case\n    (\"a single word\", \"A Single Word\"),       # Single word\n    (\"already Title Case\", \"Already Title Case\"), # Already correct\n    (\"  leading and trailing spaces  \", \"Leading And Trailing Spaces\"), # Spacing handling\n    (\"multiple   spaces here\", \"Multiple Spaces Here\"), # Multiple spaces\n    (\"\", \"\"),                                  # Empty string\n    (\"---\", \"---\")                            # Non-alphabetic characters (treated as single word)\n])\ndef test_title_case_various_inputs(input_text, expected_output):\n    \"\"\"Tests the title_case function.\"\"\"\n    assert title_case(input_text) == expected_output\n\n# ==============================================================================\n# Test starts_with_vowel(word: str)\n# ==============================================================================\n\n@pytest.mark.parametrize(\"word, expected_result\", [\n    (\"apple\", True),      # Starts with vowel (a)\n    (\"Orange\", True),     # Mixed case vowel start\n    (\"banana\", False),    # Starts with consonant (b)\n    (\"rhythm\", False),    # Starts with consonant (r)\n    (\"A\", True),          # Single character vowel\n    (\"B\", False),         # Single character consonant\n    (\"\", False),          # Empty string (Edge case)\n    (\"123\", False),       # Starts with non-letter (Edge case)\n])\ndef test_starts_with_vowel_various_inputs(word, expected_result):\n    \"\"\"Tests the starts_with_vowel function.\"\"\"\n    assert starts_with_vowel(word) == expected_result\n",
+    "stringkit.py": "def reverse(s: str) -> str:\n    return s[::-1]\n\n\ndef count_vowels(text: str) -> int:\n    return sum(1 for c in text.lower() if c in 'aeiou')\n\n\ndef title_case(text: str) -> str:\n    return ' '.join(w.capitalize() for w in text.split())\n\n\ndef starts_with_vowel(word: str) -> bool:\n    return bool(word) and word[0].lower() in 'aeiou'\n"
+  },
+  "semantic_correctness_score": null,
+  "final_invariant_violations": 1
+}

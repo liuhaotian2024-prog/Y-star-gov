@@ -1,0 +1,25 @@
+{
+  "arm": "A",
+  "arm_label": "claude-opus-4-7 bare",
+  "scenario": "test_gen",
+  "difficulty": "easy",
+  "trial": 1,
+  "backend": "anthropic",
+  "use_czl": false,
+  "converged": true,
+  "iterations": 1,
+  "wall_clock_seconds": 9.590472936630249,
+  "input_tokens": 695,
+  "output_tokens": 689,
+  "cost_usd": 0.0207,
+  "final_ruff_errors": 0,
+  "final_mypy_errors": 0,
+  "final_pytest_failures": 0,
+  "failure_reason": "",
+  "post_state_files": {
+    "test_stringkit.py": "import pytest\nfrom stringkit import reverse, count_vowels, title_case, starts_with_vowel\n\n\n@pytest.mark.parametrize(\"s,expected\", [\n    (\"hello\", \"olleh\"),\n    (\"\", \"\"),\n    (\"a\", \"a\"),\n    (\"ab\", \"ba\"),\n    (\"racecar\", \"racecar\"),\n    (\"12345\", \"54321\"),\n    (\"Hello World\", \"dlroW olleH\"),\n])\ndef test_reverse(s, expected):\n    assert reverse(s) == expected\n\n\n@pytest.mark.parametrize(\"text,expected\", [\n    (\"hello\", 2),\n    (\"\", 0),\n    (\"HELLO\", 2),\n    (\"aeiou\", 5),\n    (\"AEIOU\", 5),\n    (\"bcdfg\", 0),\n    (\"Python is fun\", 3),\n    (\"y\", 0),\n])\ndef test_count_vowels(text, expected):\n    assert count_vowels(text) == expected\n\n\n@pytest.mark.parametrize(\"text,expected\", [\n    (\"hello world\", \"Hello World\"),\n    (\"\", \"\"),\n    (\"python\", \"Python\"),\n    (\"HELLO WORLD\", \"Hello World\"),\n    (\"hello   world\", \"Hello World\"),\n    (\"  leading\", \"Leading\"),\n    (\"a b c\", \"A B C\"),\n])\ndef test_title_case(text, expected):\n    assert title_case(text) == expected\n\n\n@pytest.mark.parametrize(\"word,expected\", [\n    (\"apple\", True),\n    (\"orange\", True),\n    (\"Apple\", True),\n    (\"Umbrella\", True),\n    (\"banana\", False),\n    (\"\", False),\n    (\"xyz\", False),\n    (\"I\", True),\n    (\"e\", True),\n    (\"z\", False),\n])\ndef test_starts_with_vowel(word, expected):\n    assert starts_with_vowel(word) is expected\n\n\ndef test_starts_with_vowel_empty_returns_false():\n    assert starts_with_vowel(\"\") is False\n\n\ndef test_reverse_unicode():\n    assert reverse(\"caf\u00e9\") == \"\u00e9fac\"\n",
+    "stringkit.py": "def reverse(s: str) -> str:\n    return s[::-1]\n\n\ndef count_vowels(text: str) -> int:\n    return sum(1 for c in text.lower() if c in 'aeiou')\n\n\ndef title_case(text: str) -> str:\n    return ' '.join(w.capitalize() for w in text.split())\n\n\ndef starts_with_vowel(word: str) -> bool:\n    return bool(word) and word[0].lower() in 'aeiou'\n"
+  },
+  "semantic_correctness_score": null,
+  "final_invariant_violations": 0
+}
