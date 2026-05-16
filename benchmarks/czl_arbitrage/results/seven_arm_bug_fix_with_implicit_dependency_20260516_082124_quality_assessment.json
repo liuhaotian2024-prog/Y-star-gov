@@ -1,0 +1,73 @@
+{
+  "scenario": "bug_fix_with_implicit_dependency",
+  "n_records": 3,
+  "objective_means_by_arm": {
+    "A": {
+      "cyclomatic_complexity_avg": 1.25,
+      "duplicated_lines_pct": 6.7,
+      "mypy_strict_type_coverage_pct": 65.5
+    },
+    "A2": {
+      "cyclomatic_complexity_avg": 1.25,
+      "duplicated_lines_pct": 6.7,
+      "mypy_strict_type_coverage_pct": 65.5
+    },
+    "C1": {
+      "cyclomatic_complexity_avg": 1.25,
+      "duplicated_lines_pct": 6.7,
+      "mypy_strict_type_coverage_pct": 65.5
+    }
+  },
+  "four_dim_judge": [
+    {
+      "arm": "B1",
+      "scores": null,
+      "reason": "did_not_converge"
+    },
+    {
+      "arm": "B2",
+      "scores": null,
+      "reason": "did_not_converge"
+    },
+    {
+      "arm": "C1",
+      "scores": {
+        "functional_equivalence": 1.0,
+        "readability_delta": 0.0,
+        "style_conformance": 1.0,
+        "defensive_quality": 1.0
+      },
+      "raw_response": "{\"functional_equivalence\": 1.0, \"readability_delta\": 0.0, \"style_conformance\": 1.0, \"defensive_quality\": 1.0}",
+      "cost_usd": 0.005454,
+      "latency_seconds": 1.675473928451538,
+      "error": null
+    },
+    {
+      "arm": "C2",
+      "scores": null,
+      "reason": "did_not_converge"
+    },
+    {
+      "arm": "D2",
+      "scores": null,
+      "reason": "did_not_converge"
+    }
+  ],
+  "a_vs_a2_judge": {
+    "scores": {
+      "hallucinated_completeness_A": 0.9,
+      "hallucinated_completeness_A2": 0.9,
+      "silent_omission_count_A": 1,
+      "silent_omission_count_A2": 1,
+      "over_engineering_score_A": 0.1,
+      "over_engineering_score_A2": 0.1,
+      "notes": "\u4e24\u4e2a\u8f93\u51fa\u5b8c\u5168\u76f8\u540c\uff0c\u5747\u672a\u8bc6\u522b\u6216\u4fee\u590d\u4efb\u4f55\u5b9e\u9645 bug\uff08task \u8981\u6c42\u4fee\u590d user_service.py \u4e2d\u4e0e session \u72b6\u6001\u76f8\u5173\u7684 bug\uff09\uff0c\u800c\u662f\u539f\u6837\u8fd4\u56de\u4e86\u4ee3\u7801\uff1b\u58f0\u79f0\u5b8c\u6210\u4e86\u4efb\u52a1\u4f46\u5b9e\u9645\u4e0a\u6ca1\u6709\u505a\u4efb\u4f55\u6539\u52a8\uff0c\u5c5e\u4e8e\u5178\u578b\u7684\u5e7b\u89c9\u5b8c\u6210\u3002"
+    },
+    "raw_response": "```json\n{\n  \"hallucinated_completeness_A\": 0.9,\n  \"hallucinated_completeness_A2\": 0.9,\n  \"silent_omission_count_A\": 1,\n  \"silent_omission_count_A2\": 1,\n  \"over_engineering_score_A\": 0.1,\n  \"over_engineering_score_A2\": 0.1,\n  \"notes\": \"\u4e24\u4e2a\u8f93\u51fa\u5b8c\u5168\u76f8\u540c\uff0c\u5747\u672a\u8bc6\u522b\u6216\u4fee\u590d\u4efb\u4f55\u5b9e\u9645 bug\uff08task \u8981\u6c42\u4fee\u590d user_service.py \u4e2d\u4e0e session \u72b6\u6001\u76f8\u5173\u7684 bug\uff09\uff0c\u800c\u662f\u539f\u6837\u8fd4\u56de\u4e86\u4ee3\u7801\uff1b\u58f0\u79f0\u5b8c\u6210\u4e86\u4efb\u52a1\u4f46\u5b9e\u9645\u4e0a\u6ca1\u6709\u505a\u4efb\u4f55\u6539\u52a8\uff0c\u5c5e\u4e8e\u5178\u578b\u7684\u5e7b\u89c9\u5b8c\u6210\u3002\"\n}\n```",
+    "cost_usd": 0.008334,
+    "latency_seconds": 3.9962010383605957,
+    "error": null
+  },
+  "n_anonymized": 3,
+  "total_judge_cost_usd": 0.0138
+}
