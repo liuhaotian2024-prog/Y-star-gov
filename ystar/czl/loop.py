@@ -59,7 +59,14 @@ class CZLRun:
     scenario: Scenario                   # how to verify it
     backend: Backend                     # which LLM to call
     workspace_dir: str                   # where to run (working directory)
-    max_iterations: int = 10
+    # max_iterations now defaults to 50 (v3 spec); callers should pass an
+    # explicit value rather than rely on this default in production. Trial
+    # harnesses must accept it as a config/CLI param.
+    max_iterations: int = 50
+    # Trajectory-based early stop. If the residual fails to strictly
+    # decrease for `no_progress_window` consecutive iterations, the loop
+    # halts with stopping_authority="no_progress". Set to 0 to disable.
+    no_progress_window: int = 3
     strict: bool = False                 # if True, force human review on any ambiguity
     auto_undo_on_failure: bool = True    # stash diff before run, restorable
     run_id: str = field(default_factory=lambda: generate_event_id())
@@ -88,7 +95,11 @@ class CZLResult:
     # distinguish "shipped at Rt+1=0" from "ran out of iterations" from
     # other early-exit branches. Pre-v3 callers that only check `converged`
     # keep working; new callers can branch on this.
-    halted_due_to: str = ""               # converged | max_iter_exhausted | user_rejected_contract | scenario_returned_empty_plan | exception
+    # `stopping_authority` is the canonical v3 name; `halted_due_to` is
+    # kept as a mirror field for backwards compatibility with v2 readers.
+    stopping_authority: str = ""          # converged | max_iter_exhausted | no_progress | user_rejected_contract | scenario_returned_empty_plan | exception
+    halted_due_to: str = ""               # v2-compat mirror of stopping_authority
+    residual_trajectory: List[float] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         d = dict(self.__dict__)
@@ -155,6 +166,7 @@ def run_scenario(
         approved = toast_fn(toast_text, TOAST_TIMEOUT_SECONDS, default_yes=(not request.strict))
         if not approved:
             result.failure_reason = "user_rejected_contract"
+            result.stopping_authority = "user_rejected_contract"
             result.halted_due_to = "user_rejected_contract"
             result.duration_seconds = time.time() - started
             return result
@@ -186,6 +198,7 @@ def run_scenario(
         plan_steps = request.scenario.plan(request.task_description, request.workspace_dir)
         if not plan_steps:
             result.failure_reason = "scenario_returned_empty_plan"
+            result.stopping_authority = "scenario_returned_empty_plan"
             result.halted_due_to = "scenario_returned_empty_plan"
             break
         step = plan_steps[min(step_idx, len(plan_steps) - 1)]
@@ -223,26 +236,48 @@ def run_scenario(
         residual = float(len(last_violations))
         result.final_residual = residual
 
+        # Trajectory tracking — record residual BEFORE deciding to halt.
+        result.residual_trajectory.append(residual)
+
         if residual == 0.0:
             # converged — ship the current workspace as-is. The break here is
             # what stops the loop touching a known-good answer; downstream
-            # consumers can rely on halted_due_to=="converged" to know the
-            # post-state files reflect the converged iteration.
+            # consumers can rely on stopping_authority=="converged" to know
+            # the post-state files reflect the converged iteration.
             result.converged = True
+            result.stopping_authority = "converged"
             result.halted_due_to = "converged"
             result.final_verifier_report = _summarize_verifiers(verifier_results)
             break
 
         # 4d. not converged — generate feedback via auto_rewrite-style logic
         feedback_block = _format_feedback_for_retry(last_violations)
-        # (loop continues for next step)
+
+        # 4e. no-progress halt: if residual hasn't strictly decreased over
+        # the last `no_progress_window` iterations, stop. This protects
+        # known-good answers from being thrashed by feedback loops on tasks
+        # where the model has already plateaued. (Defaults to 3; set to 0
+        # in CZLRun to disable.)
+        win = request.no_progress_window
+        if win and len(result.residual_trajectory) >= win + 1:
+            recent = result.residual_trajectory[-(win + 1):]
+            # strict_decrease across the window means recent[i+1] < recent[i] for all i
+            strict_decrease = any(recent[i + 1] < recent[i] for i in range(win))
+            if not strict_decrease:
+                result.stopping_authority = "no_progress"
+                result.halted_due_to = "no_progress"
+                _log.info("CZL halting: residual stuck at %s for %d iterations",
+                          residual, win)
+                break
 
     # --- Step 5: finalize ---------------------------------------------------
     if not result.converged:
-        if not result.halted_due_to:
+        if not result.stopping_authority:
+            result.stopping_authority = "max_iter_exhausted"
             result.halted_due_to = "max_iter_exhausted"
         result.failure_reason = (
-            f"did_not_converge_after_{result.iterations}_iterations: "
+            f"did_not_converge_after_{result.iterations}_iterations "
+            f"({result.stopping_authority}): "
             + "; ".join(v.message for v in last_violations[:5])
         )
         if stash_ref and request.auto_undo_on_failure:

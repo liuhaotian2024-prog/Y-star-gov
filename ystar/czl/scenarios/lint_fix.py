@@ -22,6 +22,7 @@ from typing import Any, Dict, List
 
 from ystar.czl.scenarios.base import Scenario, PlanStep, ScenarioRegistry
 from ystar.czl.verifiers.base import Verifier, VerifierResult
+from ystar.czl.verifiers.differential_verifier import DifferentialVerifier
 
 
 # === verifier wrappers ========================================================
@@ -301,7 +302,13 @@ class LintFixScenario(Scenario):
 
     def verify(self, workspace_dir: str, contract: Dict[str, Any]) -> List[VerifierResult]:
         results: List[VerifierResult] = []
-        for v in (RuffVerifier(), MypyVerifier(), PytestVerifier()):
+        # DifferentialVerifier runs alongside lint/type/test: it cross-checks
+        # that observed function outputs match the test-asserted literals.
+        # Without auto-input generation (Hypothesis was cut), this is
+        # currently equivalent to pytest on covered inputs — but it surfaces
+        # the input/output pair in a structured way, helping downstream
+        # judges distinguish "tests passed" from "semantics preserved".
+        for v in (RuffVerifier(), MypyVerifier(), PytestVerifier(), DifferentialVerifier()):
             if v.is_applicable(workspace_dir):
                 results.append(v.run(workspace_dir, contract))
         return results

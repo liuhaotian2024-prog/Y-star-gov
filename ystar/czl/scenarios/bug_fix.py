@@ -21,6 +21,7 @@ from typing import Any, Dict, List
 
 from ystar.czl.scenarios.base import Scenario, PlanStep, ScenarioRegistry
 from ystar.czl.verifiers.base import Verifier, VerifierResult
+from ystar.czl.verifiers.contract_verifier import ContractConsistencyVerifier
 
 
 # === verifier wrappers ========================================================
@@ -203,7 +204,10 @@ class BugFixScenario(Scenario):
 
     def verify(self, workspace_dir: str, contract: Dict[str, Any]) -> List[VerifierResult]:
         results: List[VerifierResult] = []
-        for v in (PytestAllPassVerifier(), TestFilesUnchangedVerifier()):
+        # ContractConsistencyVerifier runs first — its mismatch messages
+        # (e.g. "rotate returns str but call site unpacks 2-tuple") give the
+        # model precise actionable feedback on cross-file signature drift.
+        for v in (ContractConsistencyVerifier(), PytestAllPassVerifier(), TestFilesUnchangedVerifier()):
             if v.is_applicable(workspace_dir):
                 results.append(v.run(workspace_dir, contract))
         return results
