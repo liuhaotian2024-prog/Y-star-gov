@@ -1,0 +1,19 @@
+arm,arm_label,scenario,difficulty,trial,backend,use_czl,converged,iterations,wall_clock_seconds,input_tokens,output_tokens,cost_usd,final_ruff_errors,final_mypy_errors,final_pytest_failures,failure_reason,semantic_correctness_score,final_invariant_violations
+A,claude-opus-4-7 bare,test_gen,easy,0,anthropic,False,True,1,9.665373086929321,695,558,0.017425,0,0,0,,,0
+A,claude-opus-4-7 bare,test_gen,easy,1,anthropic,False,True,1,9.590472936630249,695,689,0.0207,0,0,0,,,0
+A,claude-opus-4-7 bare,test_gen,easy,2,anthropic,False,True,1,8.372191190719604,695,563,0.01755,0,0,0,,,0
+B1,gemma4:e4b bare,test_gen,easy,0,ollama,False,False,1,62.030593156814575,511,1477,0.0,0,0,1,pytest: failures present,,1
+B1,gemma4:e4b bare,test_gen,easy,1,ollama,False,False,1,56.182318925857544,511,1477,0.0,0,0,1,pytest: failures present,,1
+B1,gemma4:e4b bare,test_gen,easy,2,ollama,False,False,1,56.21911025047302,511,1477,0.0,0,0,1,pytest: failures present,,1
+B2,gemma4:e4b + CZL,test_gen,easy,0,ollama,True,True,5,361.3552598953247,4006,9148,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,test_gen,easy,1,ollama,True,True,6,440.90302419662476,4914,10995,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,test_gen,easy,2,ollama,True,True,6,437.9591290950775,4914,10995,0.0,0,0,0,,,0
+C1,deepseek bare,test_gen,easy,0,deepseek,False,False,1,7.051241874694824,471,814,0.00026089000000000006,10,0,1,pytest: failures present,,1
+C1,deepseek bare,test_gen,easy,1,deepseek,False,False,1,5.910386085510254,471,634,0.00021049000000000003,1,0,1,pytest: failures present,,1
+C1,deepseek bare,test_gen,easy,2,deepseek,False,True,1,6.830607891082764,471,786,0.00025305,0,0,0,,,0
+C2,deepseek + CZL,test_gen,easy,0,deepseek,True,True,2,15.113833904266357,1184,1764,0.0005768,11,0,0,,,0
+C2,deepseek + CZL,test_gen,easy,1,deepseek,True,True,1,6.64000391960144,471,723,0.00023541000000000002,0,0,0,,,0
+C2,deepseek + CZL,test_gen,easy,2,deepseek,True,True,2,13.945591926574707,1183,1607,0.0005327700000000001,11,0,0,,,0
+D2,minimax + CZL,test_gen,easy,0,minimax,True,True,2,22.082016944885254,1294,2784,0.002486,1,0,0,,,0
+D2,minimax + CZL,test_gen,easy,1,minimax,True,True,4,42.137348890304565,2783,5346,0.0048334,1,0,0,,,0
+D2,minimax + CZL,test_gen,easy,2,minimax,True,True,7,64.79317378997803,5167,8483,0.0078198,1,0,0,,,0

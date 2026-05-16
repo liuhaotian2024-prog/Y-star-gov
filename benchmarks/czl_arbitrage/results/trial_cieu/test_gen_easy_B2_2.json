@@ -1,0 +1,25 @@
+{
+  "arm": "B2",
+  "arm_label": "gemma4:e4b + CZL",
+  "scenario": "test_gen",
+  "difficulty": "easy",
+  "trial": 2,
+  "backend": "ollama",
+  "use_czl": true,
+  "converged": true,
+  "iterations": 6,
+  "wall_clock_seconds": 437.9591290950775,
+  "input_tokens": 4914,
+  "output_tokens": 10995,
+  "cost_usd": 0.0,
+  "final_ruff_errors": 0,
+  "final_mypy_errors": 0,
+  "final_pytest_failures": 0,
+  "failure_reason": "",
+  "post_state_files": {
+    "test_stringkit.py": "import pytest\nfrom stringkit import reverse, count_vowels, title_case, starts_with_vowel\n\n# --- Test reverse ---\n\n@pytest.mark.parametrize(\"input_str, expected_output\", [\n    (\"hello\", \"olleh\"),\n    (\"racecar\", \"racecar\"),\n    (\"\", \"\"),\n    (\"a\", \"a\"),\n    (\"12345\", \"54321\"),\n    (\"!@#$\", \"$#@!\"),\n])\ndef test_reverse_normal_cases(input_str, expected_output):\n    \"\"\"Tests basic string reversal.\"\"\"\n    assert reverse(input_str) == expected_output\n\n# --- Test count_vowels ---\n\n@pytest.mark.parametrize(\"text, expected_count\", [\n    (\"apple\", 2),\n    (\"banana\", 3),\n    (\"rhythm\", 0),\n    (\"\", 0),\n    (\"aeiou\", 5),\n    (\"AEIOU\", 5),\n    (\"Mississippi\", 4),  # Fixed: 'i', 'i', 'i', 'i' -> 4\n    (\"Programming\", 3),\n    (\"PYTHON\", 1),\n    (\"12345\", 0),\n])\ndef test_count_vowels_various_inputs(text, expected_count):\n    \"\"\"Tests vowel counting with various inputs and edge cases.\"\"\"\n    assert count_vowels(text) == expected_count\n\n# --- Test title_case ---\n\n@pytest.mark.parametrize(\"input_text, expected_output\", [\n    (\"hello world\", \"Hello World\"),\n    (\"a simple sentence\", \"A Simple Sentence\"),\n    (\"allcaps\", \"Allcaps\"),\n    (\"lowercase\", \"Lowercase\"),\n    (\"\", \"\"),\n    (\"   leading and trailing spaces   \", \"Leading And Trailing Spaces\"),\n    (\"multiple--hyphens\", \"Multiple--hyphens\"), # Fixed: Function only splits by whitespace, so it cannot capitalize after hyphens.\n    (\"already Title Case\", \"Already Title Case\"),\n])\ndef test_title_case_normal_scenarios(input_text, expected_output):\n    \"\"\"Tests title casing behavior based on whitespace splitting.\"\"\"\n    assert title_case(input_text) == expected_output\n\n# --- Test starts_with_vowel ---\n\n@pytest.mark.parametrize(\"word, expected\", [\n    (\"apple\", True),\n    (\"Orange\", True),\n    (\"banana\", False),\n    (\"rhythm\", False),\n    (\"\", False), # Edge case: empty string\n    (\"A\", True),\n    (\"z\", False),\n    (\"aeiou\", True),\n])\ndef test_starts_with_vowel_various_inputs(word, expected):\n    \"\"\"Tests if a word starts with a vowel (case-insensitive).\"\"\"\n    assert starts_with_vowel(word) == expected\n",
+    "stringkit.py": "def reverse(s: str) -> str:\n    return s[::-1]\n\n\ndef count_vowels(text: str) -> int:\n    return sum(1 for c in text.lower() if c in 'aeiou')\n\n\ndef title_case(text: str) -> str:\n    return ' '.join(w.capitalize() for w in text.split())\n\n\ndef starts_with_vowel(word: str) -> bool:\n    return bool(word) and word[0].lower() in 'aeiou'\n"
+  },
+  "semantic_correctness_score": null,
+  "final_invariant_violations": 0
+}

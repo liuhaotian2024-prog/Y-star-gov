@@ -1,0 +1,25 @@
+{
+  "arm": "C2",
+  "arm_label": "deepseek + CZL",
+  "scenario": "test_gen",
+  "difficulty": "easy",
+  "trial": 1,
+  "backend": "deepseek",
+  "use_czl": true,
+  "converged": true,
+  "iterations": 1,
+  "wall_clock_seconds": 6.64000391960144,
+  "input_tokens": 471,
+  "output_tokens": 723,
+  "cost_usd": 0.00023541000000000002,
+  "final_ruff_errors": 0,
+  "final_mypy_errors": 0,
+  "final_pytest_failures": 0,
+  "failure_reason": "",
+  "post_state_files": {
+    "test_stringkit.py": "import pytest\nfrom stringkit import reverse, count_vowels, title_case, starts_with_vowel\n\n\nclass TestReverse:\n    def test_empty_string(self):\n        assert reverse(\"\") == \"\"\n\n    def test_single_character(self):\n        assert reverse(\"a\") == \"a\"\n\n    def test_palindrome(self):\n        assert reverse(\"racecar\") == \"racecar\"\n\n    def test_normal_string(self):\n        assert reverse(\"hello\") == \"olleh\"\n\n    def test_with_spaces(self):\n        assert reverse(\"a b c\") == \"c b a\"\n\n    def test_unicode(self):\n        assert reverse(\"caf\u00e9\") == \"\u00e9fac\"\n\n\nclass TestCountVowels:\n    def test_empty_string(self):\n        assert count_vowels(\"\") == 0\n\n    def test_no_vowels(self):\n        assert count_vowels(\"xyz\") == 0\n\n    def test_all_vowels(self):\n        assert count_vowels(\"aeiou\") == 5\n\n    def test_mixed_case(self):\n        assert count_vowels(\"AbEcIdOfU\") == 5\n\n    def test_with_consonants(self):\n        assert count_vowels(\"hello world\") == 3\n\n    @pytest.mark.parametrize(\"text,expected\", [\n        (\"\", 0),\n        (\"a\", 1),\n        (\"b\", 0),\n        (\"AEIOU\", 5),\n        (\"Python\", 1),\n    ])\n    def test_parametrized(self, text, expected):\n        assert count_vowels(text) == expected\n\n\nclass TestTitleCase:\n    def test_empty_string(self):\n        assert title_case(\"\") == \"\"\n\n    def test_single_word(self):\n        assert title_case(\"hello\") == \"Hello\"\n\n    def test_multiple_words(self):\n        assert title_case(\"hello world\") == \"Hello World\"\n\n    def test_already_title_case(self):\n        assert title_case(\"Hello World\") == \"Hello World\"\n\n    def test_mixed_case(self):\n        assert title_case(\"hELLO wORLD\") == \"Hello World\"\n\n    def test_with_extra_spaces(self):\n        assert title_case(\"  hello   world  \") == \"Hello World\"\n\n    def test_single_letter_words(self):\n        assert title_case(\"a b c\") == \"A B C\"\n\n\nclass TestStartsWithVowel:\n    def test_empty_string(self):\n        assert starts_with_vowel(\"\") is False\n\n    def test_starts_with_vowel_lowercase(self):\n        assert starts_with_vowel(\"apple\") is True\n\n    def test_starts_with_vowel_uppercase(self):\n        assert starts_with_vowel(\"Apple\") is True\n\n    def test_starts_with_consonant(self):\n        assert starts_with_vowel(\"banana\") is False\n\n    def test_single_vowel(self):\n        assert starts_with_vowel(\"a\") is True\n\n    def test_single_consonant(self):\n        assert starts_with_vowel(\"b\") is False\n\n    @pytest.mark.parametrize(\"word,expected\", [\n        (\"\", False),\n        (\"a\", True),\n        (\"E\", True),\n        (\"i\", True),\n        (\"O\", True),\n        (\"u\", True),\n        (\"y\", False),\n        (\"Y\", False),\n    ])\n    def test_parametrized(self, word, expected):\n        assert starts_with_vowel(word) == expected\n",
+    "stringkit.py": "def reverse(s: str) -> str:\n    return s[::-1]\n\n\ndef count_vowels(text: str) -> int:\n    return sum(1 for c in text.lower() if c in 'aeiou')\n\n\ndef title_case(text: str) -> str:\n    return ' '.join(w.capitalize() for w in text.split())\n\n\ndef starts_with_vowel(word: str) -> bool:\n    return bool(word) and word[0].lower() in 'aeiou'\n"
+  },
+  "semantic_correctness_score": null,
+  "final_invariant_violations": 0
+}

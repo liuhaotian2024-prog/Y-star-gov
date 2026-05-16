@@ -1,0 +1,19 @@
+arm,arm_label,scenario,difficulty,trial,backend,use_czl,converged,iterations,wall_clock_seconds,input_tokens,output_tokens,cost_usd,final_ruff_errors,final_mypy_errors,final_pytest_failures,failure_reason,semantic_correctness_score,final_invariant_violations
+A,claude-opus-4-7 bare,test_gen,medium,0,anthropic,False,True,1,16.6089289188385,1009,1448,0.041245000000000004,2,0,0,,,0
+A,claude-opus-4-7 bare,test_gen,medium,1,anthropic,False,True,1,14.828977108001709,1009,1407,0.04022,2,0,0,,,0
+A,claude-opus-4-7 bare,test_gen,medium,2,anthropic,False,True,1,15.025110721588135,1009,1388,0.039744999999999996,1,0,0,,,0
+B1,gemma4:e4b bare,test_gen,medium,0,ollama,False,True,1,71.77161073684692,751,1802,0.0,2,1,0,,,0
+B1,gemma4:e4b bare,test_gen,medium,1,ollama,False,True,1,69.97351503372192,751,1802,0.0,2,1,0,,,0
+B1,gemma4:e4b bare,test_gen,medium,2,ollama,False,True,1,69.865553855896,751,1802,0.0,2,1,0,,,0
+B2,gemma4:e4b + CZL,test_gen,medium,0,ollama,True,True,1,71.09541392326355,751,1802,0.0,2,1,0,,,0
+B2,gemma4:e4b + CZL,test_gen,medium,1,ollama,True,True,1,73.10908102989197,751,1802,0.0,2,1,0,,,0
+B2,gemma4:e4b + CZL,test_gen,medium,2,ollama,True,True,1,71.4165358543396,751,1802,0.0,2,1,0,,,0
+C1,deepseek bare,test_gen,medium,0,deepseek,False,False,1,10.10719895362854,686,1130,0.00036442,1,0,1,pytest: failures present,,1
+C1,deepseek bare,test_gen,medium,1,deepseek,False,True,1,8.067223072052002,686,951,0.00031430000000000005,2,0,0,,,0
+C1,deepseek bare,test_gen,medium,2,deepseek,False,True,1,6.525697946548462,686,818,0.00027706000000000003,1,0,0,,,0
+C2,deepseek + CZL,test_gen,medium,0,deepseek,True,True,1,9.312343835830688,686,1112,0.00035938,2,0,0,,,0
+C2,deepseek + CZL,test_gen,medium,1,deepseek,True,True,1,9.055155992507935,686,1083,0.00035126000000000005,1,0,0,,,0
+C2,deepseek + CZL,test_gen,medium,2,deepseek,True,True,1,9.905602931976318,686,1101,0.00035630000000000004,2,0,0,,,0
+D2,minimax + CZL,test_gen,medium,0,minimax,True,True,2,23.935972929000854,1729,3159,0.002873,1,0,0,,,0
+D2,minimax + CZL,test_gen,medium,1,minimax,True,True,1,11.343768119812012,678,1510,0.0013436000000000001,2,0,0,,,0
+D2,minimax + CZL,test_gen,medium,2,minimax,True,True,1,16.456182956695557,678,2234,0.0019228000000000001,1,0,0,,,0

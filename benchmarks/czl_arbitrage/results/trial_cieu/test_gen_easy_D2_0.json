@@ -1,0 +1,25 @@
+{
+  "arm": "D2",
+  "arm_label": "minimax + CZL",
+  "scenario": "test_gen",
+  "difficulty": "easy",
+  "trial": 0,
+  "backend": "minimax",
+  "use_czl": true,
+  "converged": true,
+  "iterations": 2,
+  "wall_clock_seconds": 22.082016944885254,
+  "input_tokens": 1294,
+  "output_tokens": 2784,
+  "cost_usd": 0.002486,
+  "final_ruff_errors": 1,
+  "final_mypy_errors": 0,
+  "final_pytest_failures": 0,
+  "failure_reason": "",
+  "post_state_files": {
+    "test_stringkit.py": "import pytest\nfrom stringkit import reverse, count_vowels, title_case, starts_with_vowel\n\n\nclass TestReverse:\n    def test_reverse_simple(self):\n        assert reverse(\"hello\") == \"olleh\"\n\n    def test_reverse_single_char(self):\n        assert reverse(\"a\") == \"a\"\n\n    def test_reverse_empty(self):\n        assert reverse(\"\") == \"\"\n\n    def test_reverse_palindrome(self):\n        assert reverse(\"racecar\") == \"racecar\"\n\n    def test_reverse_with_spaces(self):\n        assert reverse(\"hello world\") == \"dlrow olleh\"\n\n    def test_reverse_unicode(self):\n        assert reverse(\"caf\u00e9\") == \"\u00e9fac\"\n\n    def test_reverse_numbers(self):\n        assert reverse(\"12345\") == \"54321\"\n\n\nclass TestCountVowels:\n    def test_count_vowels_simple(self):\n        assert count_vowels(\"hello\") == 2\n\n    def test_count_vowels_no_vowels(self):\n        assert count_vowels(\"rhythm\") == 0\n\n    def test_count_vowels_all_vowels(self):\n        assert count_vowels(\"aeiou\") == 5\n\n    def test_count_vowels_mixed_case(self):\n        assert count_vowels(\"AEIOU\") == 5\n\n    def test_count_vowels_mixed_case2(self):\n        assert count_vowels(\"Hello World\") == 3\n\n    def test_count_vowels_empty(self):\n        assert count_vowels(\"\") == 0\n\n    def test_count_vowels_with_special_chars(self):\n        assert count_vowels(\"hello@world!\") == 3\n\n    def test_count_vowels_y_not_vowel(self):\n        # y is not considered a vowel in this implementation\n        assert count_vowels(\"python\") == 1\n\n\nclass TestTitleCase:\n    def test_title_case_simple(self):\n        assert title_case(\"hello world\") == \"Hello World\"\n\n    def test_title_case_single_word(self):\n        assert title_case(\"hello\") == \"Hello\"\n\n    def test_title_case_empty(self):\n        assert title_case(\"\") == \"\"\n\n    def test_title_case_already_title(self):\n        assert title_case(\"Hello World\") == \"Hello World\"\n\n    def test_title_case_all_lowercase(self):\n        assert title_case(\"the quick brown fox\") == \"The Quick Brown Fox\"\n\n    def test_title_case_mixed_case(self):\n        assert title_case(\"hELLO wORLD\") == \"Hello World\"\n\n    def test_title_case_single_char(self):\n        assert title_case(\"a\") == \"A\"\n\n    def test_title_case_multiple_spaces(self):\n        # split() collapses multiple spaces into single space\n        assert title_case(\"hello   world\") == \"Hello World\"\n\n    def test_title_case_leading_trailing_spaces(self):\n        # split() removes leading/trailing whitespace\n        assert title_case(\"  hello world  \") == \"Hello World\"\n\n    def test_title_case_newlines(self):\n        assert title_case(\"hello\\nworld\") == \"Hello World\"\n\n\nclass TestStartsWithVowel:\n    def test_starts_with_vowel_simple(self):\n        assert starts_with_vowel(\"apple\") is True\n\n    def test_starts_with_vowel_consonant(self):\n        assert starts_with_vowel(\"banana\") is False\n\n    def test_starts_with_vowel_uppercase(self):\n        assert starts_with_vowel(\"Apple\") is True\n\n    def test_starts_with_vowel_uppercase_consonant(self):\n        assert starts_with_vowel(\"Banana\") is False\n\n    def test_starts_with_vowel_empty(self):\n        assert starts_with_vowel(\"\") is False\n\n    def test_starts_with_vowel_special_char(self):\n        assert starts_with_vowel(\"@apple\") is False\n\n    def test_starts_with_vowel_y(self):\n        # y is not considered a vowel\n        assert starts_with_vowel(\"yellow\") is False\n",
+    "stringkit.py": "def reverse(s: str) -> str:\n    return s[::-1]\n\n\ndef count_vowels(text: str) -> int:\n    return sum(1 for c in text.lower() if c in 'aeiou')\n\n\ndef title_case(text: str) -> str:\n    return ' '.join(w.capitalize() for w in text.split())\n\n\ndef starts_with_vowel(word: str) -> bool:\n    return bool(word) and word[0].lower() in 'aeiou'\n"
+  },
+  "semantic_correctness_score": null,
+  "final_invariant_violations": 0
+}

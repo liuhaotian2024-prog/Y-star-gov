@@ -1,0 +1,25 @@
+{
+  "arm": "C1",
+  "arm_label": "deepseek bare",
+  "scenario": "test_gen",
+  "difficulty": "easy",
+  "trial": 1,
+  "backend": "deepseek",
+  "use_czl": false,
+  "converged": false,
+  "iterations": 1,
+  "wall_clock_seconds": 5.910386085510254,
+  "input_tokens": 471,
+  "output_tokens": 634,
+  "cost_usd": 0.00021049000000000003,
+  "final_ruff_errors": 1,
+  "final_mypy_errors": 0,
+  "final_pytest_failures": 1,
+  "failure_reason": "pytest: failures present",
+  "post_state_files": {
+    "test_stringkit.py": "import pytest\nfrom stringkit import reverse, count_vowels, title_case, starts_with_vowel\n\n\nclass TestReverse:\n    def test_reverse_normal(self):\n        assert reverse(\"hello\") == \"olleh\"\n\n    def test_reverse_empty(self):\n        assert reverse(\"\") == \"\"\n\n    def test_reverse_single_char(self):\n        assert reverse(\"a\") == \"a\"\n\n    def test_reverse_palindrome(self):\n        assert reverse(\"racecar\") == \"racecar\"\n\n    def test_reverse_with_spaces(self):\n        assert reverse(\"a b c\") == \"c b a\"\n\n\nclass TestCountVowels:\n    def test_count_vowels_all_vowels(self):\n        assert count_vowels(\"aeiou\") == 5\n\n    def test_count_vowels_no_vowels(self):\n        assert count_vowels(\"bcdfg\") == 0\n\n    def test_count_vowels_mixed(self):\n        assert count_vowels(\"Hello World\") == 3\n\n    def test_count_vowels_empty(self):\n        assert count_vowels(\"\") == 0\n\n    def test_count_vowels_case_insensitive(self):\n        assert count_vowels(\"AEIOU\") == 5\n\n    def test_count_vowels_with_numbers(self):\n        assert count_vowels(\"h3ll0\") == 0\n\n\nclass TestTitleCase:\n    def test_title_case_normal(self):\n        assert title_case(\"hello world\") == \"Hello World\"\n\n    def test_title_case_single_word(self):\n        assert title_case(\"hello\") == \"Hello\"\n\n    def test_title_case_empty(self):\n        assert title_case(\"\") == \"\"\n\n    def test_title_case_multiple_spaces(self):\n        assert title_case(\"hello   world\") == \"Hello   World\"\n\n    def test_title_case_already_capitalized(self):\n        assert title_case(\"Hello World\") == \"Hello World\"\n\n    def test_title_case_mixed_case(self):\n        assert title_case(\"hELLO wORLD\") == \"Hello World\"\n\n\nclass TestStartsWithVowel:\n    def test_starts_with_vowel_lowercase(self):\n        assert starts_with_vowel(\"apple\") is True\n\n    def test_starts_with_vowel_uppercase(self):\n        assert starts_with_vowel(\"Apple\") is True\n\n    def test_starts_with_vowel_consonant(self):\n        assert starts_with_vowel(\"banana\") is False\n\n    def test_starts_with_vowel_empty(self):\n        assert starts_with_vowel(\"\") is False\n\n    def test_starts_with_vowel_single_vowel(self):\n        assert starts_with_vowel(\"a\") is True\n\n    def test_starts_with_vowel_single_consonant(self):\n        assert starts_with_vowel(\"b\") is False\n\n    def test_starts_with_vowel_all_vowels(self):\n        assert starts_with_vowel(\"aeiou\") is True\n\n    def test_starts_with_vowel_with_numbers(self):\n        assert starts_with_vowel(\"1apple\") is False\n",
+    "stringkit.py": "def reverse(s: str) -> str:\n    return s[::-1]\n\n\ndef count_vowels(text: str) -> int:\n    return sum(1 for c in text.lower() if c in 'aeiou')\n\n\ndef title_case(text: str) -> str:\n    return ' '.join(w.capitalize() for w in text.split())\n\n\ndef starts_with_vowel(word: str) -> bool:\n    return bool(word) and word[0].lower() in 'aeiou'\n"
+  },
+  "semantic_correctness_score": null,
+  "final_invariant_violations": 1
+}

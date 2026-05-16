@@ -1,0 +1,25 @@
+{
+  "arm": "A",
+  "arm_label": "claude-opus-4-7 bare",
+  "scenario": "test_gen",
+  "difficulty": "medium",
+  "trial": 1,
+  "backend": "anthropic",
+  "use_czl": false,
+  "converged": true,
+  "iterations": 1,
+  "wall_clock_seconds": 14.828977108001709,
+  "input_tokens": 1009,
+  "output_tokens": 1407,
+  "cost_usd": 0.04022,
+  "final_ruff_errors": 2,
+  "final_mypy_errors": 0,
+  "final_pytest_failures": 0,
+  "failure_reason": "",
+  "post_state_files": {
+    "test_fileio.py": "import os\nfrom pathlib import Path\n\nimport pytest\n\nfrom fileio import append_log, file_size_bytes, read_lines, write_atomically\n\n\ndef test_read_lines_returns_lines_without_newlines(tmp_path):\n    p = tmp_path / \"f.txt\"\n    p.write_text(\"alpha\\nbeta\\ngamma\\n\", encoding=\"utf-8\")\n    assert read_lines(p) == [\"alpha\", \"beta\", \"gamma\"]\n\n\ndef test_read_lines_empty_file(tmp_path):\n    p = tmp_path / \"empty.txt\"\n    p.write_text(\"\", encoding=\"utf-8\")\n    assert read_lines(p) == []\n\n\ndef test_read_lines_no_trailing_newline(tmp_path):\n    p = tmp_path / \"f.txt\"\n    p.write_text(\"one\\ntwo\", encoding=\"utf-8\")\n    assert read_lines(p) == [\"one\", \"two\"]\n\n\ndef test_read_lines_missing_file_raises(tmp_path):\n    with pytest.raises(FileNotFoundError):\n        read_lines(tmp_path / \"does_not_exist.txt\")\n\n\ndef test_write_atomically_creates_file(tmp_path):\n    p = tmp_path / \"out.txt\"\n    write_atomically(p, \"hello world\")\n    assert p.read_text(encoding=\"utf-8\") == \"hello world\"\n\n\ndef test_write_atomically_overwrites_existing(tmp_path):\n    p = tmp_path / \"out.txt\"\n    p.write_text(\"old content\", encoding=\"utf-8\")\n    write_atomically(p, \"new content\")\n    assert p.read_text(encoding=\"utf-8\") == \"new content\"\n\n\ndef test_write_atomically_cleans_up_tmp(tmp_path):\n    p = tmp_path / \"out.txt\"\n    write_atomically(p, \"data\")\n    tmp = p.with_suffix(p.suffix + \".tmp\")\n    assert not tmp.exists()\n    assert p.exists()\n\n\ndef test_write_atomically_accepts_string_path(tmp_path):\n    p = tmp_path / \"out.txt\"\n    write_atomically(str(p), \"stringy\")\n    assert p.read_text(encoding=\"utf-8\") == \"stringy\"\n\n\ndef test_append_log_creates_file_if_missing(tmp_path):\n    p = tmp_path / \"log.txt\"\n    assert not p.exists()\n    append_log(p, \"first\")\n    assert p.read_text(encoding=\"utf-8\") == \"first\\n\"\n\n\ndef test_append_log_appends_to_existing(tmp_path):\n    p = tmp_path / \"log.txt\"\n    p.write_text(\"existing\\n\", encoding=\"utf-8\")\n    append_log(p, \"next\")\n    assert p.read_text(encoding=\"utf-8\") == \"existing\\nnext\\n\"\n\n\ndef test_append_log_strips_existing_newline(tmp_path):\n    p = tmp_path / \"log.txt\"\n    append_log(p, \"with newline\\n\")\n    assert p.read_text(encoding=\"utf-8\") == \"with newline\\n\"\n\n\ndef test_append_log_multiple_calls(tmp_path):\n    p = tmp_path / \"log.txt\"\n    append_log(p, \"a\")\n    append_log(p, \"b\")\n    append_log(p, \"c\")\n    assert p.read_text(encoding=\"utf-8\") == \"a\\nb\\nc\\n\"\n\n\ndef test_file_size_bytes_returns_correct_size(tmp_path):\n    p = tmp_path / \"f.bin\"\n    p.write_bytes(b\"12345\")\n    assert file_size_bytes(p) == 5\n\n\ndef test_file_size_bytes_empty(tmp_path):\n    p = tmp_path / \"f.bin\"\n    p.write_bytes(b\"\")\n    assert file_size_bytes(p) == 0\n\n\ndef test_file_size_bytes_missing_raises(tmp_path):\n    with pytest.raises(FileNotFoundError):\n        file_size_bytes(tmp_path / \"nope.bin\")\n\n\ndef test_round_trip_write_then_read(tmp_path):\n    p = tmp_path / \"rt.txt\"\n    write_atomically(p, \"line1\\nline2\\nline3\\n\")\n    assert read_lines(p) == [\"line1\", \"line2\", \"line3\"]\n",
+    "fileio.py": "import os\nfrom pathlib import Path\nfrom typing import List\n\n\ndef read_lines(path) -> List[str]:\n    \"\"\"Read a file and return its lines without trailing newlines.\n\n    Raises FileNotFoundError if the file does not exist.\n    \"\"\"\n    with open(path, 'r', encoding='utf-8') as f:\n        return [ln.rstrip('\\n') for ln in f.readlines()]\n\n\ndef write_atomically(path, content: str) -> None:\n    \"\"\"Write `content` to `path` via a temp file + rename. The destination\n    file either contains the full new content or is untouched.\n    \"\"\"\n    path = Path(path)\n    tmp = path.with_suffix(path.suffix + '.tmp')\n    with open(tmp, 'w', encoding='utf-8') as f:\n        f.write(content)\n    os.replace(tmp, path)\n\n\ndef append_log(path, line: str) -> None:\n    \"\"\"Append one line to the log file, creating it if missing.\n    Always terminates the appended line with a single newline.\n    \"\"\"\n    with open(path, 'a', encoding='utf-8') as f:\n        f.write(line.rstrip('\\n') + '\\n')\n\n\ndef file_size_bytes(path) -> int:\n    \"\"\"Return the size of the file in bytes. Raises FileNotFoundError\n    if the file does not exist.\n    \"\"\"\n    return os.path.getsize(path)\n"
+  },
+  "semantic_correctness_score": null,
+  "final_invariant_violations": 0
+}
