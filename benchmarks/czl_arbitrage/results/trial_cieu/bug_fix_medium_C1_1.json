@@ -1,0 +1,25 @@
+{
+  "arm": "C1",
+  "arm_label": "deepseek bare",
+  "scenario": "bug_fix",
+  "difficulty": "medium",
+  "trial": 1,
+  "backend": "deepseek",
+  "use_czl": false,
+  "converged": true,
+  "iterations": 1,
+  "wall_clock_seconds": 5.4264209270477295,
+  "input_tokens": 1081,
+  "output_tokens": 341,
+  "cost_usd": 0.00017115,
+  "final_ruff_errors": 0,
+  "final_mypy_errors": 0,
+  "final_pytest_failures": 0,
+  "failure_reason": "",
+  "post_state_files": {
+    "cart.py": "class Cart:\n    def __init__(self):\n        self._items = []\n        self._discount_pct = 0\n\n    def add(self, item, qty=1, unit_price=0.0):\n        self._items.append((item, qty, unit_price))\n\n    def line_total(self, idx):\n        item, qty, unit_price = self._items[idx]\n        return qty * unit_price\n\n    def subtotal(self):\n        return sum(qty * unit_price for _, qty, unit_price in self._items)\n\n    def set_discount_pct(self, pct):\n        self._discount_pct = pct\n\n    def apply_discount(self, amount):\n        return amount - (amount * self._discount_pct / 100)\n\n    def total(self):\n        return self.apply_discount(self.subtotal())\n",
+    "test_cart.py": "import pytest\nfrom cart import Cart\n\n\ndef test_line_total_single_item():\n    c = Cart()\n    c.add('a', qty=3, unit_price=2.5)\n    assert c.line_total(0) == pytest.approx(7.5)\n\n\ndef test_subtotal_multiple_items():\n    c = Cart()\n    c.add('a', qty=2, unit_price=3.0)\n    c.add('b', qty=1, unit_price=4.0)\n    assert c.subtotal() == pytest.approx(10.0)\n\n\ndef test_discount_applied_to_subtotal():\n    c = Cart()\n    c.add('a', qty=2, unit_price=10.0)\n    c.add('b', qty=1, unit_price=5.0)\n    c.set_discount_pct(10)\n    # 10% off $25 = $22.50, not just $18 off a single line\n    assert c.total() == pytest.approx(22.5)\n\n\ndef test_discount_keeps_cents():\n    c = Cart()\n    c.add('a', qty=1, unit_price=19.99)\n    c.set_discount_pct(10)\n    assert c.total() == pytest.approx(17.991)\n"
+  },
+  "semantic_correctness_score": null,
+  "final_invariant_violations": 0
+}

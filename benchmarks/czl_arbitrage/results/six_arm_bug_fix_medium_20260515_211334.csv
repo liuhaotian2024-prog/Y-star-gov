@@ -1,0 +1,19 @@
+arm,arm_label,scenario,difficulty,trial,backend,use_czl,converged,iterations,wall_clock_seconds,input_tokens,output_tokens,cost_usd,final_ruff_errors,final_mypy_errors,final_pytest_failures,failure_reason,semantic_correctness_score,final_invariant_violations
+A,claude-opus-4-7 bare,bug_fix,medium,0,anthropic,False,True,1,10.725888013839722,1537,548,0.021385,0,0,0,,,0
+A,claude-opus-4-7 bare,bug_fix,medium,1,anthropic,False,True,1,18.870861053466797,1537,1217,0.03811,0,0,0,,,0
+A,claude-opus-4-7 bare,bug_fix,medium,2,anthropic,False,True,1,17.127588987350464,1537,1056,0.034085000000000004,0,0,0,,,0
+B1,gemma4:e4b bare,bug_fix,medium,0,ollama,False,True,1,114.81225609779358,1215,2665,0.0,0,0,0,,,0
+B1,gemma4:e4b bare,bug_fix,medium,1,ollama,False,True,1,110.29148125648499,1215,2665,0.0,0,0,0,,,0
+B1,gemma4:e4b bare,bug_fix,medium,2,ollama,False,True,1,110.19283986091614,1215,2665,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,bug_fix,medium,0,ollama,True,True,1,110.14126992225647,1215,2665,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,bug_fix,medium,1,ollama,True,True,1,109.2946949005127,1215,2665,0.0,0,0,0,,,0
+B2,gemma4:e4b + CZL,bug_fix,medium,2,ollama,True,True,1,112.25695705413818,1215,2665,0.0,0,0,0,,,0
+C1,deepseek bare,bug_fix,medium,0,deepseek,False,True,1,11.736602783203125,1081,990,0.00035287000000000003,0,0,0,,,0
+C1,deepseek bare,bug_fix,medium,1,deepseek,False,True,1,5.4264209270477295,1081,341,0.00017115,0,0,0,,,0
+C1,deepseek bare,bug_fix,medium,2,deepseek,False,True,1,5.511854887008667,1081,370,0.00017927,0,0,0,,,0
+C2,deepseek + CZL,bug_fix,medium,0,deepseek,True,True,1,7.261765718460083,1081,551,0.00022994999999999998,0,0,0,,,0
+C2,deepseek + CZL,bug_fix,medium,1,deepseek,True,True,1,5.588389158248901,1081,446,0.00020055000000000002,0,0,0,,,0
+C2,deepseek + CZL,bug_fix,medium,2,deepseek,True,True,2,8.65900707244873,2115,646,0.00032893,0,0,0,,,0
+D2,minimax + CZL,bug_fix,medium,0,minimax,True,True,1,10.450675964355469,1061,836,0.0008810000000000002,0,0,0,,,0
+D2,minimax + CZL,bug_fix,medium,1,minimax,True,True,1,15.01228404045105,1061,1335,0.0012802000000000002,0,0,0,,,0
+D2,minimax + CZL,bug_fix,medium,2,minimax,True,True,1,10.33049988746643,1061,1015,0.0010242,0,0,0,,,0
