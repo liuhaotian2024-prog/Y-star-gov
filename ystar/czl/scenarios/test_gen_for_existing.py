@@ -16,6 +16,9 @@ from typing import Any, Dict, List
 
 from ystar.czl.scenarios.base import Scenario, PlanStep, ScenarioRegistry
 from ystar.czl.verifiers.base import Verifier, VerifierResult
+from ystar.czl.verifiers.contract_verifier import ContractConsistencyVerifier
+from ystar.czl.verifiers.differential_verifier import DifferentialVerifier
+from ystar.czl.verifiers.mutation_score_verifier import MutationScoreVerifier
 
 
 # === workspace fixture =======================================================
