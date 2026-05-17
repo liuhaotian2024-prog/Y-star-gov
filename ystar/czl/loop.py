@@ -35,6 +35,7 @@ from ystar.cieu.schema import generate_event_id, DECISION_ALLOW, DECISION_DENY
 from ystar.czl.scenarios.base import Scenario
 from ystar.czl.backends.base import Backend
 from ystar.czl.verifiers.base import VerifierResult
+from typing import Set  # for IterSnapshot
 
 
 _log = logging.getLogger("ystar.czl.loop")
@@ -73,6 +74,48 @@ class CZLRun:
 
 
 @dataclass
+class IterSnapshot:
+    """v3.7: per-iter snapshot for dominance-based rollback ranking.
+
+    `passing_tests` / `failing_tests` are sets of test identifiers
+    (e.g. `test_data_pipeline.py::test_load_records_success`) extracted
+    from the pytest verifier's per_test_status via
+    ystar.czl.reflection.transitions.extract_test_status. Empty when no
+    pytest verifier ran or per_test_status was unavailable; dominance
+    semantics then degrade gracefully (no rollback fires).
+    """
+    iter_idx: int
+    residual: float
+    commit_sha: str
+    passing_tests: Set[str]
+    failing_tests: Set[str]
+
+
+def dominates(a: "IterSnapshot", b: "IterSnapshot") -> bool:
+    """v3.7 dominance check.
+
+    a dominates b iff a's passing-test set is a non-strict superset of
+    b's, AND one of:
+      - strictly more passing tests (a.passing_tests > b.passing_tests), OR
+      - same passing set but a is the earlier iter (tie-break — current
+        regressed to a previously-explored state; roll back for clean
+        baseline).
+
+    Empty passing sets on both sides → False (graceful degradation when
+    pytest verifier didn't produce per_test_status, e.g. infra timeout).
+    """
+    if not a.passing_tests and not b.passing_tests:
+        return False
+    if not (a.passing_tests >= b.passing_tests):
+        return False
+    # Strictly more passing tests
+    if a.passing_tests > b.passing_tests:
+        return True
+    # Tie-break: same passing set, earlier iter
+    return a.iter_idx < b.iter_idx
+
+
+@dataclass
 class CZLResult:
     """A single CZL run outcome — what got shipped (or why not)."""
     run_id: str
@@ -89,17 +132,16 @@ class CZLResult:
     final_verifier_report: Optional[Dict[str, Any]] = None
     failure_reason: str = ""              # filled if not converged
     duration_seconds: float = 0.0
-    # Indie-facing copy: cost comparison string for stdout
     cost_summary_line: str = ""
-    # Why the loop stopped. Explicit field so downstream tooling can
-    # distinguish "shipped at Rt+1=0" from "ran out of iterations" from
-    # other early-exit branches. Pre-v3 callers that only check `converged`
-    # keep working; new callers can branch on this.
-    # `stopping_authority` is the canonical v3 name; `halted_due_to` is
-    # kept as a mirror field for backwards compatibility with v2 readers.
-    stopping_authority: str = ""          # converged | max_iter_exhausted | no_progress | user_rejected_contract | scenario_returned_empty_plan | exception
-    halted_due_to: str = ""               # v2-compat mirror of stopping_authority
+    stopping_authority: str = ""
+    halted_due_to: str = ""
     residual_trajectory: List[float] = field(default_factory=list)
+    # v3.7 T2: full prompts the model saw per iter (system + user + feedback_block
+    # incl. META). Stored so trial-level diagnostics can verify "did the model
+    # actually see regression META at iter N?". Bench harness writes to trial JSON.
+    iter_prompts: List[str] = field(default_factory=list)
+    # v3.7 T1: per-iter snapshots for rollback diagnostics
+    iter_snapshots: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         d = dict(self.__dict__)
@@ -212,9 +254,9 @@ def run_scenario(
     from ystar.czl.reflection import ReflectionAnalyzer
     reflection = ReflectionAnalyzer()
 
-    # v3.4 T4: keep-last-good-iter rollback state. Snapshots done via git.
-    best_residual: float = float("inf")
-    best_commit_sha: Optional[str] = None
+    # v3.7 T1: dominance-based rollback state. Per-test passing sets per iter.
+    # Old v3.4 best-residual logic is REPLACED — see below.
+    iter_snapshots_history: List[IterSnapshot] = []
     rollback_enabled = contract_dict.get("model_tier", "medium") in ("small", "tiny", "local")
     if rollback_enabled:
         # Ensure workspace is a git repo with an initial commit so we can
@@ -243,10 +285,23 @@ def run_scenario(
         step = plan_steps[min(step_idx, len(plan_steps) - 1)]
         result.iterations = step_idx + 1
 
+        # v3.7 T2: capture the full prompt the model sees this iter
+        # (system + user + feedback_block incl. any META) so trial-level
+        # diagnostics can verify "did the model actually see regression
+        # META at iter N?". Append BEFORE invoke so any backend exception
+        # still leaves a record.
+        composed_user_prompt = (
+            step.user_prompt
+            + ("\n\n" + feedback_block if feedback_block else "")
+        )
+        result.iter_prompts.append(
+            f"=== SYSTEM (iter {step_idx}) ===\n{request.scenario.system_prompt()}\n\n"
+            f"=== USER (iter {step_idx}) ===\n{composed_user_prompt}"
+        )
         # 4a. ask the backend to produce the action for this step
         backend_response = request.backend.invoke(
             system_prompt=request.scenario.system_prompt(),
-            user_prompt=step.user_prompt + ("\n\n" + feedback_block if feedback_block else ""),
+            user_prompt=composed_user_prompt,
             workspace_dir=request.workspace_dir,
             contract=contract_dict,
         )
@@ -278,26 +333,62 @@ def run_scenario(
         # Trajectory tracking — record residual BEFORE deciding to halt.
         result.residual_trajectory.append(residual)
 
-        # v3.4 T4: keep-last-good-iter rollback (small tier only). Snapshot
-        # this iter; if it's strictly worse than the best so far, restore
-        # the workspace to the best iter's commit BEFORE generating
-        # feedback for the next iter. The model still sees the current
-        # iter's verifier feedback in its next prompt (so it learns the
-        # mistake), but its starting workspace is the best-so-far state.
+        # v3.7 T1: dominance-based rollback (small tier only).
+        #
+        # Replaces v3.4 "lowest residual count = best" with: rollback ONLY
+        # when a historical snapshot STRICTLY DOMINATES the current one
+        # (its passing-test set is a proper superset). When no snapshot
+        # dominates, KEEP current state — gemma's progress is preserved,
+        # and the v3.6 regression META can coach recovery of any
+        # newly-failed tests.
+        #
+        # This composes correctly with v3.6 per-test tracking: a residual=2
+        # iter that FIXES a hard test is not erased by a residual=1 iter
+        # that lacks the hard fix, because dominance compares actual
+        # passing-test SETS, not failing counts.
         if rollback_enabled:
             current_commit = _git_commit_iter(request.workspace_dir, step_idx, residual)
-            if residual < best_residual:
-                best_residual = residual
-                best_commit_sha = current_commit
-                _log.info("CZL T4: iter %d new best residual %.0f, snapshot %s",
-                          step_idx, residual, (current_commit or "")[:8])
-            elif residual > best_residual and best_commit_sha:
+            # Extract per-test status from this iter's verifiers (pytest).
+            from ystar.czl.reflection.transitions import extract_test_status
+            test_status = extract_test_status(verifier_results)
+            passing = {n for n, p in test_status.items() if p}
+            failing = {n for n, p in test_status.items() if not p}
+            current_snapshot = IterSnapshot(
+                iter_idx=step_idx, residual=residual,
+                commit_sha=(current_commit or ""),
+                passing_tests=passing, failing_tests=failing,
+            )
+            iter_snapshots_history.append(current_snapshot)
+            # Also expose for diagnostics:
+            result.iter_snapshots.append({
+                "iter_idx": step_idx, "residual": residual,
+                "commit_sha": (current_commit or "")[:12],
+                "passing_count": len(passing), "failing_count": len(failing),
+                "passing_sample": sorted(passing)[:5],
+                "failing_sample": sorted(failing)[:5],
+            })
+
+            # Find historical snapshots that dominate the current state.
+            dominating = [s for s in iter_snapshots_history[:-1]
+                          if dominates(s, current_snapshot)]
+            if dominating:
+                # Pick the MOST RECENT dominator — minimises how much
+                # of the model's recent work we erase.
+                target = max(dominating, key=lambda s: s.iter_idx)
                 _log.warning(
-                    "CZL T4: iter %d residual %.0f > best %d at iter %s, rolling back workspace to %s",
-                    step_idx, residual, int(best_residual),
-                    "(unknown)", (best_commit_sha or "")[:8],
+                    "CZL T4 (v3.7): iter %d (residual=%.0f, %d passing) is DOMINATED by "
+                    "iter %d (residual=%.0f, %d passing); rolling back workspace to %s",
+                    step_idx, residual, len(passing),
+                    target.iter_idx, target.residual, len(target.passing_tests),
+                    (target.commit_sha or "")[:8],
                 )
-                _git_rollback_to(request.workspace_dir, best_commit_sha)
+                _git_rollback_to(request.workspace_dir, target.commit_sha)
+            else:
+                _log.info(
+                    "CZL T4 (v3.7): iter %d (residual=%.0f, %d passing) — no dominator "
+                    "in history; KEEPING current state (regression META will coach if needed)",
+                    step_idx, residual, len(passing),
+                )
 
         if residual == 0.0:
             # converged — ship the current workspace as-is. The break here is

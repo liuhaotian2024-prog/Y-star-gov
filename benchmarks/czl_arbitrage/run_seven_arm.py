@@ -248,6 +248,10 @@ def run_one_trial(
             record["failure_reason"] = result.failure_reason
             record["stopping_authority"] = getattr(result, "stopping_authority", "")
             record["residual_trajectory"] = list(getattr(result, "residual_trajectory", []))
+            # v3.7 T2: capture iter prompts (full text gemma saw incl. META)
+            record["iter_prompts"] = list(getattr(result, "iter_prompts", []))
+            # v3.7 T1: per-iter dominance snapshots
+            record["iter_snapshots"] = list(getattr(result, "iter_snapshots", []))
         else:
             plan_steps = scenario.plan(task_description, workspace_dir)
             first_prompt = plan_steps[0].user_prompt if plan_steps else task_description
