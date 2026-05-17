@@ -1,0 +1,141 @@
+arm,arm_label,scenario,trial,backend,use_czl,converged,iterations,wall_clock_seconds,input_tokens,output_tokens,cost_usd,failure_reason,obj_cyclomatic_complexity_avg,obj_duplicated_lines_pct,obj_test_coverage_pct,obj_mypy_strict_type_coverage_pct,stopping_authority,residual_trajectory
+C1,deepseek bare,cross_file_refactor,4,deepseek,False,False,1,4.269662380218506,806,236,0.0001225,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+C1,deepseek bare,cross_file_refactor,2,deepseek,False,False,1,4.270059108734131,806,236,0.0001225,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+C1,deepseek bare,cross_file_refactor,1,deepseek,False,False,1,4.270184755325317,806,236,0.0001225,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+C1,deepseek bare,cross_file_refactor,0,deepseek,False,False,1,4.270378112792969,806,236,0.0001225,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+C1,deepseek bare,cross_file_refactor,3,deepseek,False,False,1,4.269859075546265,806,236,0.0001225,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+A,claude-opus-4-7 bare,cross_file_refactor,0,anthropic,False,False,1,7.904446840286255,1172,446,0.01701,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: the old foo() name has been removed; use bar() instead.""""""",1,25.0,,100.0,,
+D2,minimax + CZL,cross_file_refactor,3,minimax,True,True,1,7.992755889892578,790,741,0.0007508000000000001,,1,25.0,,100.0,converged,[0.0]
+A,claude-opus-4-7 bare,cross_file_refactor,1,anthropic,False,True,1,8.215324878692627,1172,498,0.01831,,1,25.0,,100.0,,
+A,claude-opus-4-7 bare,cross_file_refactor,2,anthropic,False,False,1,8.418396949768066,1172,528,0.01906,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+D2,minimax + CZL,cross_file_refactor,1,minimax,True,True,1,9.923434019088745,790,1065,0.00101,,1,25.0,,100.0,converged,[0.0]
+D2,minimax + CZL,cross_file_refactor,2,minimax,True,True,1,11.296926021575928,790,1277,0.0011795999999999998,,1,26.3,,100.0,converged,[0.0]
+C2,deepseek + CZL,cross_file_refactor,2,deepseek,True,True,3,7.502335786819458,2340,390,0.000273,,1,25.0,,100.0,converged,"[1.0, 1.0, 0.0]"
+C2,deepseek + CZL,cross_file_refactor,3,deepseek,True,True,3,7.525189161300659,2340,390,0.000273,,1,25.0,,100.0,converged,"[1.0, 1.0, 0.0]"
+C2,deepseek + CZL,cross_file_refactor,0,deepseek,True,True,3,7.535812854766846,2340,390,0.000273,,1,25.0,,100.0,converged,"[1.0, 1.0, 0.0]"
+C2,deepseek + CZL,cross_file_refactor,1,deepseek,True,True,3,7.551635026931763,2340,390,0.000273,,1,25.0,,100.0,converged,"[1.0, 1.0, 0.0]"
+C2,deepseek + CZL,cross_file_refactor,4,deepseek,True,True,3,8.955355882644653,2340,573,0.00032424,,1,25.0,,100.0,converged,"[1.0, 1.0, 0.0]"
+D2,minimax + CZL,cross_file_refactor,0,minimax,True,True,2,13.316119194030762,1539,1312,0.0013574,,1,25.0,,100.0,converged,"[1.0, 0.0]"
+D2,minimax + CZL,cross_file_refactor,4,minimax,True,True,1,14.266594886779785,790,1689,0.0015092,,1,26.3,,100.0,converged,[0.0]
+A,claude-opus-4-7 bare,cross_file_refactor,3,anthropic,False,False,1,6.342814207077026,1172,420,0.01636,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated module: the old foo() name has been removed; use bar() instead.""""""",1,25.0,,100.0,,
+A,claude-opus-4-7 bare,cross_file_refactor,4,anthropic,False,False,1,7.269289970397949,1172,522,0.018910000000000003,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: the old foo() name has been removed; use bar() instead.""""""",1,25.0,,100.0,,
+A2,claude-opus-4-7 + CZL,cross_file_refactor,0,anthropic,True,True,1,7.649524450302124,1172,547,0.019535,,1,25.0,,100.0,converged,[0.0]
+C1,deepseek bare,type_annotation_completion,3,deepseek,False,False,1,5.172719240188599,1154,722,0.00028294,mypy --strict: 13 error(s),1.94,7.5,97.1,88.6,,
+C1,deepseek bare,type_annotation_completion,1,deepseek,False,False,1,5.196960687637329,1154,714,0.00028070000000000005,mypy --strict: 12 error(s),1.94,7.5,97.1,88.6,,
+C1,deepseek bare,type_annotation_completion,0,deepseek,False,False,1,5.91408109664917,1154,717,0.00028154000000000005,mypy --strict: 13 error(s),1.94,7.5,97.1,88.6,,
+C1,deepseek bare,type_annotation_completion,2,deepseek,False,False,1,5.906139850616455,1154,735,0.00028658000000000004,mypy --strict: 13 error(s),1.94,7.5,97.1,88.6,,
+C1,deepseek bare,type_annotation_completion,4,deepseek,False,False,1,5.168926239013672,1154,736,0.00028686000000000006,mypy --strict: 13 error(s),1.94,7.5,97.1,88.6,,
+A2,claude-opus-4-7 + CZL,cross_file_refactor,2,anthropic,True,True,1,6.961776971817017,1172,461,0.017384999999999998,,1,25.0,,100.0,converged,[0.0]
+A2,claude-opus-4-7 + CZL,cross_file_refactor,1,anthropic,True,True,1,9.672718048095703,1172,630,0.02161,,1,25.0,,100.0,converged,[0.0]
+A2,claude-opus-4-7 + CZL,cross_file_refactor,3,anthropic,True,True,1,8.728933811187744,1172,560,0.01986,,1,25.0,,100.0,converged,[0.0]
+A2,claude-opus-4-7 + CZL,cross_file_refactor,4,anthropic,True,True,1,8.093631982803345,1172,560,0.01986,,1,25.0,,100.0,converged,[0.0]
+A,claude-opus-4-7 bare,type_annotation_completion,0,anthropic,False,False,1,11.45450496673584,1661,1064,0.034905000000000005,mypy --strict: 12 error(s),1.94,7.4,97.1,88.6,,
+A,claude-opus-4-7 bare,type_annotation_completion,1,anthropic,False,False,1,11.120250940322876,1661,1053,0.034629999999999994,mypy --strict: 12 error(s),1.94,7.5,97.1,88.6,,
+C2,deepseek + CZL,type_annotation_completion,4,deepseek,True,False,4,20.513087034225464,5400,2894,0.00118832,did_not_converge_after_4_iterations (no_progress): mypy --strict: 13 error(s),2,7.5,97.1,88.6,no_progress,"[1.0, 1.0, 1.0, 1.0]"
+C2,deepseek + CZL,type_annotation_completion,0,deepseek,True,False,4,22.037426948547363,5435,3089,0.0012453700000000002,did_not_converge_after_4_iterations (no_progress): mypy --strict: 13 error(s),1.94,7.5,97.1,88.6,no_progress,"[1.0, 1.0, 1.0, 1.0]"
+C2,deepseek + CZL,type_annotation_completion,1,deepseek,True,False,4,22.08152198791504,5408,3206,0.00127624,did_not_converge_after_4_iterations (no_progress): mypy --strict: 12 error(s),1.94,7.5,97.1,88.6,no_progress,"[1.0, 1.0, 1.0, 1.0]"
+A,claude-opus-4-7 bare,type_annotation_completion,2,anthropic,False,False,1,10.881382942199707,1661,1042,0.034355,mypy --strict: 12 error(s),1.94,7.6,97.0,88.6,,
+C2,deepseek + CZL,type_annotation_completion,2,deepseek,True,False,4,27.400261163711548,5719,3740,0.00144753,did_not_converge_after_4_iterations (no_progress): mypy --strict: 13 error(s); pytest: failures,2,7.5,,88.6,no_progress,"[1.0, 1.0, 2.0, 2.0]"
+D2,minimax + CZL,type_annotation_completion,1,minimax,True,False,4,36.69364023208618,5303,4805,0.0049046,did_not_converge_after_4_iterations (no_progress): mypy --strict: 13 error(s),1.94,7.6,97.0,88.6,no_progress,"[1.0, 1.0, 1.0, 1.0]"
+A,claude-opus-4-7 bare,type_annotation_completion,3,anthropic,False,False,1,11.00570797920227,1661,1065,0.03493,mypy --strict: 12 error(s),1.94,7.4,97.1,88.6,,
+D2,minimax + CZL,type_annotation_completion,0,minimax,True,False,4,41.27836084365845,5307,5622,0.005559000000000001,did_not_converge_after_4_iterations (no_progress): mypy --strict: 24 error(s); pytest: failures; 16 signature mismatch(es); first: Cache.__init__: function missing,0.0,0.0,,0.0,no_progress,"[1.0, 1.0, 1.0, 3.0]"
+C1,deepseek bare,test_generation_for_existing_code,2,deepseek,False,True,1,9.323533058166504,799,1415,0.00045213,,2.38,9.3,100.0,0.0,,
+A,claude-opus-4-7 bare,type_annotation_completion,4,anthropic,False,False,1,13.895355224609375,1661,1126,0.036455,mypy --strict: 13 error(s),1.89,7.1,97.1,88.9,,
+C1,deepseek bare,test_generation_for_existing_code,0,deepseek,False,True,1,10.629805088043213,799,1536,0.00048601000000000004,,2.38,9.3,100.0,0.0,,
+C1,deepseek bare,test_generation_for_existing_code,1,deepseek,False,True,1,11.600931167602539,799,1892,0.0005856900000000001,,2.38,9.3,100.0,0.0,,
+D2,minimax + CZL,type_annotation_completion,4,minimax,True,False,4,41.13626432418823,5161,5413,0.0053626,did_not_converge_after_4_iterations (no_progress): mypy --strict: 13 error(s),2,7.6,97.0,88.6,no_progress,"[1.0, 1.0, 1.0, 1.0]"
+C2,deepseek + CZL,type_annotation_completion,3,deepseek,True,False,7,37.70082926750183,9860,5224,0.00215292,did_not_converge_after_7_iterations (no_progress): mypy --strict: 12 error(s),1.95,7.2,97.1,87.2,no_progress,"[1.0, 1.0, 2.0, 1.0, 1.0, 1.0, 1.0]"
+C1,deepseek bare,test_generation_for_existing_code,3,deepseek,False,True,1,10.659272909164429,799,1553,0.0004907700000000001,,2.38,9.3,100.0,0.0,,
+C1,deepseek bare,test_generation_for_existing_code,4,deepseek,False,True,1,10.3556649684906,799,1568,0.0004949700000000001,,2.38,9.3,100.0,0.0,,
+C2,deepseek + CZL,test_generation_for_existing_code,0,deepseek,True,True,1,14.762861728668213,799,1596,0.00050281,,2.38,9.3,100.0,0.0,converged,[0.0]
+D2,minimax + CZL,type_annotation_completion,3,minimax,True,False,4,54.92795705795288,5308,6697,0.0064192,did_not_converge_after_4_iterations (no_progress): mypy --strict: 12 error(s),1.95,7.0,97.2,87.2,no_progress,"[1.0, 1.0, 1.0, 1.0]"
+C2,deepseek + CZL,test_generation_for_existing_code,1,deepseek,True,True,1,17.323199033737183,799,1667,0.0005226900000000001,,2.38,9.3,100.0,0.0,converged,[0.0]
+C1,deepseek bare,bug_fix_with_implicit_dependency,0,deepseek,False,True,1,6.298258304595947,909,259,0.00013615,,1.25,6.7,,65.5,,
+C2,deepseek + CZL,test_generation_for_existing_code,2,deepseek,True,True,1,18.549439907073975,799,1648,0.0005173700000000001,,2.38,9.3,100.0,0.0,converged,[0.0]
+B1,gemma4:e4b bare,cross_file_refactor,0,ollama,False,False,1,76.36187696456909,924,1598,0.0,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+C2,deepseek + CZL,test_generation_for_existing_code,3,deepseek,True,True,1,17.981778144836426,799,1418,0.00045297,,2.38,9.3,100.0,0.0,converged,[0.0]
+C1,deepseek bare,bug_fix_with_implicit_dependency,1,deepseek,False,True,1,7.173849105834961,909,263,0.00013727,,1.25,6.7,,65.5,,
+C1,deepseek bare,bug_fix_with_implicit_dependency,2,deepseek,False,True,1,6.766211271286011,909,256,0.00013531,,1.25,6.7,,65.5,,
+C1,deepseek bare,bug_fix_with_implicit_dependency,3,deepseek,False,True,1,5.50425910949707,910,275,0.0001407,,1.25,6.7,,65.5,,
+C1,deepseek bare,bug_fix_with_implicit_dependency,4,deepseek,False,True,1,5.567730903625488,909,260,0.00013643,,1.25,6.7,,65.5,,
+C2,deepseek + CZL,test_generation_for_existing_code,4,deepseek,True,True,1,19.960952043533325,799,1385,0.00044373000000000004,,2.38,9.3,100.0,0.0,converged,[0.0]
+D2,minimax + CZL,test_generation_for_existing_code,1,minimax,True,True,1,32.54941177368164,784,3356,0.0028416,,2.38,9.3,100.0,0.0,converged,[0.0]
+C2,deepseek + CZL,bug_fix_with_implicit_dependency,0,deepseek,True,True,1,4.692096710205078,911,256,0.00013545,,1.25,6.7,,65.5,converged,[0.0]
+C2,deepseek + CZL,bug_fix_with_implicit_dependency,1,deepseek,True,True,1,5.122420072555542,909,245,0.00013223,,1.25,6.7,,65.5,converged,[0.0]
+C2,deepseek + CZL,bug_fix_with_implicit_dependency,2,deepseek,True,True,1,4.649933099746704,909,243,0.00013167000000000002,,1.25,6.7,,65.5,converged,[0.0]
+C2,deepseek + CZL,bug_fix_with_implicit_dependency,3,deepseek,True,True,1,5.017446041107178,908,259,0.00013608,,1.25,6.7,,65.5,converged,[0.0]
+C2,deepseek + CZL,bug_fix_with_implicit_dependency,4,deepseek,True,True,1,5.039633274078369,911,267,0.00013853000000000002,,1.25,6.7,,65.5,converged,[0.0]
+D2,minimax + CZL,type_annotation_completion,2,minimax,True,False,4,75.4069139957428,5196,10459,0.0094064,did_not_converge_after_4_iterations (no_progress): mypy --strict: 13 error(s),1.94,7.5,97.1,88.6,no_progress,"[1.0, 1.0, 1.0, 1.0]"
+D2,minimax + CZL,test_generation_for_existing_code,0,minimax,True,True,1,42.10081386566162,784,5491,0.004549600000000001,,2.38,9.3,100.0,0.0,converged,[0.0]
+D2,minimax + CZL,test_generation_for_existing_code,2,minimax,True,True,1,34.95562124252319,784,4596,0.0038336000000000004,,2.38,9.3,100.0,0.0,converged,[0.0]
+D2,minimax + CZL,bug_fix_with_implicit_dependency,1,minimax,True,True,1,6.0651960372924805,879,539,0.000607,,1.25,6.7,,65.5,converged,[0.0]
+D2,minimax + CZL,bug_fix_with_implicit_dependency,0,minimax,True,True,1,8.62737488746643,883,907,0.0009022000000000001,,1.33,6.7,,65.5,converged,[0.0]
+D2,minimax + CZL,bug_fix_with_implicit_dependency,2,minimax,True,True,1,6.802242040634155,879,725,0.0007558,,1.25,6.7,,65.5,converged,[0.0]
+D2,minimax + CZL,bug_fix_with_implicit_dependency,3,minimax,True,True,1,6.0550220012664795,879,679,0.0007190000000000001,,1.25,6.7,,65.5,converged,[0.0]
+D2,minimax + CZL,test_generation_for_existing_code,4,minimax,True,True,1,18.812937021255493,784,2098,0.0018352,,2.38,9.3,100.0,0.0,converged,[0.0]
+D2,minimax + CZL,bug_fix_with_implicit_dependency,4,minimax,True,True,1,6.812069892883301,879,828,0.0008382000000000001,,1.25,6.7,,65.5,converged,[0.0]
+A2,claude-opus-4-7 + CZL,type_annotation_completion,0,anthropic,True,False,4,70.04297494888306,7907,6237,0.19546000000000002,did_not_converge_after_4_iterations (no_progress): mypy --strict: 12 error(s),1.94,7.2,97.1,88.6,no_progress,"[1.0, 1.0, 1.0, 1.0]"
+A2,claude-opus-4-7 + CZL,type_annotation_completion,2,anthropic,True,False,4,66.23405385017395,7699,5804,0.183595,did_not_converge_after_4_iterations (no_progress): mypy --strict: 12 error(s),1.94,7.5,97.1,88.6,no_progress,"[1.0, 1.0, 1.0, 1.0]"
+A2,claude-opus-4-7 + CZL,type_annotation_completion,1,anthropic,True,False,4,79.42853283882141,7716,5862,0.18512999999999996,did_not_converge_after_4_iterations (no_progress): mypy --strict: 12 error(s),1.94,7.4,97.1,88.6,no_progress,"[1.0, 1.0, 1.0, 1.0]"
+B1,gemma4:e4b bare,cross_file_refactor,1,ollama,False,False,1,65.9364058971405,924,1598,0.0,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+D2,minimax + CZL,test_generation_for_existing_code,3,minimax,True,True,4,72.74215817451477,3826,10524,0.0091844,,2.38,9.3,100.0,0.0,converged,"[1.0, 1.0, 1.0, 0.0]"
+A,claude-opus-4-7 bare,test_generation_for_existing_code,0,anthropic,False,True,1,20.6110360622406,1250,2084,0.05835,,2.38,9.3,100.0,0.0,,
+A,claude-opus-4-7 bare,test_generation_for_existing_code,1,anthropic,False,True,1,19.95221996307373,1250,2041,0.05727499999999999,,2.38,9.3,100.0,0.0,,
+A2,claude-opus-4-7 + CZL,type_annotation_completion,3,anthropic,True,False,4,59.68413996696472,7906,5550,0.17828,did_not_converge_after_4_iterations (no_progress): mypy --strict: 12 error(s),1.89,7.0,97.2,88.9,no_progress,"[1.0, 1.0, 1.0, 1.0]"
+A2,claude-opus-4-7 + CZL,type_annotation_completion,4,anthropic,True,False,4,63.148160219192505,7699,5754,0.18234499999999998,did_not_converge_after_4_iterations (no_progress): mypy --strict: 12 error(s),1.94,7.5,97.1,88.6,no_progress,"[1.0, 1.0, 1.0, 1.0]"
+A,claude-opus-4-7 bare,test_generation_for_existing_code,2,anthropic,False,True,1,22.289319038391113,1250,2212,0.06155,,2.38,9.3,100.0,0.0,,
+A,claude-opus-4-7 bare,test_generation_for_existing_code,3,anthropic,False,True,1,21.89856266975403,1250,2243,0.062325000000000005,,2.38,9.3,100.0,0.0,,
+B1,gemma4:e4b bare,cross_file_refactor,2,ollama,False,False,1,61.298295974731445,924,1598,0.0,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+A,claude-opus-4-7 bare,test_generation_for_existing_code,4,anthropic,False,True,1,22.15566110610962,1250,2220,0.061750000000000006,,2.38,9.3,100.0,0.0,,
+A2,claude-opus-4-7 + CZL,test_generation_for_existing_code,0,anthropic,True,True,1,27.296470880508423,1250,2257,0.062675,,2.38,9.3,100.0,0.0,converged,[0.0]
+A2,claude-opus-4-7 + CZL,test_generation_for_existing_code,1,anthropic,True,True,1,24.650027990341187,1250,1893,0.053575,,2.38,9.3,100.0,0.0,converged,[0.0]
+A2,claude-opus-4-7 + CZL,test_generation_for_existing_code,2,anthropic,True,True,1,25.159281969070435,1250,2078,0.058199999999999995,,2.38,9.3,100.0,0.0,converged,[0.0]
+A,claude-opus-4-7 bare,bug_fix_with_implicit_dependency,0,anthropic,False,True,1,4.6400370597839355,1319,254,0.012945,,1.25,6.7,,65.5,,
+A,claude-opus-4-7 bare,bug_fix_with_implicit_dependency,1,anthropic,False,True,1,6.052026748657227,1316,254,0.012929999999999999,,1.25,6.7,,65.5,,
+A,claude-opus-4-7 bare,bug_fix_with_implicit_dependency,2,anthropic,False,True,1,4.928046226501465,1320,254,0.01295,,1.25,6.7,,65.5,,
+A2,claude-opus-4-7 + CZL,test_generation_for_existing_code,3,anthropic,True,True,1,24.897575855255127,1250,2140,0.05975,,2.38,9.3,100.0,0.0,converged,[0.0]
+A2,claude-opus-4-7 + CZL,test_generation_for_existing_code,4,anthropic,True,True,1,28.114363193511963,1250,2296,0.06365,,2.38,9.3,100.0,0.0,converged,[0.0]
+A,claude-opus-4-7 bare,bug_fix_with_implicit_dependency,3,anthropic,False,True,1,5.18787693977356,1316,254,0.012929999999999999,,1.25,6.7,,65.5,,
+A,claude-opus-4-7 bare,bug_fix_with_implicit_dependency,4,anthropic,False,True,1,5.96668815612793,1320,254,0.01295,,1.25,6.7,,65.5,,
+A2,claude-opus-4-7 + CZL,bug_fix_with_implicit_dependency,0,anthropic,True,True,1,4.44671893119812,1320,254,0.01295,,1.25,6.7,,65.5,converged,[0.0]
+A2,claude-opus-4-7 + CZL,bug_fix_with_implicit_dependency,1,anthropic,True,True,1,4.701875925064087,1320,254,0.01295,,1.25,6.7,,65.5,converged,[0.0]
+A2,claude-opus-4-7 + CZL,bug_fix_with_implicit_dependency,2,anthropic,True,True,1,4.543645858764648,1320,254,0.01295,,1.25,6.7,,65.5,converged,[0.0]
+A2,claude-opus-4-7 + CZL,bug_fix_with_implicit_dependency,3,anthropic,True,True,1,4.8930511474609375,1314,254,0.012920000000000001,,1.25,6.7,,65.5,converged,[0.0]
+A2,claude-opus-4-7 + CZL,bug_fix_with_implicit_dependency,4,anthropic,True,True,1,4.65173602104187,1318,254,0.01294,,1.25,6.7,,65.5,converged,[0.0]
+B1,gemma4:e4b bare,cross_file_refactor,3,ollama,False,False,1,64.43376898765564,924,1598,0.0,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+B1,gemma4:e4b bare,cross_file_refactor,4,ollama,False,False,1,63.23930883407593,924,1598,0.0,"foo() still called 1 place(s); first: utils/old_api.py:1: """"""Deprecated: foo() is the old name; bar() is the new one.""""""",1,25.0,,100.0,,
+B2,gemma4:e4b + CZL,cross_file_refactor,0,ollama,True,True,2,106.40134286880493,1784,2691,0.0,,1,25.0,,100.0,converged,"[1.0, 0.0]"
+B2,gemma4:e4b + CZL,cross_file_refactor,1,ollama,True,True,2,107.30330109596252,1784,2691,0.0,,1,25.0,,100.0,converged,"[1.0, 0.0]"
+B2,gemma4:e4b + CZL,cross_file_refactor,2,ollama,True,True,2,109.0844783782959,1784,2691,0.0,,1,25.0,,100.0,converged,"[1.0, 0.0]"
+B2,gemma4:e4b + CZL,cross_file_refactor,3,ollama,True,True,2,108.15274596214294,1784,2691,0.0,,1,25.0,,100.0,converged,"[1.0, 0.0]"
+B2,gemma4:e4b + CZL,cross_file_refactor,4,ollama,True,True,2,108.66356492042542,1784,2691,0.0,,1,25.0,,100.0,converged,"[1.0, 0.0]"
+B1,gemma4:e4b bare,type_annotation_completion,0,ollama,False,False,1,110.32327079772949,1365,2532,0.0,mypy --strict: 15 error(s),1.94,7.6,97.0,86.4,,
+B1,gemma4:e4b bare,type_annotation_completion,1,ollama,False,False,1,106.46306109428406,1365,2532,0.0,mypy --strict: 15 error(s),1.94,7.6,97.0,86.4,,
+B1,gemma4:e4b bare,type_annotation_completion,2,ollama,False,False,1,106.60411310195923,1365,2532,0.0,mypy --strict: 15 error(s),1.94,7.6,97.0,86.4,,
+B1,gemma4:e4b bare,type_annotation_completion,3,ollama,False,False,1,106.7561559677124,1365,2532,0.0,mypy --strict: 15 error(s),1.94,7.6,97.0,86.4,,
+B1,gemma4:e4b bare,type_annotation_completion,4,ollama,False,False,1,105.96118927001953,1365,2532,0.0,mypy --strict: 15 error(s),1.94,7.6,97.0,86.4,,
+B2,gemma4:e4b + CZL,type_annotation_completion,0,ollama,True,False,4,591.4610061645508,6438,13521,0.0,did_not_converge_after_4_iterations (no_progress): mypy --strict: 15 error(s),1.94,7.6,97.0,86.4,no_progress,"[1.0, 1.0, 1.0, 1.0]"
+B2,gemma4:e4b + CZL,type_annotation_completion,1,ollama,True,False,4,597.6230022907257,6438,13521,0.0,did_not_converge_after_4_iterations (no_progress): mypy --strict: 15 error(s),1.94,7.6,97.0,86.4,no_progress,"[1.0, 1.0, 1.0, 1.0]"
+B2,gemma4:e4b + CZL,type_annotation_completion,2,ollama,True,False,4,595.0783469676971,6438,13521,0.0,did_not_converge_after_4_iterations (no_progress): mypy --strict: 15 error(s),1.94,7.6,97.0,86.4,no_progress,"[1.0, 1.0, 1.0, 1.0]"
+B2,gemma4:e4b + CZL,type_annotation_completion,3,ollama,True,False,4,596.3851869106293,6438,13521,0.0,did_not_converge_after_4_iterations (no_progress): mypy --strict: 15 error(s),1.94,7.6,97.0,86.4,no_progress,"[1.0, 1.0, 1.0, 1.0]"
+B2,gemma4:e4b + CZL,type_annotation_completion,4,ollama,True,False,4,596.1045560836792,6438,13521,0.0,did_not_converge_after_4_iterations (no_progress): mypy --strict: 15 error(s),1.94,7.6,97.0,86.4,no_progress,"[1.0, 1.0, 1.0, 1.0]"
+B1,gemma4:e4b bare,test_generation_for_existing_code,0,ollama,False,False,1,163.25838208198547,903,3863,0.0,"differential: 1 input/output mismatch(es); first: `count('bob@test.org')` -> <exception NameError: name 'count' is not defined>, expected 1",2.38,9.3,94.2,0.0,,
+B1,gemma4:e4b bare,test_generation_for_existing_code,1,ollama,False,False,1,162.30461192131042,903,3863,0.0,"differential: 1 input/output mismatch(es); first: `count('bob@test.org')` -> <exception NameError: name 'count' is not defined>, expected 1",2.38,9.3,94.2,0.0,,
+B1,gemma4:e4b bare,test_generation_for_existing_code,2,ollama,False,False,1,164.55641388893127,903,3863,0.0,"differential: 1 input/output mismatch(es); first: `count('bob@test.org')` -> <exception NameError: name 'count' is not defined>, expected 1",2.38,9.3,94.2,0.0,,
+B1,gemma4:e4b bare,test_generation_for_existing_code,3,ollama,False,False,1,165.15181684494019,903,3863,0.0,"differential: 1 input/output mismatch(es); first: `count('bob@test.org')` -> <exception NameError: name 'count' is not defined>, expected 1",2.38,9.3,94.2,0.0,,
+B1,gemma4:e4b bare,test_generation_for_existing_code,4,ollama,False,False,1,166.10326290130615,903,3863,0.0,"differential: 1 input/output mismatch(es); first: `count('bob@test.org')` -> <exception NameError: name 'count' is not defined>, expected 1",2.38,9.3,94.2,0.0,,
+B2,gemma4:e4b + CZL,test_generation_for_existing_code,0,ollama,True,False,0,1391.2449111938477,0,0,0.0,exception: APIConnectionError: litellm.APIConnectionError: OllamaException - litellm.Timeout: Connection timed out after 600.0 seconds.,,,,,,
+B2,gemma4:e4b + CZL,test_generation_for_existing_code,1,ollama,True,True,8,1213.4529132843018,9170,28192,0.0,,2.38,9.3,94.2,0.0,converged,"[1.0, 2.0, 1.0, 1.0, 3.0, 2.0, 2.0, 0.0]"
+B2,gemma4:e4b + CZL,test_generation_for_existing_code,2,ollama,True,False,6,954.990257024765,6458,22260,0.0,did_not_converge_after_6_iterations (no_progress): pytest: failures; coverage: 28.8% (need ≥80%),2.38,9.3,28.8,0.0,no_progress,"[1.0, 2.0, 1.0, 1.0, 1.0, 2.0]"
+B2,gemma4:e4b + CZL,test_generation_for_existing_code,3,ollama,True,False,6,1097.5845112800598,6588,25559,0.0,"did_not_converge_after_6_iterations (no_progress): pytest: failures; coverage: 48.1% (need ≥80%); contract_consistency: 1 mismatch(es); first: /tmp/czl_seven_arm/test_generation_for_existing_code/B2/3/test_data_pipeline.py:0: call `<syntax_error>` (arity=0, kw=[], unpack=None) — SyntaxError in /tmp/czl",2.38,9.3,,0.0,no_progress,"[1.0, 2.0, 1.0, 1.0, 2.0, 3.0]"
+B2,gemma4:e4b + CZL,test_generation_for_existing_code,4,ollama,True,False,6,966.0437519550323,6528,22311,0.0,did_not_converge_after_6_iterations (no_progress): pytest: failures,2.38,9.3,82.7,0.0,no_progress,"[1.0, 2.0, 1.0, 1.0, 1.0, 1.0]"
+B1,gemma4:e4b bare,bug_fix_with_implicit_dependency,0,ollama,False,True,1,61.25746488571167,1065,1461,0.0,,1.25,6.7,,65.5,,
+B1,gemma4:e4b bare,bug_fix_with_implicit_dependency,1,ollama,False,True,1,65.66989183425903,1065,1597,0.0,,1.25,6.7,,65.5,,
+B1,gemma4:e4b bare,bug_fix_with_implicit_dependency,2,ollama,False,True,1,75.34815096855164,1063,1815,0.0,,1.25,6.7,,65.5,,
+B1,gemma4:e4b bare,bug_fix_with_implicit_dependency,3,ollama,False,True,1,62.10360813140869,1065,1525,0.0,,1.25,6.7,,65.5,,
+B1,gemma4:e4b bare,bug_fix_with_implicit_dependency,4,ollama,False,True,1,76.86187219619751,1066,1877,0.0,,1.25,6.7,,65.5,,
+B2,gemma4:e4b + CZL,bug_fix_with_implicit_dependency,0,ollama,True,True,1,51.23115587234497,1065,1268,0.0,,1.25,6.7,,65.5,converged,[0.0]
+B2,gemma4:e4b + CZL,bug_fix_with_implicit_dependency,1,ollama,True,True,1,61.67109513282776,1061,1404,0.0,,1.25,6.7,,65.5,converged,[0.0]
+B2,gemma4:e4b + CZL,bug_fix_with_implicit_dependency,2,ollama,True,True,1,59.36784505844116,1063,1383,0.0,,1.25,6.7,,65.5,converged,[0.0]
+B2,gemma4:e4b + CZL,bug_fix_with_implicit_dependency,3,ollama,True,True,1,55.62674307823181,1064,1349,0.0,,1.25,6.7,,65.5,converged,[0.0]
+B2,gemma4:e4b + CZL,bug_fix_with_implicit_dependency,4,ollama,True,True,1,52.6222288608551,1065,1268,0.0,,1.25,6.7,,65.5,converged,[0.0]

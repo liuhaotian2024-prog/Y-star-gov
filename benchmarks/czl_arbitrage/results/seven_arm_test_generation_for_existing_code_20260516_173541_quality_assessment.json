@@ -1,0 +1,133 @@
+{
+  "scenario": "test_generation_for_existing_code",
+  "n_records": 35,
+  "objective_means_by_arm": {
+    "C1": {
+      "cyclomatic_complexity_avg": 2.38,
+      "duplicated_lines_pct": 9.3,
+      "test_coverage_pct": 100.0,
+      "mypy_strict_type_coverage_pct": 0.0
+    },
+    "C2": {
+      "cyclomatic_complexity_avg": 2.38,
+      "duplicated_lines_pct": 9.3,
+      "test_coverage_pct": 100.0,
+      "mypy_strict_type_coverage_pct": 0.0
+    },
+    "D2": {
+      "cyclomatic_complexity_avg": 2.38,
+      "duplicated_lines_pct": 9.3,
+      "test_coverage_pct": 100.0,
+      "mypy_strict_type_coverage_pct": 0.0
+    },
+    "A": {
+      "cyclomatic_complexity_avg": 2.38,
+      "duplicated_lines_pct": 9.3,
+      "test_coverage_pct": 100.0,
+      "mypy_strict_type_coverage_pct": 0.0
+    },
+    "A2": {
+      "cyclomatic_complexity_avg": 2.38,
+      "duplicated_lines_pct": 9.3,
+      "test_coverage_pct": 100.0,
+      "mypy_strict_type_coverage_pct": 0.0
+    },
+    "B2": {
+      "cyclomatic_complexity_avg": 2.38,
+      "duplicated_lines_pct": 9.3,
+      "test_coverage_pct": 94.2,
+      "mypy_strict_type_coverage_pct": 0.0
+    }
+  },
+  "four_dim_judge": [
+    {
+      "arm": "B1",
+      "scores": null,
+      "reason": "did_not_converge"
+    },
+    {
+      "arm": "B2",
+      "scores": {
+        "functional_equivalence": 0.82,
+        "readability_delta": -0.35,
+        "style_conformance": 0.55,
+        "defensive_quality": 0.6
+      },
+      "raw_response": "```json\n{\"functional_equivalence\": 0.82, \"readability_delta\": -0.35, \"style_conformance\": 0.55, \"defensive_quality\": 0.60}\n```",
+      "cost_usd": 0.017462999999999996,
+      "latency_seconds": 1.5029432773590088,
+      "error": null,
+      "retries": 0,
+      "retry_log": [],
+      "api_unavailable": false
+    },
+    {
+      "arm": "C1",
+      "scores": {
+        "functional_equivalence": 0.97,
+        "readability_delta": 0.1,
+        "style_conformance": 0.85,
+        "defensive_quality": 0.88
+      },
+      "raw_response": "{\"functional_equivalence\": 0.97, \"readability_delta\": 0.1, \"style_conformance\": 0.85, \"defensive_quality\": 0.88}",
+      "cost_usd": 0.014702999999999999,
+      "latency_seconds": 3.3996269702911377,
+      "error": null,
+      "retries": 0,
+      "retry_log": [],
+      "api_unavailable": false
+    },
+    {
+      "arm": "C2",
+      "scores": {
+        "functional_equivalence": 0.97,
+        "readability_delta": 0.15,
+        "style_conformance": 0.92,
+        "defensive_quality": 0.88
+      },
+      "raw_response": "{\"functional_equivalence\": 0.97, \"readability_delta\": 0.15, \"style_conformance\": 0.92, \"defensive_quality\": 0.88}",
+      "cost_usd": 0.015339,
+      "latency_seconds": 4.794960260391235,
+      "error": null,
+      "retries": 0,
+      "retry_log": [],
+      "api_unavailable": false
+    },
+    {
+      "arm": "D2",
+      "scores": {
+        "functional_equivalence": 0.97,
+        "readability_delta": 0.3,
+        "style_conformance": 0.85,
+        "defensive_quality": 0.92
+      },
+      "raw_response": "{\"functional_equivalence\": 0.97, \"readability_delta\": 0.3, \"style_conformance\": 0.85, \"defensive_quality\": 0.92}",
+      "cost_usd": 0.018168,
+      "latency_seconds": 1.236792802810669,
+      "error": null,
+      "retries": 0,
+      "retry_log": [],
+      "api_unavailable": false
+    }
+  ],
+  "a_vs_a2_judge": {
+    "scores": {
+      "hallucinated_completeness_A": 0.05,
+      "hallucinated_completeness_A2": 0.05,
+      "silent_omission_count_A": 1,
+      "silent_omission_count_A2": 0,
+      "over_engineering_score_A": 0.1,
+      "over_engineering_score_A2": 0.15,
+      "notes": "\u4e24\u8005\u5747\u5b9e\u73b0\u4e86\u5b8c\u6574\u6d4b\u8bd5\u5957\u4ef6\u4e14\u8986\u76d6\u7387\u5145\u5206\uff1bA\u7f3a\u5c11\u5bf9normalize_email('')\u7a7a\u5b57\u7b26\u4e32\u7684\u72ec\u7acb\u6d4b\u8bd5\u7528\u4f8b\uff0cA2\u989d\u5916\u589e\u52a0\u4e86test_aggregate_by_domain_missing_email_raises\u7b49\u9632\u5fa1\u6027\u6d4b\u8bd5\uff0c\u7565\u6709\u8fc7\u5ea6\u5de5\u7a0b\u5316\u503e\u5411\u3002"
+    },
+    "raw_response": "```json\n{\n  \"hallucinated_completeness_A\": 0.05,\n  \"hallucinated_completeness_A2\": 0.05,\n  \"silent_omission_count_A\": 1,\n  \"silent_omission_count_A2\": 0,\n  \"over_engineering_score_A\": 0.1,\n  \"over_engineering_score_A2\": 0.15,\n  \"notes\": \"\u4e24\u8005\u5747\u5b9e\u73b0\u4e86\u5b8c\u6574\u6d4b\u8bd5\u5957\u4ef6\u4e14\u8986\u76d6\u7387\u5145\u5206\uff1bA\u7f3a\u5c11\u5bf9normalize_email('')\u7a7a\u5b57\u7b26\u4e32\u7684\u72ec\u7acb\u6d4b\u8bd5\u7528\u4f8b\uff0cA2\u989d\u5916\u589e\u52a0\u4e86test_aggregate_by_domain_missing_email_raises\u7b49\u9632\u5fa1\u6027\u6d4b\u8bd5\uff0c\u7565\u6709\u8fc7\u5ea6\u5de5\u7a0b\u5316\u503e\u5411\u3002\"\n}\n```",
+    "cost_usd": 0.017799,
+    "latency_seconds": 3.6794939041137695,
+    "error": null,
+    "retries": 0,
+    "retry_log": [],
+    "api_unavailable": false
+  },
+  "n_anonymized": 35,
+  "total_judge_cost_usd": 0.0835
+}

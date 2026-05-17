@@ -1,0 +1,143 @@
+{
+  "scenario": "bug_fix_with_implicit_dependency",
+  "n_records": 35,
+  "objective_means_by_arm": {
+    "C1": {
+      "cyclomatic_complexity_avg": 1.25,
+      "duplicated_lines_pct": 6.7,
+      "mypy_strict_type_coverage_pct": 65.5
+    },
+    "C2": {
+      "cyclomatic_complexity_avg": 1.25,
+      "duplicated_lines_pct": 6.7,
+      "mypy_strict_type_coverage_pct": 65.5
+    },
+    "D2": {
+      "cyclomatic_complexity_avg": 1.27,
+      "duplicated_lines_pct": 6.7,
+      "mypy_strict_type_coverage_pct": 65.5
+    },
+    "A": {
+      "cyclomatic_complexity_avg": 1.25,
+      "duplicated_lines_pct": 6.7,
+      "mypy_strict_type_coverage_pct": 65.5
+    },
+    "A2": {
+      "cyclomatic_complexity_avg": 1.25,
+      "duplicated_lines_pct": 6.7,
+      "mypy_strict_type_coverage_pct": 65.5
+    },
+    "B1": {
+      "cyclomatic_complexity_avg": 1.25,
+      "duplicated_lines_pct": 6.7,
+      "mypy_strict_type_coverage_pct": 65.5
+    },
+    "B2": {
+      "cyclomatic_complexity_avg": 1.25,
+      "duplicated_lines_pct": 6.7,
+      "mypy_strict_type_coverage_pct": 65.5
+    }
+  },
+  "four_dim_judge": [
+    {
+      "arm": "B1",
+      "scores": {
+        "functional_equivalence": 0.97,
+        "readability_delta": 0.0,
+        "style_conformance": 1.0,
+        "defensive_quality": 0.85
+      },
+      "raw_response": "{\"functional_equivalence\": 0.97, \"readability_delta\": 0.0, \"style_conformance\": 1.0, \"defensive_quality\": 0.85}",
+      "cost_usd": 0.005508,
+      "latency_seconds": 5.5850160121917725,
+      "error": null,
+      "retries": 0,
+      "retry_log": [],
+      "api_unavailable": false
+    },
+    {
+      "arm": "B2",
+      "scores": {
+        "functional_equivalence": 0.95,
+        "readability_delta": -0.05,
+        "style_conformance": 0.95,
+        "defensive_quality": 0.85
+      },
+      "raw_response": "{\"functional_equivalence\": 0.95, \"readability_delta\": -0.05, \"style_conformance\": 0.95, \"defensive_quality\": 0.85}",
+      "cost_usd": 0.005508,
+      "latency_seconds": 1.1531250476837158,
+      "error": null,
+      "retries": 0,
+      "retry_log": [],
+      "api_unavailable": false
+    },
+    {
+      "arm": "C1",
+      "scores": {
+        "functional_equivalence": 1.0,
+        "readability_delta": 0.0,
+        "style_conformance": 1.0,
+        "defensive_quality": 1.0
+      },
+      "raw_response": "{\"functional_equivalence\": 1.0, \"readability_delta\": 0.0, \"style_conformance\": 1.0, \"defensive_quality\": 1.0}",
+      "cost_usd": 0.005454,
+      "latency_seconds": 1.7391180992126465,
+      "error": null,
+      "retries": 0,
+      "retry_log": [],
+      "api_unavailable": false
+    },
+    {
+      "arm": "C2",
+      "scores": {
+        "functional_equivalence": 1.0,
+        "readability_delta": 0.0,
+        "style_conformance": 1.0,
+        "defensive_quality": 1.0
+      },
+      "raw_response": "{\"functional_equivalence\": 1.0, \"readability_delta\": 0.0, \"style_conformance\": 1.0, \"defensive_quality\": 1.0}",
+      "cost_usd": 0.005454,
+      "latency_seconds": 1.436264991760254,
+      "error": null,
+      "retries": 0,
+      "retry_log": [],
+      "api_unavailable": false
+    },
+    {
+      "arm": "D2",
+      "scores": {
+        "functional_equivalence": 1.0,
+        "readability_delta": 0.0,
+        "style_conformance": 1.0,
+        "defensive_quality": 1.0
+      },
+      "raw_response": "{\"functional_equivalence\": 1.0, \"readability_delta\": 0.0, \"style_conformance\": 1.0, \"defensive_quality\": 1.0}",
+      "cost_usd": 0.005454,
+      "latency_seconds": 1.2287242412567139,
+      "error": null,
+      "retries": 0,
+      "retry_log": [],
+      "api_unavailable": false
+    }
+  ],
+  "a_vs_a2_judge": {
+    "scores": {
+      "hallucinated_completeness_A": 0.8,
+      "hallucinated_completeness_A2": 0.8,
+      "silent_omission_count_A": 1,
+      "silent_omission_count_A2": 1,
+      "over_engineering_score_A": 0.1,
+      "over_engineering_score_A2": 0.1,
+      "notes": "\u4e24\u4e2a\u8f93\u51fa\u5b8c\u5168\u76f8\u540c\uff0c\u5747\u672a\u5b9e\u9645\u8bca\u65ad\u5e76\u4fee\u590d\u539f\u59cb bug\uff08task \u58f0\u79f0\u6d4b\u8bd5\u5728\u6302\uff0c\u4f46\u4e24\u4efd\u8f93\u51fa\u7684 user_service.py \u4e0e\u539f\u59cb\u4ee3\u7801\u65e0\u4efb\u4f55\u5dee\u5f02\uff0c\u6839\u672c\u6ca1\u6709\u505a\u51fa\u4efb\u4f55\u4fee\u6539\uff09\u3002\u58f0\u79f0\u5b8c\u6210\u4e86\u4fee\u590d\u4efb\u52a1\uff0c\u5b9e\u5219\u5c5e\u4e8e\u5e7b\u89c9\u5f0f\u5b8c\u6210\u2014\u2014\u4ee3\u7801\u5b8c\u5168\u4e00\u81f4\uff0cbug \u672a\u88ab\u8bc6\u522b\u4e5f\u672a\u88ab\u4fee\u590d\u3002"
+    },
+    "raw_response": "```json\n{\n  \"hallucinated_completeness_A\": 0.8,\n  \"hallucinated_completeness_A2\": 0.8,\n  \"silent_omission_count_A\": 1,\n  \"silent_omission_count_A2\": 1,\n  \"over_engineering_score_A\": 0.1,\n  \"over_engineering_score_A2\": 0.1,\n  \"notes\": \"\u4e24\u4e2a\u8f93\u51fa\u5b8c\u5168\u76f8\u540c\uff0c\u5747\u672a\u5b9e\u9645\u8bca\u65ad\u5e76\u4fee\u590d\u539f\u59cb bug\uff08task \u58f0\u79f0\u6d4b\u8bd5\u5728\u6302\uff0c\u4f46\u4e24\u4efd\u8f93\u51fa\u7684 user_service.py \u4e0e\u539f\u59cb\u4ee3\u7801\u65e0\u4efb\u4f55\u5dee\u5f02\uff0c\u6839\u672c\u6ca1\u6709\u505a\u51fa\u4efb\u4f55\u4fee\u6539\uff09\u3002\u58f0\u79f0\u5b8c\u6210\u4e86\u4fee\u590d\u4efb\u52a1\uff0c\u5b9e\u5219\u5c5e\u4e8e\u5e7b\u89c9\u5f0f\u5b8c\u6210\u2014\u2014\u4ee3\u7801\u5b8c\u5168\u4e00\u81f4\uff0cbug \u672a\u88ab\u8bc6\u522b\u4e5f\u672a\u88ab\u4fee\u590d\u3002\"\n}\n```",
+    "cost_usd": 0.008649,
+    "latency_seconds": 4.471131801605225,
+    "error": null,
+    "retries": 0,
+    "retry_log": [],
+    "api_unavailable": false
+  },
+  "n_anonymized": 35,
+  "total_judge_cost_usd": 0.036
+}

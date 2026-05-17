@@ -93,242 +93,207 @@ from data_pipeline import (
 )
 
 
-class TestLoadRecords:
-    def test_load_valid_json_list(self, tmp_path):
-        """Happy path: valid JSON list of records."""
-        data = [{"name": "Alice", "email": "a@b.com"}]
-        p = tmp_path / "data.json"
-        p.write_text(json.dumps(data))
-        result = load_records(str(p))
-        assert result == data
+# ---------------------------------------------------------------------------
+# load_records
+# ---------------------------------------------------------------------------
 
-    def test_load_invalid_json(self, tmp_path):
-        """Bad JSON raises ValueError."""
-        p = tmp_path / "bad.json"
-        p.write_text("not json")
-        with pytest.raises(ValueError):
-            load_records(str(p))
-
-    def test_load_non_list_json(self, tmp_path):
-        """JSON that is not a list raises ValueError."""
-        p = tmp_path / "obj.json"
-        p.write_text('{"a": 1}')
-        with pytest.raises(ValueError, match="expected list"):
-            load_records(str(p))
-
-    def test_load_file_not_found(self):
-        """Missing file raises FileNotFoundError."""
-        with pytest.raises(FileNotFoundError):
-            load_records("/nonexistent/path.json")
-
-    def test_load_empty_list(self, tmp_path):
-        """Empty list is valid."""
-        p = tmp_path / "empty.json"
-        p.write_text("[]")
-        result = load_records(str(p))
-        assert result == []
+def test_load_records_happy(tmp_path):
+    p = tmp_path / "data.json"
+    data = [{"email": "a@b.com"}, {"email": "c@d.com"}]
+    p.write_text(json.dumps(data))
+    assert load_records(str(p)) == data
 
 
-class TestValidateRecord:
-    def test_valid_record(self):
-        """All fields present and correct types."""
-        schema = {"name": str, "age": int}
-        rec = {"name": "Alice", "age": 30}
-        validate_record(rec, schema)  # should not raise
-
-    def test_missing_field(self):
-        """Missing field raises ValidationError."""
-        schema = {"name": str, "age": int}
-        rec = {"name": "Alice"}
-        with pytest.raises(ValidationError, match="missing field: age"):
-            validate_record(rec, schema)
-
-    def test_wrong_type(self):
-        """Wrong type raises ValidationError."""
-        schema = {"name": str, "age": int}
-        rec = {"name": "Alice", "age": "thirty"}
-        with pytest.raises(ValidationError, match="wrong type for age"):
-            validate_record(rec, schema)
-
-    def test_empty_schema(self):
-        """Empty schema always passes."""
-        validate_record({"anything": 1}, {})
-
-    def test_extra_fields_ignored(self):
-        """Extra fields beyond schema are ignored."""
-        schema = {"name": str}
-        rec = {"name": "Alice", "extra": "ignored"}
-        validate_record(rec, schema)  # should not raise
+def test_load_records_file_not_found():
+    with pytest.raises(FileNotFoundError):
+        load_records("/nonexistent/path.json")
 
 
-class TestNormalizeEmail:
-    def test_normalize_lowercase(self):
-        """Email is lowercased and stripped."""
-        assert normalize_email("  Alice@Example.COM  ") == "alice@example.com"
-
-    def test_normalize_already_normal(self):
-        """Already normalized email stays same."""
-        assert normalize_email("alice@example.com") == "alice@example.com"
-
-    def test_empty_string_raises(self):
-        """Empty string raises ValueError."""
-        with pytest.raises(ValueError, match="empty email"):
-            normalize_email("")
-
-    def test_whitespace_only_raises(self):
-        """Whitespace-only string raises ValueError."""
-        with pytest.raises(ValueError, match="empty email"):
-            normalize_email("   ")
+def test_load_records_invalid_json(tmp_path):
+    p = tmp_path / "bad.json"
+    p.write_text("not json")
+    with pytest.raises(ValueError):
+        load_records(str(p))
 
 
-class TestCleanRecords:
-    def test_clean_basic(self):
-        """Basic cleaning works."""
-        schema = {"name": str, "email": str}
-        records = [
-            {"name": "Alice", "email": "Alice@Example.COM"},
-            {"name": "Bob", "email": "bob@test.com"},
-        ]
-        result = clean_records(records, schema)
-        assert len(result) == 2
-        assert result[0]["email"] == "alice@example.com"
-        assert result[1]["email"] == "bob@test.com"
-
-    def test_clean_removes_duplicates(self):
-        """Duplicate emails are removed."""
-        schema = {"name": str, "email": str}
-        records = [
-            {"name": "Alice", "email": "alice@example.com"},
-            {"name": "Alice2", "email": "Alice@Example.COM"},
-        ]
-        result = clean_records(records, schema)
-        assert len(result) == 1
-        assert result[0]["name"] == "Alice"
-
-    def test_clean_skips_invalid_schema(self):
-        """Records with missing fields or wrong types are skipped."""
-        schema = {"name": str, "email": str}
-        records = [
-            {"name": "Alice", "email": "a@b.com"},
-            {"name": "Bob"},  # missing email
-            {"name": "Charlie", "email": 123},  # wrong type
-        ]
-        result = clean_records(records, schema)
-        assert len(result) == 1
-        assert result[0]["name"] == "Alice"
-
-    def test_clean_skips_invalid_email(self):
-        """Records with invalid emails (empty after normalize) are skipped."""
-        schema = {"name": str, "email": str}
-        records = [
-            {"name": "Alice", "email": "a@b.com"},
-            {"name": "Bob", "email": ""},  # empty email
-            {"name": "Charlie", "email": "   "},  # whitespace only
-        ]
-        result = clean_records(records, schema)
-        assert len(result) == 1
-        assert result[0]["name"] == "Alice"
-
-    def test_clean_empty_input(self):
-        """Empty input returns empty list."""
-        result = clean_records([], {"name": str})
-        assert result == []
-
-    def test_clean_all_invalid(self):
-        """All records invalid returns empty list."""
-        schema = {"name": str, "email": str}
-        records = [
-            {"name": "Bob"},  # missing email
-            {"name": "Charlie", "email": 123},  # wrong type
-        ]
-        result = clean_records(records, schema)
-        assert result == []
-
-    def test_clean_preserves_original(self):
-        """Original records are not mutated."""
-        schema = {"name": str, "email": str}
-        original = [{"name": "Alice", "email": "Alice@Example.COM"}]
-        result = clean_records(original, schema)
-        assert original[0]["email"] == "Alice@Example.COM"
-        assert result[0]["email"] == "alice@example.com"
+def test_load_records_not_list(tmp_path):
+    p = tmp_path / "obj.json"
+    p.write_text(json.dumps({"key": "value"}))
+    with pytest.raises(ValueError, match="expected list"):
+        load_records(str(p))
 
 
-class TestAggregateByDomain:
-    def test_basic_aggregation(self):
-        """Count records per domain."""
-        records = [
-            {"email": "a@example.com"},
-            {"email": "b@example.com"},
-            {"email": "c@other.org"},
-        ]
-        result = aggregate_by_domain(records)
-        assert result == {"example.com": 2, "other.org": 1}
+# ---------------------------------------------------------------------------
+# validate_record
+# ---------------------------------------------------------------------------
 
-    def test_no_at_sign(self):
-        """Email without @ gets domain 'unknown'."""
-        records = [{"email": "noatsign"}]
-        result = aggregate_by_domain(records)
-        assert result == {"unknown": 1}
-
-    def test_empty_records(self):
-        """Empty list returns empty dict."""
-        result = aggregate_by_domain([])
-        assert result == {}
-
-    def test_single_record(self):
-        """Single record works."""
-        records = [{"email": "a@example.com"}]
-        result = aggregate_by_domain(records)
-        assert result == {"example.com": 1}
+def test_validate_record_happy():
+    schema = {"name": str, "age": int}
+    rec = {"name": "Alice", "age": 30}
+    # should not raise
+    validate_record(rec, schema)
 
 
-class TestPipeline:
-    def test_pipeline_happy_path(self, tmp_path):
-        """End-to-end pipeline works."""
-        schema = {"name": str, "email": str}
-        data = [
-            {"name": "Alice", "email": "Alice@Example.COM"},
-            {"name": "Bob", "email": "bob@test.com"},
-        ]
-        p = tmp_path / "data.json"
-        p.write_text(json.dumps(data))
-        result = pipeline(str(p), schema)
-        assert result == {"example.com": 1, "test.com": 1}
+def test_validate_record_missing_field():
+    schema = {"name": str, "age": int}
+    rec = {"name": "Bob"}
+    with pytest.raises(ValidationError, match="missing field: age"):
+        validate_record(rec, schema)
 
-    def test_pipeline_with_duplicates(self, tmp_path):
-        """Duplicates are removed before aggregation."""
-        schema = {"name": str, "email": str}
-        data = [
-            {"name": "Alice", "email": "alice@example.com"},
-            {"name": "Alice2", "email": "Alice@Example.COM"},
-        ]
-        p = tmp_path / "data.json"
-        p.write_text(json.dumps(data))
-        result = pipeline(str(p), schema)
-        assert result == {"example.com": 1}
 
-    def test_pipeline_with_invalid_records(self, tmp_path):
-        """Invalid records are skipped."""
-        schema = {"name": str, "email": str}
-        data = [
-            {"name": "Alice", "email": "a@b.com"},
-            {"name": "Bob"},  # missing email
-            {"name": "Charlie", "email": ""},  # empty email
-        ]
-        p = tmp_path / "data.json"
-        p.write_text(json.dumps(data))
-        result = pipeline(str(p), schema)
-        assert result == {"b.com": 1}
+def test_validate_record_wrong_type():
+    schema = {"name": str, "age": int}
+    rec = {"name": "Charlie", "age": "old"}
+    with pytest.raises(ValidationError, match="wrong type for age"):
+        validate_record(rec, schema)
 
-    def test_pipeline_empty_file(self, tmp_path):
-        """Empty list returns empty dict."""
-        schema = {"name": str, "email": str}
-        p = tmp_path / "empty.json"
-        p.write_text("[]")
-        result = pipeline(str(p), schema)
-        assert result == {}
 
-    def test_pipeline_file_not_found(self):
-        """Missing file raises FileNotFoundError."""
-        with pytest.raises(FileNotFoundError):
-            pipeline("/nonexistent/path.json", {"name": str})
+def test_validate_record_empty_schema():
+    schema = {}
+    rec = {"anything": 1}
+    validate_record(rec, schema)  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# normalize_email
+# ---------------------------------------------------------------------------
+
+def test_normalize_email_happy():
+    assert normalize_email("  Alice@Example.COM  ") == "alice@example.com"
+
+
+def test_normalize_email_already_normalized():
+    assert normalize_email("bob@test.org") == "bob@test.org"
+
+
+def test_normalize_email_empty_raises():
+    with pytest.raises(ValueError, match="empty email"):
+        normalize_email("   ")
+
+
+# ---------------------------------------------------------------------------
+# clean_records
+# ---------------------------------------------------------------------------
+
+def test_clean_records_happy():
+    schema = {"email": str, "name": str}
+    records = [
+        {"email": "A@B.COM", "name": "Alice"},
+        {"email": "a@b.com", "name": "Alice Again"},  # duplicate email
+        {"email": "c@d.com", "name": "Charlie"},
+    ]
+    cleaned = clean_records(records, schema)
+    assert len(cleaned) == 2
+    assert cleaned[0]["email"] == "a@b.com"
+    assert cleaned[1]["email"] == "c@d.com"
+
+
+def test_clean_records_skips_invalid():
+    schema = {"email": str, "name": str}
+    records = [
+        {"email": "good@test.com", "name": "Good"},
+        {"name": "NoEmail"},  # missing email -> ValidationError -> skip
+        {"email": 123, "name": "BadType"},  # wrong type -> ValidationError -> skip
+        {"email": "   ", "name": "EmptyEmail"},  # empty after normalize -> skip
+    ]
+    cleaned = clean_records(records, schema)
+    assert len(cleaned) == 1
+    assert cleaned[0]["email"] == "good@test.com"
+
+
+def test_clean_records_empty_input():
+    assert clean_records([], {"email": str}) == []
+
+
+def test_clean_records_all_duplicates():
+    schema = {"email": str}
+    records = [
+        {"email": "dup@x.com"},
+        {"email": "DUP@x.com"},
+        {"email": "dup@x.com"},
+    ]
+    cleaned = clean_records(records, schema)
+    assert len(cleaned) == 1
+    assert cleaned[0]["email"] == "dup@x.com"
+
+
+# ---------------------------------------------------------------------------
+# aggregate_by_domain
+# ---------------------------------------------------------------------------
+
+def test_aggregate_by_domain_happy():
+    records = [
+        {"email": "a@example.com"},
+        {"email": "b@example.com"},
+        {"email": "c@other.org"},
+    ]
+    counts = aggregate_by_domain(records)
+    assert counts == {"example.com": 2, "other.org": 1}
+
+
+def test_aggregate_by_domain_no_at_sign():
+    records = [{"email": "noatsign"}]
+    counts = aggregate_by_domain(records)
+    assert counts == {"unknown": 1}
+
+
+def test_aggregate_by_domain_empty():
+    assert aggregate_by_domain([]) == {}
+
+
+def test_aggregate_by_domain_multiple_domains():
+    records = [
+        {"email": "a@x.com"},
+        {"email": "b@y.com"},
+        {"email": "c@x.com"},
+    ]
+    counts = aggregate_by_domain(records)
+    assert counts == {"x.com": 2, "y.com": 1}
+
+
+# ---------------------------------------------------------------------------
+# pipeline (integration)
+# ---------------------------------------------------------------------------
+
+def test_pipeline_happy(tmp_path):
+    p = tmp_path / "input.json"
+    data = [
+        {"email": "Alice@Example.COM", "name": "Alice"},
+        {"email": "bob@test.org", "name": "Bob"},
+        {"email": "alice@example.com", "name": "Alice Dup"},  # duplicate
+    ]
+    p.write_text(json.dumps(data))
+    schema = {"email": str, "name": str}
+    result = pipeline(str(p), schema)
+    assert result == {"example.com": 1, "test.org": 1}
+
+
+def test_pipeline_empty_file(tmp_path):
+    p = tmp_path / "empty.json"
+    p.write_text(json.dumps([]))
+    schema = {"email": str}
+    assert pipeline(str(p), schema) == {}
+
+
+def test_pipeline_all_invalid(tmp_path):
+    p = tmp_path / "bad.json"
+    data = [
+        {"name": "NoEmail"},
+        {"email": 42, "name": "BadType"},
+        {"email": "   ", "name": "Empty"},
+    ]
+    p.write_text(json.dumps(data))
+    schema = {"email": str, "name": str}
+    assert pipeline(str(p), schema) == {}
+
+
+def test_pipeline_file_not_found():
+    with pytest.raises(FileNotFoundError):
+        pipeline("/nonexistent/path.json", {"email": str})
+
+
+def test_pipeline_invalid_json(tmp_path):
+    p = tmp_path / "bad.json"
+    p.write_text("{{{")
+    with pytest.raises(ValueError):
+        pipeline(str(p), {"email": str})

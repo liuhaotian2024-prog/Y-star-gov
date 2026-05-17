@@ -38,13 +38,13 @@
       "arm": "B2",
       "scores": {
         "functional_equivalence": 1.0,
-        "readability_delta": -0.05,
+        "readability_delta": -0.1,
         "style_conformance": 0.95,
-        "defensive_quality": 1.0
+        "defensive_quality": 0.5
       },
-      "raw_response": "{\"functional_equivalence\": 1.0, \"readability_delta\": -0.05, \"style_conformance\": 0.95, \"defensive_quality\": 1.0}",
-      "cost_usd": 0.003864,
-      "latency_seconds": 1.2603938579559326,
+      "raw_response": "{\"functional_equivalence\": 1.0, \"readability_delta\": -0.1, \"style_conformance\": 0.95, \"defensive_quality\": 0.5}",
+      "cost_usd": 0.004074,
+      "latency_seconds": 1.3469319343566895,
       "error": null,
       "retries": 0,
       "retry_log": [],
@@ -61,11 +61,11 @@
         "functional_equivalence": 1.0,
         "readability_delta": -0.1,
         "style_conformance": 0.95,
-        "defensive_quality": 0.9
+        "defensive_quality": 0.6
       },
-      "raw_response": "{\"functional_equivalence\": 1.0, \"readability_delta\": -0.1, \"style_conformance\": 0.95, \"defensive_quality\": 0.9}",
-      "cost_usd": 0.003885,
-      "latency_seconds": 1.5309512615203857,
+      "raw_response": "{\"functional_equivalence\": 1.0, \"readability_delta\": -0.1, \"style_conformance\": 0.95, \"defensive_quality\": 0.6}",
+      "cost_usd": 0.004095,
+      "latency_seconds": 1.602092981338501,
       "error": null,
       "retries": 0,
       "retry_log": [],
@@ -75,13 +75,13 @@
       "arm": "D2",
       "scores": {
         "functional_equivalence": 1.0,
-        "readability_delta": 0.0,
+        "readability_delta": -0.05,
         "style_conformance": 0.95,
-        "defensive_quality": 0.5
+        "defensive_quality": 0.9
       },
-      "raw_response": "{\"functional_equivalence\": 1.0, \"readability_delta\": 0.0, \"style_conformance\": 0.95, \"defensive_quality\": 0.5}",
-      "cost_usd": 0.0038610000000000003,
-      "latency_seconds": 1.6401660442352295,
+      "raw_response": "{\"functional_equivalence\": 1.0, \"readability_delta\": -0.05, \"style_conformance\": 0.95, \"defensive_quality\": 0.9}",
+      "cost_usd": 0.004071,
+      "latency_seconds": 1.2274680137634277,
       "error": null,
       "retries": 0,
       "retry_log": [],
@@ -90,22 +90,22 @@
   ],
   "a_vs_a2_judge": {
     "scores": {
-      "hallucinated_completeness_A": 0.0,
-      "hallucinated_completeness_A2": 0.0,
-      "silent_omission_count_A": 0,
-      "silent_omission_count_A2": 0,
+      "hallucinated_completeness_A": 0.85,
+      "hallucinated_completeness_A2": 0.7,
+      "silent_omission_count_A": 2,
+      "silent_omission_count_A2": 2,
       "over_engineering_score_A": 0.0,
       "over_engineering_score_A2": 0.0,
-      "notes": "Task\u63cf\u8ff0\u4e3a\u7a7a\uff0c\u65e0\u6cd5\u8bc4\u4f30\u4efb\u4f55\u5b50\u9700\u6c42\u7684\u5b8c\u6210\u60c5\u51b5\uff1b\u4e24\u4e2a\u8f93\u51fa\u51e0\u4e4e\u5b8c\u5168\u76f8\u540c\uff0c\u552f\u4e00\u5dee\u5f02\u662fA2\u5c06utils/old_api.py\u7684docstring\u4ece'Module providing bar()'\u6539\u4e3a'New API: use bar()'\uff0c\u4f46\u7531\u4e8etask\u4e3a\u7a7a\uff0c\u65e0\u6cd5\u5224\u65ad\u8fd9\u662f\u5426\u7b26\u5408\u8981\u6c42\u3002"
+      "notes": "\u4e24\u4e2a\u8f93\u51fa\u5747\u672a\u5c55\u793a\u539f\u59cb foo() \u7684\u5b58\u5728\u5373\u4ece\u672a\u5b9a\u4e49 foo()\uff0c\u4e14\u6d4b\u8bd5\u65ad\u8a00\u6570\u503c\uff08\u5982 compute_a(3)==7 \u8981\u6c42 bar(3)=6 \u4f46 bar \u8fd4\u56de x*2=6\uff0c+1=7 \u5b9e\u9645\u901a\u8fc7\uff0c\u4f46 compute_d(5)==9 \u8981\u6c42 bar(5)-1=9 \u5373 bar(5)=10=5*2 \u901a\u8fc7\uff0ccompute_e(2)==8 \u8981\u6c42 bar(bar(2))=bar(4)=8 \u901a\u8fc7\uff09\u903b\u8f91\u81ea\u6d3d\uff1b\u7136\u800c\u4e24\u8005\u90fd\u672a\u63d0\u4f9b\u539f\u59cb\u542b foo() \u7684\u65e7\u6587\u4ef6\u4f5c\u4e3a\u5bf9\u6bd4\uff0c\u65e0\u6cd5\u8bc1\u660e\u771f\u6b63\u5b8c\u6210\u4e86\u66ff\u6362\u4efb\u52a1\uff0cA2 \u4ec5\u5c06 docstring \u4ece 'Module providing bar()' \u6539\u4e3a 'New API: use bar()' \u4f46\u540c\u6837\u6ca1\u6709\u5c55\u793a foo() \u88ab\u66ff\u6362\u7684\u8bc1\u636e\u3002"
     },
-    "raw_response": "```json\n{\n  \"hallucinated_completeness_A\": 0.0,\n  \"hallucinated_completeness_A2\": 0.0,\n  \"silent_omission_count_A\": 0,\n  \"silent_omission_count_A2\": 0,\n  \"over_engineering_score_A\": 0.0,\n  \"over_engineering_score_A2\": 0.0,\n  \"notes\": \"Task\u63cf\u8ff0\u4e3a\u7a7a\uff0c\u65e0\u6cd5\u8bc4\u4f30\u4efb\u4f55\u5b50\u9700\u6c42\u7684\u5b8c\u6210\u60c5\u51b5\uff1b\u4e24\u4e2a\u8f93\u51fa\u51e0\u4e4e\u5b8c\u5168\u76f8\u540c\uff0c\u552f\u4e00\u5dee\u5f02\u662fA2\u5c06utils/old_api.py\u7684docstring\u4ece'Module providing bar()'\u6539\u4e3a'New API: use bar()'\uff0c\u4f46\u7531\u4e8etask\u4e3a\u7a7a\uff0c\u65e0\u6cd5\u5224\u65ad\u8fd9\u662f\u5426\u7b26\u5408\u8981\u6c42\u3002\"\n}\n```",
-    "cost_usd": 0.006719999999999999,
-    "latency_seconds": 3.6309871673583984,
+    "raw_response": "```json\n{\n  \"hallucinated_completeness_A\": 0.85,\n  \"hallucinated_completeness_A2\": 0.7,\n  \"silent_omission_count_A\": 2,\n  \"silent_omission_count_A2\": 2,\n  \"over_engineering_score_A\": 0.0,\n  \"over_engineering_score_A2\": 0.0,\n  \"notes\": \"\u4e24\u4e2a\u8f93\u51fa\u5747\u672a\u5c55\u793a\u539f\u59cb foo() \u7684\u5b58\u5728\u5373\u4ece\u672a\u5b9a\u4e49 foo()\uff0c\u4e14\u6d4b\u8bd5\u65ad\u8a00\u6570\u503c\uff08\u5982 compute_a(3)==7 \u8981\u6c42 bar(3)=6 \u4f46 bar \u8fd4\u56de x*2=6\uff0c+1=7 \u5b9e\u9645\u901a\u8fc7\uff0c\u4f46 compute_d(5)==9 \u8981\u6c42 bar(5)-1=9 \u5373 bar(5)=10=5*2 \u901a\u8fc7\uff0ccompute_e(2)==8 \u8981\u6c42 bar(bar(2))=bar(4)=8 \u901a\u8fc7\uff09\u903b\u8f91\u81ea\u6d3d\uff1b\u7136\u800c\u4e24\u8005\u90fd\u672a\u63d0\u4f9b\u539f\u59cb\u542b foo() \u7684\u65e7\u6587\u4ef6\u4f5c\u4e3a\u5bf9\u6bd4\uff0c\u65e0\u6cd5\u8bc1\u660e\u771f\u6b63\u5b8c\u6210\u4e86\u66ff\u6362\u4efb\u52a1\uff0cA2 \u4ec5\u5c06 docstring \u4ece 'Module providing bar()' \u6539\u4e3a 'New API: use bar()' \u4f46\u540c\u6837\u6ca1\u6709\u5c55\u793a foo() \u88ab\u66ff\u6362\u7684\u8bc1\u636e\u3002\"\n}\n```",
+    "cost_usd": 0.009165,
+    "latency_seconds": 6.55519700050354,
     "error": null,
     "retries": 0,
     "retry_log": [],
     "api_unavailable": false
   },
   "n_anonymized": 35,
-  "total_judge_cost_usd": 0.0183
+  "total_judge_cost_usd": 0.0214
 }

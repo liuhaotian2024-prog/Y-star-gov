@@ -1,0 +1,36 @@
+arm,arm_label,scenario,trial,backend,use_czl,converged,iterations,wall_clock_seconds,input_tokens,output_tokens,cost_usd,failure_reason,obj_cyclomatic_complexity_avg,obj_duplicated_lines_pct,obj_test_coverage_pct,obj_mypy_strict_type_coverage_pct,stopping_authority,residual_trajectory
+C1,deepseek bare,test_generation_for_existing_code,2,deepseek,False,True,1,9.323533058166504,799,1415,0.00045213,,2.38,9.3,100.0,0.0,,
+C1,deepseek bare,test_generation_for_existing_code,0,deepseek,False,True,1,10.629805088043213,799,1536,0.00048601000000000004,,2.38,9.3,100.0,0.0,,
+C1,deepseek bare,test_generation_for_existing_code,1,deepseek,False,True,1,11.600931167602539,799,1892,0.0005856900000000001,,2.38,9.3,100.0,0.0,,
+C1,deepseek bare,test_generation_for_existing_code,3,deepseek,False,True,1,10.659272909164429,799,1553,0.0004907700000000001,,2.38,9.3,100.0,0.0,,
+C1,deepseek bare,test_generation_for_existing_code,4,deepseek,False,True,1,10.3556649684906,799,1568,0.0004949700000000001,,2.38,9.3,100.0,0.0,,
+C2,deepseek + CZL,test_generation_for_existing_code,0,deepseek,True,True,1,14.762861728668213,799,1596,0.00050281,,2.38,9.3,100.0,0.0,converged,[0.0]
+C2,deepseek + CZL,test_generation_for_existing_code,1,deepseek,True,True,1,17.323199033737183,799,1667,0.0005226900000000001,,2.38,9.3,100.0,0.0,converged,[0.0]
+C2,deepseek + CZL,test_generation_for_existing_code,2,deepseek,True,True,1,18.549439907073975,799,1648,0.0005173700000000001,,2.38,9.3,100.0,0.0,converged,[0.0]
+C2,deepseek + CZL,test_generation_for_existing_code,3,deepseek,True,True,1,17.981778144836426,799,1418,0.00045297,,2.38,9.3,100.0,0.0,converged,[0.0]
+C2,deepseek + CZL,test_generation_for_existing_code,4,deepseek,True,True,1,19.960952043533325,799,1385,0.00044373000000000004,,2.38,9.3,100.0,0.0,converged,[0.0]
+D2,minimax + CZL,test_generation_for_existing_code,1,minimax,True,True,1,32.54941177368164,784,3356,0.0028416,,2.38,9.3,100.0,0.0,converged,[0.0]
+D2,minimax + CZL,test_generation_for_existing_code,0,minimax,True,True,1,42.10081386566162,784,5491,0.004549600000000001,,2.38,9.3,100.0,0.0,converged,[0.0]
+D2,minimax + CZL,test_generation_for_existing_code,2,minimax,True,True,1,34.95562124252319,784,4596,0.0038336000000000004,,2.38,9.3,100.0,0.0,converged,[0.0]
+D2,minimax + CZL,test_generation_for_existing_code,4,minimax,True,True,1,18.812937021255493,784,2098,0.0018352,,2.38,9.3,100.0,0.0,converged,[0.0]
+D2,minimax + CZL,test_generation_for_existing_code,3,minimax,True,True,4,72.74215817451477,3826,10524,0.0091844,,2.38,9.3,100.0,0.0,converged,"[1.0, 1.0, 1.0, 0.0]"
+A,claude-opus-4-7 bare,test_generation_for_existing_code,0,anthropic,False,True,1,20.6110360622406,1250,2084,0.05835,,2.38,9.3,100.0,0.0,,
+A,claude-opus-4-7 bare,test_generation_for_existing_code,1,anthropic,False,True,1,19.95221996307373,1250,2041,0.05727499999999999,,2.38,9.3,100.0,0.0,,
+A,claude-opus-4-7 bare,test_generation_for_existing_code,2,anthropic,False,True,1,22.289319038391113,1250,2212,0.06155,,2.38,9.3,100.0,0.0,,
+A,claude-opus-4-7 bare,test_generation_for_existing_code,3,anthropic,False,True,1,21.89856266975403,1250,2243,0.062325000000000005,,2.38,9.3,100.0,0.0,,
+A,claude-opus-4-7 bare,test_generation_for_existing_code,4,anthropic,False,True,1,22.15566110610962,1250,2220,0.061750000000000006,,2.38,9.3,100.0,0.0,,
+A2,claude-opus-4-7 + CZL,test_generation_for_existing_code,0,anthropic,True,True,1,27.296470880508423,1250,2257,0.062675,,2.38,9.3,100.0,0.0,converged,[0.0]
+A2,claude-opus-4-7 + CZL,test_generation_for_existing_code,1,anthropic,True,True,1,24.650027990341187,1250,1893,0.053575,,2.38,9.3,100.0,0.0,converged,[0.0]
+A2,claude-opus-4-7 + CZL,test_generation_for_existing_code,2,anthropic,True,True,1,25.159281969070435,1250,2078,0.058199999999999995,,2.38,9.3,100.0,0.0,converged,[0.0]
+A2,claude-opus-4-7 + CZL,test_generation_for_existing_code,3,anthropic,True,True,1,24.897575855255127,1250,2140,0.05975,,2.38,9.3,100.0,0.0,converged,[0.0]
+A2,claude-opus-4-7 + CZL,test_generation_for_existing_code,4,anthropic,True,True,1,28.114363193511963,1250,2296,0.06365,,2.38,9.3,100.0,0.0,converged,[0.0]
+B1,gemma4:e4b bare,test_generation_for_existing_code,0,ollama,False,False,1,163.25838208198547,903,3863,0.0,"differential: 1 input/output mismatch(es); first: `count('bob@test.org')` -> <exception NameError: name 'count' is not defined>, expected 1",2.38,9.3,94.2,0.0,,
+B1,gemma4:e4b bare,test_generation_for_existing_code,1,ollama,False,False,1,162.30461192131042,903,3863,0.0,"differential: 1 input/output mismatch(es); first: `count('bob@test.org')` -> <exception NameError: name 'count' is not defined>, expected 1",2.38,9.3,94.2,0.0,,
+B1,gemma4:e4b bare,test_generation_for_existing_code,2,ollama,False,False,1,164.55641388893127,903,3863,0.0,"differential: 1 input/output mismatch(es); first: `count('bob@test.org')` -> <exception NameError: name 'count' is not defined>, expected 1",2.38,9.3,94.2,0.0,,
+B1,gemma4:e4b bare,test_generation_for_existing_code,3,ollama,False,False,1,165.15181684494019,903,3863,0.0,"differential: 1 input/output mismatch(es); first: `count('bob@test.org')` -> <exception NameError: name 'count' is not defined>, expected 1",2.38,9.3,94.2,0.0,,
+B1,gemma4:e4b bare,test_generation_for_existing_code,4,ollama,False,False,1,166.10326290130615,903,3863,0.0,"differential: 1 input/output mismatch(es); first: `count('bob@test.org')` -> <exception NameError: name 'count' is not defined>, expected 1",2.38,9.3,94.2,0.0,,
+B2,gemma4:e4b + CZL,test_generation_for_existing_code,0,ollama,True,False,0,1391.2449111938477,0,0,0.0,exception: APIConnectionError: litellm.APIConnectionError: OllamaException - litellm.Timeout: Connection timed out after 600.0 seconds.,,,,,,
+B2,gemma4:e4b + CZL,test_generation_for_existing_code,1,ollama,True,True,8,1213.4529132843018,9170,28192,0.0,,2.38,9.3,94.2,0.0,converged,"[1.0, 2.0, 1.0, 1.0, 3.0, 2.0, 2.0, 0.0]"
+B2,gemma4:e4b + CZL,test_generation_for_existing_code,2,ollama,True,False,6,954.990257024765,6458,22260,0.0,did_not_converge_after_6_iterations (no_progress): pytest: failures; coverage: 28.8% (need ≥80%),2.38,9.3,28.8,0.0,no_progress,"[1.0, 2.0, 1.0, 1.0, 1.0, 2.0]"
+B2,gemma4:e4b + CZL,test_generation_for_existing_code,3,ollama,True,False,6,1097.5845112800598,6588,25559,0.0,"did_not_converge_after_6_iterations (no_progress): pytest: failures; coverage: 48.1% (need ≥80%); contract_consistency: 1 mismatch(es); first: /tmp/czl_seven_arm/test_generation_for_existing_code/B2/3/test_data_pipeline.py:0: call `<syntax_error>` (arity=0, kw=[], unpack=None) — SyntaxError in /tmp/czl",2.38,9.3,,0.0,no_progress,"[1.0, 2.0, 1.0, 1.0, 2.0, 3.0]"
+B2,gemma4:e4b + CZL,test_generation_for_existing_code,4,ollama,True,False,6,966.0437519550323,6528,22311,0.0,did_not_converge_after_6_iterations (no_progress): pytest: failures,2.38,9.3,82.7,0.0,no_progress,"[1.0, 2.0, 1.0, 1.0, 1.0, 1.0]"

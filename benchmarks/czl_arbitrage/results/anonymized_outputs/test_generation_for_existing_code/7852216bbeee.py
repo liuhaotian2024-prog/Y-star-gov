@@ -97,30 +97,26 @@ from data_pipeline import (
 SCHEMA = {'name': str, 'email': str, 'age': int}
 
 
-# --- exceptions hierarchy ---
-
-def test_validation_error_is_pipeline_error():
+def test_pipeline_error_hierarchy():
     assert issubclass(ValidationError, PipelineError)
     assert issubclass(PipelineError, Exception)
 
 
-# --- load_records ---
-
 def test_load_records_happy(tmp_path):
     p = tmp_path / "data.json"
-    p.write_text(json.dumps([{"a": 1}, {"b": 2}]), encoding='utf-8')
-    assert load_records(str(p)) == [{"a": 1}, {"b": 2}]
+    p.write_text(json.dumps([{"a": 1}, {"a": 2}]), encoding='utf-8')
+    assert load_records(str(p)) == [{"a": 1}, {"a": 2}]
 
 
 def test_load_records_empty_list(tmp_path):
-    p = tmp_path / "empty.json"
+    p = tmp_path / "data.json"
     p.write_text("[]", encoding='utf-8')
     assert load_records(str(p)) == []
 
 
-def test_load_records_file_not_found(tmp_path):
+def test_load_records_missing_file(tmp_path):
     with pytest.raises(FileNotFoundError):
-        load_records(str(tmp_path / "nope.json"))
+        load_records(str(tmp_path / "nonexistent.json"))
 
 
 def test_load_records_invalid_json(tmp_path):
@@ -132,38 +128,40 @@ def test_load_records_invalid_json(tmp_path):
 
 def test_load_records_not_a_list(tmp_path):
     p = tmp_path / "obj.json"
-    p.write_text(json.dumps({"k": "v"}), encoding='utf-8')
+    p.write_text(json.dumps({"a": 1}), encoding='utf-8')
     with pytest.raises(ValueError, match="expected list"):
         load_records(str(p))
 
 
-# --- validate_record ---
-
 def test_validate_record_ok():
-    validate_record({'name': 'a', 'email': 'x@y', 'age': 3}, SCHEMA)
+    rec = {"name": "Bob", "email": "b@x.com", "age": 5}
+    validate_record(rec, SCHEMA)  # no raise
 
 
 def test_validate_record_missing_field():
-    with pytest.raises(ValidationError, match="missing field"):
-        validate_record({'name': 'a', 'email': 'x@y'}, SCHEMA)
+    with pytest.raises(ValidationError, match="missing field: age"):
+        validate_record({"name": "Bob", "email": "b@x.com"}, SCHEMA)
 
 
 def test_validate_record_wrong_type():
-    with pytest.raises(ValidationError, match="wrong type"):
-        validate_record({'name': 'a', 'email': 'x@y', 'age': 'old'}, SCHEMA)
+    with pytest.raises(ValidationError, match="wrong type for age"):
+        validate_record({"name": "Bob", "email": "b@x.com", "age": "five"}, SCHEMA)
 
 
 def test_validate_record_empty_schema():
     validate_record({}, {})
+    validate_record({"any": "thing"}, {})
 
 
-# --- normalize_email ---
-
-def test_normalize_email_basic():
-    assert normalize_email("  Foo@BAR.com ") == "foo@bar.com"
+def test_normalize_email_happy():
+    assert normalize_email("  Foo@Bar.COM  ") == "foo@bar.com"
 
 
-def test_normalize_email_empty():
+def test_normalize_email_already_clean():
+    assert normalize_email("a@b.com") == "a@b.com"
+
+
+def test_normalize_email_empty_raises():
     with pytest.raises(ValueError, match="empty email"):
         normalize_email("   ")
 
@@ -173,96 +171,86 @@ def test_normalize_email_empty_string():
         normalize_email("")
 
 
-# --- clean_records ---
-
 def test_clean_records_happy():
     recs = [
-        {'name': 'A', 'email': 'A@X.com', 'age': 1},
-        {'name': 'B', 'email': 'b@x.com', 'age': 2},
+        {"name": "A", "email": "A@X.com", "age": 1},
+        {"name": "B", "email": "b@x.com", "age": 2},
     ]
     out = clean_records(recs, SCHEMA)
     assert len(out) == 2
-    assert out[0]['email'] == 'a@x.com'
+    assert out[0]['email'] == "a@x.com"
+    assert out[1]['email'] == "b@x.com"
 
 
-def test_clean_records_drops_duplicates():
+def test_clean_records_dedup_by_email():
     recs = [
-        {'name': 'A', 'email': 'a@x.com', 'age': 1},
-        {'name': 'A2', 'email': 'A@X.COM', 'age': 2},
+        {"name": "A", "email": "a@x.com", "age": 1},
+        {"name": "A2", "email": "A@X.com", "age": 9},
     ]
     out = clean_records(recs, SCHEMA)
     assert len(out) == 1
-    assert out[0]['email'] == 'a@x.com'
+    assert out[0]['name'] == "A"
 
 
 def test_clean_records_skips_invalid():
     recs = [
-        {'name': 'A', 'email': 'a@x.com', 'age': 1},
-        {'name': 'B'},  # missing fields
-        {'name': 'C', 'email': 'c@x.com', 'age': 'bad'},  # wrong type
+        {"name": "A", "email": "a@x.com", "age": 1},
+        {"name": "B"},  # missing fields
+        {"name": "C", "email": "c@x.com", "age": "bad"},  # wrong type
+        {"name": "D", "email": "   ", "age": 3},  # empty email after normalize
+        {"name": "E", "email": "e@x.com", "age": 4},
     ]
     out = clean_records(recs, SCHEMA)
-    assert len(out) == 1
+    emails = [r['email'] for r in out]
+    assert emails == ["a@x.com", "e@x.com"]
 
 
-def test_clean_records_skips_empty_email():
-    recs = [
-        {'name': 'A', 'email': '   ', 'age': 1},
-        {'name': 'B', 'email': 'b@x.com', 'age': 2},
-    ]
-    out = clean_records(recs, SCHEMA)
-    assert len(out) == 1
-    assert out[0]['email'] == 'b@x.com'
-
-
-def test_clean_records_empty():
+def test_clean_records_empty_input():
     assert clean_records([], SCHEMA) == []
 
 
 def test_clean_records_does_not_mutate_input():
-    recs = [{'name': 'A', 'email': 'A@X.com', 'age': 1}]
+    recs = [{"name": "A", "email": "A@X.com", "age": 1}]
+    original = dict(recs[0])
     clean_records(recs, SCHEMA)
-    assert recs[0]['email'] == 'A@X.com'
+    assert recs[0] == original
 
 
-# --- aggregate_by_domain ---
-
-def test_aggregate_by_domain_basic():
+def test_aggregate_by_domain_happy():
     recs = [
-        {'email': 'a@x.com'},
-        {'email': 'b@x.com'},
-        {'email': 'c@y.com'},
+        {"email": "a@x.com"},
+        {"email": "b@x.com"},
+        {"email": "c@y.com"},
     ]
-    assert aggregate_by_domain(recs) == {'x.com': 2, 'y.com': 1}
+    assert aggregate_by_domain(recs) == {"x.com": 2, "y.com": 1}
 
 
 def test_aggregate_by_domain_unknown():
-    recs = [{'email': 'noatsign'}, {'email': 'also-bad'}]
-    assert aggregate_by_domain(recs) == {'unknown': 2}
+    recs = [{"email": "noatsign"}, {"email": "a@b.com"}]
+    assert aggregate_by_domain(recs) == {"unknown": 1, "b.com": 1}
 
 
 def test_aggregate_by_domain_empty():
     assert aggregate_by_domain([]) == {}
 
 
-def test_aggregate_by_domain_missing_key():
+def test_aggregate_by_domain_missing_email_key():
     with pytest.raises(KeyError):
-        aggregate_by_domain([{'name': 'x'}])
+        aggregate_by_domain([{"no_email": "x"}])
 
-
-# --- pipeline ---
 
 def test_pipeline_end_to_end(tmp_path):
     data = [
-        {'name': 'A', 'email': 'A@X.com', 'age': 1},
-        {'name': 'B', 'email': 'b@x.com', 'age': 2},  # duplicate domain
-        {'name': 'C', 'email': 'c@y.com', 'age': 3},
-        {'name': 'Bad'},  # invalid
+        {"name": "A", "email": "A@x.com", "age": 1},
+        {"name": "B", "email": "b@x.com", "age": 2},
+        {"name": "C", "email": "c@y.com", "age": 3},
+        {"name": "Dup", "email": "a@x.com", "age": 4},
+        {"name": "Bad"},
     ]
-    p = tmp_path / "in.json"
+    p = tmp_path / "data.json"
     p.write_text(json.dumps(data), encoding='utf-8')
     result = pipeline(str(p), SCHEMA)
-    assert result == {'x.com': 2, 'y.com': 1}
+    assert result == {"x.com": 2, "y.com": 1}
 
 
 def test_pipeline_missing_file(tmp_path):
@@ -270,7 +258,7 @@ def test_pipeline_missing_file(tmp_path):
         pipeline(str(tmp_path / "missing.json"), SCHEMA)
 
 
-def test_pipeline_empty(tmp_path):
-    p = tmp_path / "e.json"
+def test_pipeline_empty_records(tmp_path):
+    p = tmp_path / "data.json"
     p.write_text("[]", encoding='utf-8')
     assert pipeline(str(p), SCHEMA) == {}

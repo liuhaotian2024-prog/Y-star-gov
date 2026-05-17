@@ -16,7 +16,7 @@ class SessionManager:
 
     def logout(self, session_id: str) -> bool:
         """Return True iff a session existed before this call."""
-        if session_id in self._sessions:
+        if session_id in self._sessions and self._sessions[session_id] is not None:
             del self._sessions[session_id]
             return True
         return False

@@ -17,7 +17,7 @@ class SessionManager:
     def logout(self, session_id: str) -> bool:
         """Return True iff a session existed before this call."""
         if session_id in self._sessions:
-            # Fix: delete the key entirely to accurately reflect session removal.
+            # Fix: Delete the key to truly remove the session state.
             del self._sessions[session_id]
             return True
         return False

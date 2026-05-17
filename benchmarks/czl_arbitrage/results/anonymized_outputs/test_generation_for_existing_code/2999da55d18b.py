@@ -131,7 +131,8 @@ def test_load_records_not_list(tmp_path):
 def test_validate_record_happy():
     schema = {"name": str, "age": int}
     rec = {"name": "Alice", "age": 30}
-    validate_record(rec, schema)  # no exception
+    # should not raise
+    validate_record(rec, schema)
 
 
 def test_validate_record_missing_field():
@@ -169,7 +170,7 @@ def test_clean_records_happy():
     schema = {"email": str, "name": str}
     records = [
         {"email": "A@B.COM", "name": "Alice"},
-        {"email": "a@b.com", "name": "Alice2"},  # duplicate email
+        {"email": "a@b.com", "name": "Alice Dup"},  # duplicate email
         {"email": "C@D.COM", "name": "Charlie"},
     ]
     result = clean_records(records, schema)
@@ -182,9 +183,9 @@ def test_clean_records_skips_invalid():
     schema = {"email": str, "name": str}
     records = [
         {"email": "good@x.com", "name": "Good"},
-        {"name": "NoEmail"},                     # missing email
-        {"email": 123, "name": "BadType"},       # wrong type
-        {"email": "   ", "name": "EmptyEmail"},  # empty after normalize
+        {"name": "NoEmail"},                     # missing email -> ValidationError
+        {"email": 123, "name": "BadType"},       # wrong type -> ValidationError
+        {"email": "   ", "name": "EmptyEmail"},  # empty after normalize -> ValueError
     ]
     result = clean_records(records, schema)
     assert len(result) == 1
@@ -235,10 +236,10 @@ def test_aggregate_by_domain_empty():
 # ---------------------------------------------------------------------------
 
 def test_pipeline_happy(tmp_path):
-    p = tmp_path / "data.json"
+    p = tmp_path / "in.json"
     data = [
         {"email": "Alice@Example.COM", "name": "Alice"},
-        {"email": "alice@example.com", "name": "Alice2"},  # duplicate
+        {"email": "alice@example.com", "name": "Alice Dup"},  # duplicate
         {"email": "Bob@Other.ORG", "name": "Bob"},
     ]
     p.write_text(json.dumps(data), encoding="utf-8")
@@ -259,6 +260,7 @@ def test_pipeline_all_invalid(tmp_path):
     data = [
         {"name": "NoEmail"},
         {"email": 42, "name": "BadType"},
+        {"email": "   ", "name": "Empty"},
     ]
     p.write_text(json.dumps(data), encoding="utf-8")
     schema = {"email": str, "name": str}
