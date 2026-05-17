@@ -265,7 +265,36 @@ def run_scenario(
         # standalone runs.
         _ensure_git_initialised(request.workspace_dir)
 
-    for step_idx in range(request.max_iterations):
+    # v3.8 T2: passing-set trajectory parallel to residual_trajectory for
+    # dual-dim no_progress halt. Built every iter regardless of tier.
+    passing_set_trajectory: List[Set[str]] = []
+
+    # v3.8 T3: self-learning resource safeguard. Query past converged
+    # trials for (scenario, model_tier); if ≥3 samples → p90 wall × 2 is
+    # the cap. Insufficient history → None = no cap (open, trust no_progress).
+    from ystar.czl.reflection.no_progress import (
+        query_safeguard_wall_cap,
+        adaptive_no_progress_window,
+        is_no_progress_v3_8,
+    )
+    from ystar.czl.reflection.transitions import extract_test_status as _extract_status
+    adaptive_wall_cap = query_safeguard_wall_cap(
+        scenario=request.scenario.name,
+        model_tier=contract_dict.get("model_tier", "medium"),
+    )
+    if adaptive_wall_cap:
+        _log.info("CZL v3.8: resource safeguard cap = %.0fs (p90 x2 from history)",
+                  adaptive_wall_cap)
+    else:
+        _log.info("CZL v3.8: no historical safeguard data — open run, "
+                  "trusting v3.8 dual-dim no_progress halt")
+
+    # v3.8 T1: replaced `for step_idx in range(max_iterations)` with while True.
+    # Halt conditions: converged | scenario_empty_plan | no_progress | resource_safeguard.
+    # request.max_iterations is INFORMATIONAL only — no longer a hard cap.
+    step_idx = -1
+    while True:
+        step_idx += 1
         # v3.4 T1: pass contract to plan() so scenarios can branch on
         # model_tier and emit tier-appropriate prompt formats (e.g. ADD-only
         # for small tier). Use try/except for backwards compat with scenarios
@@ -332,6 +361,12 @@ def run_scenario(
 
         # Trajectory tracking — record residual BEFORE deciding to halt.
         result.residual_trajectory.append(residual)
+
+        # v3.8 T2: track per-iter passing set in parallel to residual.
+        _iter_test_status = _extract_status(verifier_results)
+        passing_set_trajectory.append(
+            {n for n, p in _iter_test_status.items() if p}
+        )
 
         # v3.7 T1: dominance-based rollback (small tier only).
         #
@@ -415,28 +450,51 @@ def run_scenario(
             last_violations, model_tier=model_tier, meta_text=meta_text,
         )
 
-        # 4e. no-progress halt: if residual hasn't strictly decreased over
-        # the last `no_progress_window` iterations, stop. This protects
-        # known-good answers from being thrashed by feedback loops on tasks
-        # where the model has already plateaued. (Defaults to 3; set to 0
-        # in CZLRun to disable.)
-        win = request.no_progress_window
-        if win and len(result.residual_trajectory) >= win + 1:
-            recent = result.residual_trajectory[-(win + 1):]
-            # strict_decrease across the window means recent[i+1] < recent[i] for all i
-            strict_decrease = any(recent[i + 1] < recent[i] for i in range(win))
-            if not strict_decrease:
+        # v3.8 T2 + T4: dual-dim adaptive no_progress halt.
+        # window = ceil(log2(history_len)) — no hardcoded constant.
+        # Halt only when BOTH residual not strictly decreasing AND passing
+        # set not strictly growing in the window. If passing is still
+        # growing, model is making real progress even at constant residual.
+        # Caller can still disable by setting CZLRun.no_progress_window=0.
+        if request.no_progress_window:
+            window = adaptive_no_progress_window(len(result.residual_trajectory))
+            if is_no_progress_v3_8(
+                result.residual_trajectory,
+                passing_set_trajectory,
+                window,
+            ):
                 result.stopping_authority = "no_progress"
                 result.halted_due_to = "no_progress"
-                _log.info("CZL halting: residual stuck at %s for %d iterations",
-                          residual, win)
+                _log.info(
+                    "CZL v3.8 halting (no_progress): window=%d both residual + passing stuck. "
+                    "residual_tail=%s passing_count_tail=%s",
+                    window,
+                    result.residual_trajectory[-(window + 1):],
+                    [len(p) for p in passing_set_trajectory[-(window + 1):]],
+                )
                 break
+
+        # v3.8 T3: self-learning resource safeguard. Fires only when
+        # (a) we have historical data (adaptive_wall_cap is not None) AND
+        # (b) wall time exceeds p90 × 2 from history. First run on a new
+        # (scenario, tier) pair → no cap → trust no_progress to halt.
+        if adaptive_wall_cap and (time.time() - started) > adaptive_wall_cap:
+            result.stopping_authority = "resource_safeguard"
+            result.halted_due_to = "resource_safeguard"
+            _log.warning(
+                "CZL v3.8 halting (resource_safeguard): wall=%.0fs > cap=%.0fs (p90 x2)",
+                time.time() - started, adaptive_wall_cap,
+            )
+            break
 
     # --- Step 5: finalize ---------------------------------------------------
     if not result.converged:
         if not result.stopping_authority:
-            result.stopping_authority = "max_iter_exhausted"
-            result.halted_due_to = "max_iter_exhausted"
+            # v3.8: shouldn't happen — the loop only exits via converged/
+            # no_progress/resource_safeguard/scenario_empty (or break in
+            # rollback fail). Defensive fallback string.
+            result.stopping_authority = "unknown_exit"
+            result.halted_due_to = "unknown_exit"
         result.failure_reason = (
             f"did_not_converge_after_{result.iterations}_iterations "
             f"({result.stopping_authority}): "
