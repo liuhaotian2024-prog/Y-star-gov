@@ -304,7 +304,7 @@ class LiteLLMBackend(Backend):
 import re
 
 _EDIT_BLOCK_RE = re.compile(
-    r"```(?P<kind>edit|create|run|delete)\s+(?P<path>[^\n]+)\n(?P<body>.*?)```",
+    r"```(?P<kind>edit|create|run|delete|add_tests|append)\s+(?P<path>[^\n]+)\n(?P<body>.*?)```",
     re.DOTALL,
 )
 _RUN_BLOCK_RE = re.compile(r"```run\n(?P<body>.*?)```", re.DOTALL)
@@ -313,13 +313,16 @@ _RUN_BLOCK_RE = re.compile(r"```run\n(?P<body>.*?)```", re.DOTALL)
 def _parse_actions_from_text(text: str) -> List[BackendAction]:
     actions: List[BackendAction] = []
 
-    # First pass: edit/create/delete with explicit path
+    # First pass: edit/create/delete/add_tests/append with explicit path
     for m in _EDIT_BLOCK_RE.finditer(text):
         kind = m.group("kind")
         if kind == "run":
             continue  # handled below
+        # v3.4 T1: both `add_tests` and `append` normalize to the add_tests_file
+        # action type, dispatched to scenario.apply_action's merge-by-name path.
+        action_type = "add_tests_file" if kind in ("add_tests", "append") else f"{kind}_file"
         actions.append(BackendAction(
-            type=f"{kind}_file",
+            type=action_type,
             payload={
                 "path": m.group("path").strip(),
                 "content": m.group("body"),

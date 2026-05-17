@@ -311,22 +311,25 @@ class DifferentialVerifier(Verifier):
             return VerifierResult(
                 verifier_name=self.name, passed=True,
                 message="differential: model output matches expected on all extractable test cases",
-                message_natural="差异检查: 函数的实际输出跟测试里 assert 的期望值都一致.",
+                message_natural=(
+                    "differential: function outputs match all asserted-equal literals in tests.\n"
+                    "Hint: nothing to fix here."
+                ),
                 elapsed_seconds=time.time() - t0,
             )
         msgs: List[str] = []
-        natural_blocks: List[str] = []
         for m in mismatches[:10]:
             msgs.append(m.reason)
-            # v3.3 D.2 prose: re-frame structured reason as natural language
-            natural_blocks.append("差异: " + m.reason.replace("expected ", "测试期望 ").replace("got ", "实际得到 "))
+        # v3.4 T2: structured signal verbatim + English 1-sentence hint
         return VerifierResult(
             verifier_name=self.name, passed=False,
             message=f"differential: {len(mismatches)} input/output mismatch(es); first: {msgs[0][:160]}",
             message_natural=(
-                f"差异检查: 发现 {len(mismatches)} 处函数输出跟测试期望对不上.\n"
-                + "\n".join(f"  • {nb}" for nb in natural_blocks[:5])
-                + "\n修正方向: 调整函数实现让它返回测试期望的值; 或如果测试期望本身错了, 修正测试."
+                f"differential: {len(mismatches)} input/output mismatch(es) — function returned something "
+                f"different from what a `assert <fn>(...) == LITERAL` test expects.\n\nDifferences:\n"
+                + "\n".join(f"  - {r}" for r in msgs[:5])
+                + "\n\nHint: either fix the function so its return value matches the test expectation, "
+                "or fix the test's expected literal if it was wrong."
             ),
             details={"mismatches": msgs, "n": len(mismatches)},
             elapsed_seconds=time.time() - t0,

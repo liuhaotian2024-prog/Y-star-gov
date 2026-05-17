@@ -1,27 +1,27 @@
 """
-ystar.czl.scenarios.test_gen_for_existing — v3.3 scenario #3
+ystar.czl.scenarios.test_gen_for_existing — v3.4 scenario #3
 
 Indie task: write a complete pytest suite for an existing data_pipeline.py
 module. Coverage ≥ 80%, includes edge cases and exception paths.
 
-v3.3 changes:
-  - B.2/B.3: Coverage80Verifier inherits AdaptiveThresholdVerifier;
-    scenario caches verifier instances in __init__ and calls
-    reset_for_trial() when contract["trial_id"] changes.
-  - D.2: every inline verifier populates VerifierResult.message_natural
-    (multi-line Chinese prose) for small-model audiences.
-  - E.2: every verifier has applies_to_tasks / min_model_capacity /
-    feedback_complexity / known_limitations.
-  - E.3: verify() filters the verifier chain by `contract["model_tier"]`
-    — verifiers whose min_model_capacity exceeds the model_tier are
-    skipped. For gemma 4B (small), mutation_score (medium) is filtered
-    out; branch_coverage (small) remains.
+v3.4 changes vs v3.3:
+  - T1: ADD-only protocol for small tier. plan() reads contract["model_tier"]
+    and for small tier emits an `add_tests` prompt format (model emits new
+    test functions only; apply_action merges into existing file by function
+    name). Large/medium tier keeps the v3.3 `edit` (full-rewrite) format.
+  - T2: English hints + raw traceback in every verifier's message_natural.
+    No more Chinese paragraphs. Hint is a 1-2 sentence English line about
+    what to fix; raw traceback / missing-line listing is preserved verbatim.
+  - T3: Coverage80Verifier inherits simplified AdaptiveThresholdVerifier
+    (no floor / no effective_threshold — real target = 0.80 is the gate;
+    baseline iter-1 informational only).
 """
 from __future__ import annotations
 
 import ast
 import json
 import os
+import re
 import subprocess
 import time
 from typing import Any, Dict, List, Optional
@@ -124,7 +124,7 @@ TASK_DESCRIPTION = (
 )
 
 
-# === inline verifiers (v3.3 with metadata + message_natural) ================
+# === inline verifiers (v3.4: English hints in message_natural) ==============
 
 class PytestPassVerifier(Verifier):
     name = "pytest"
@@ -149,41 +149,57 @@ class PytestPassVerifier(Verifier):
                 return VerifierResult(
                     verifier_name=self.name, passed=True,
                     message="pytest: all pass",
-                    message_natural="pytest: 所有测试都通过.",
+                    message_natural="pytest: all tests pass.\nHint: nothing to fix here.",
                     elapsed_seconds=time.time() - t0,
                 )
-            tb = (proc.stdout or "")[-1500:]
-            # Extract failure summary lines for natural feedback
-            fail_lines = [ln for ln in (proc.stdout or "").splitlines()
-                          if " FAILED " in ln or "FAILED " in ln or ln.startswith("E  ")
-                          or ln.lstrip().startswith("assert ")][:10]
-            natural = "pytest: 测试运行失败.\n下面是失败的细节:\n" + "\n".join(f"  {ln}" for ln in fail_lines[:10])
+            stdout = proc.stdout or ""
+            # Extract the pytest --tb=short traceback verbatim (small models need raw signal)
+            # and the FAILED summary lines.
+            tb_match = re.search(r"={5,}\s*FAILURES\s*={5,}(.*?)(?:={5,}|short test summary)",
+                                 stdout, re.DOTALL)
+            traceback_block = tb_match.group(1).strip() if tb_match else stdout[-1500:]
+            # Identify the dominant assertion-error pattern for the hint
+            assertion_lines = [ln for ln in stdout.splitlines() if ln.lstrip().startswith("E   ")][:3]
+            failure_pattern = ""
+            if assertion_lines:
+                if any("AssertionError" in ln and "==" in ln for ln in assertion_lines):
+                    failure_pattern = " (assertion expects a different value than what the function returns)"
+                elif any("TypeError" in ln for ln in assertion_lines):
+                    failure_pattern = " (function called with wrong type or arity)"
+                elif any("KeyError" in ln or "AttributeError" in ln for ln in assertion_lines):
+                    failure_pattern = " (test references a key/attribute that doesn't exist)"
             return VerifierResult(
                 verifier_name=self.name, passed=False,
                 message="pytest: failures",
-                message_natural=natural,
-                details={"stdout": tb},
+                message_natural=(
+                    f"pytest: failures.\n\nTraceback:\n{traceback_block}\n\n"
+                    f"Hint: Read the AssertionError carefully — the LEFT side is what your test "
+                    f"computed, the RIGHT side is what you asserted equals it{failure_pattern}. "
+                    f"Fix either the test's expected value OR the test setup so they agree."
+                ),
+                details={"stdout": stdout[-1500:]},
                 elapsed_seconds=time.time() - t0,
             )
         except subprocess.TimeoutExpired:
             return VerifierResult(
                 verifier_name=self.name, passed=False,
                 message="pytest timed out",
-                message_natural="pytest 超时了 (可能有死循环).",
+                message_natural="pytest: timed out.\nHint: a test has an infinite loop or unbounded input.",
                 elapsed_seconds=time.time() - t0,
             )
 
 
 class Coverage80Verifier(AdaptiveThresholdVerifier):
-    """v3.3: now adaptive. target=0.80; floor=0.50. First call records
-    baseline, subsequent calls require baseline + 0.10 (or target)."""
+    """v3.4 T3: simplified — real target 0.80 is the only pass/fail; baseline
+    informational only.
+    """
     name = "coverage_80"
     applies_to_tasks = ["test_generation_for_existing_code"]
     min_model_capacity = "small"
     feedback_complexity = "low"
 
     def __init__(self, target: float = 0.80):
-        AdaptiveThresholdVerifier.__init__(self, target_threshold=target, floor_threshold=0.50)
+        AdaptiveThresholdVerifier.__init__(self, target_threshold=target)
 
     def is_applicable(self, workspace_dir: str, contract: Optional[Dict[str, Any]] = None) -> bool:
         return os.path.isfile(os.path.join(workspace_dir, "data_pipeline.py"))
@@ -203,39 +219,50 @@ class Coverage80Verifier(AdaptiveThresholdVerifier):
                 return VerifierResult(
                     verifier_name=self.name, passed=False,
                     message="coverage report missing",
-                    message_natural="覆盖率报告没生成. 你的测试文件可能没被 pytest 发现, 或测试一上来就报错.",
+                    message_natural=(
+                        "coverage_80: coverage report missing.\n"
+                        "Hint: your test file is not being discovered by pytest — "
+                        "check the file name starts with `test_` and contains `def test_*` functions."
+                    ),
                     details={"stdout": (proc.stdout or "")[-1000:]},
                     elapsed_seconds=time.time() - t0,
                 )
             cov = json.loads(open(cov_path, "r", encoding="utf-8").read())
             pct = cov.get("totals", {}).get("percent_covered", 0.0)
-            # Missing lines from coverage report
             missing_lines: List[Any] = []
             for fp, fdata in (cov.get("files") or {}).items():
-                missing_lines.extend(fdata.get("missing_lines", [])[:10])
-            passed_adaptive, adaptive_msg = self.check_score(pct / 100.0)
+                missing_lines.extend(fdata.get("missing_lines", [])[:12])
+            passed_score, adaptive_msg = self.check_score(pct / 100.0)
             details = {
                 "percent_covered": pct,
                 "missing_lines": missing_lines[:20],
-                "adaptive_threshold_pct": self.effective_threshold() * 100.0,
-                "adaptive_baseline": self._calibration_score,
-                "adaptive_call_count": self._call_count,
+                "target_pct": self.target * 100.0,
+                "baseline_iter1_pct": (self._calibration_score * 100.0) if self._calibration_score is not None else None,
+                "call_count": self._call_count,
             }
-            if passed_adaptive:
+            if passed_score:
                 return VerifierResult(
                     verifier_name=self.name, passed=True,
                     message=f"coverage: {pct:.1f}% — {adaptive_msg}",
-                    message_natural=f"行覆盖率 {pct:.0f}%. {adaptive_msg}.",
+                    message_natural=(
+                        f"coverage_80: {pct:.0f}% line coverage >= target {self.target*100:.0f}%.\n"
+                        f"Hint: all lines exercised."
+                    ),
                     details=details, elapsed_seconds=time.time() - t0,
                 )
+            # Build the English hint by inspecting which line numbers are missing
+            target_lines_str = ", ".join(str(ln) for ln in missing_lines[:10])
             return VerifierResult(
                 verifier_name=self.name, passed=False,
                 message=f"coverage: {pct:.1f}% — {adaptive_msg}",
                 message_natural=(
-                    f"行覆盖率: {pct:.0f}% (需要 {self.effective_threshold()*100:.0f}%). "
-                    f"下面这些行还没被任何测试执行到:\n"
-                    + "\n".join(f"  data_pipeline.py 第 {ln} 行" for ln in missing_lines[:8])
-                    + "\n修正方向: 给这些行写专门的 test_xxx 函数 (重点关注 try/except 分支 + edge case)."
+                    f"coverage_80: {pct:.0f}% line coverage; target {self.target*100:.0f}% "
+                    f"(gap {self.target - pct/100:.2f}).\n"
+                    f"Uncovered lines in data_pipeline.py: {target_lines_str}\n"
+                    f"Hint: add a test that calls the function whose body spans those lines "
+                    f"(open data_pipeline.py, find which `def` contains line {missing_lines[0] if missing_lines else '?'}, "
+                    f"then write a test that exercises the branch covering those lines — "
+                    f"often this is a try/except path or an `if` branch that's not yet tested)."
                 ),
                 details=details,
                 elapsed_seconds=time.time() - t0,
@@ -244,14 +271,14 @@ class Coverage80Verifier(AdaptiveThresholdVerifier):
             return VerifierResult(
                 verifier_name=self.name, passed=False,
                 message="coverage run timed out",
-                message_natural="覆盖率测试运行超时.",
+                message_natural="coverage_80: timed out.\nHint: a test has an infinite loop.",
                 elapsed_seconds=time.time() - t0,
             )
         except Exception as e:
             return VerifierResult(
                 verifier_name=self.name, passed=False,
                 message=f"coverage check failed: {e}",
-                message_natural=f"覆盖率检查异常: {e}",
+                message_natural=f"coverage_80: error {e}.\nHint: rerun.",
                 elapsed_seconds=time.time() - t0,
             )
 
@@ -280,19 +307,73 @@ class HasExceptionTestsVerifier(Verifier):
                     continue
                 n += body.count("pytest.raises")
         passed = n >= 1
+        if passed:
+            return VerifierResult(
+                verifier_name=self.name, passed=True,
+                message=f"has_exception_tests: {n} `pytest.raises` found",
+                message_natural=(
+                    f"has_exception_tests: {n} `pytest.raises` block(s) found.\n"
+                    f"Hint: exception coverage is good."
+                ),
+                details={"pytest_raises_count": n},
+                elapsed_seconds=time.time() - t0,
+            )
         return VerifierResult(
-            verifier_name=self.name, passed=passed,
-            message=("≥1 pytest.raises found" if passed else "no pytest.raises found"),
+            verifier_name=self.name, passed=False,
+            message="has_exception_tests: no pytest.raises found",
             message_natural=(
-                f"找到 {n} 个使用 `pytest.raises` 的异常路径测试."
-                if passed
-                else "测试里没有任何 `with pytest.raises(...)` 块. "
-                     "请至少加一个测试: 用 `pytest.raises(ValueError)` 检查 normalize_email('') 会抛异常. "
-                     "也建议覆盖 validate_record 缺字段 / 类型错的情况."
+                "has_exception_tests: no `with pytest.raises(...):` block found.\n"
+                "Hint: add a test that asserts a function raises the expected exception, e.g.:\n"
+                "  with pytest.raises(ValueError):\n"
+                "      normalize_email('')\n"
+                "Cover at least one error path (ValidationError on bad schema, ValueError on empty email)."
             ),
             details={"pytest_raises_count": n},
             elapsed_seconds=time.time() - t0,
         )
+
+
+# === ADD-only parse helpers (v3.4 T1) =======================================
+
+def _extract_test_functions(content: str) -> Dict[str, str]:
+    """Given source code that may contain test_* function definitions
+    (and maybe other top-level code), return {func_name: full_source} of
+    each test_* function. Uses AST so it's robust to indentation.
+
+    Returns dict in source-order via OrderedDict semantics (Python 3.7+).
+    """
+    out: Dict[str, str] = {}
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        # Try a relaxed pass: greedy regex for `def test_*(...):` blocks
+        for m in re.finditer(r"^(def test_[A-Za-z0-9_]*\([^)]*\)(?:\s*->\s*[^:]+)?:.*?)(?=\n(?:def |class |@|$))",
+                              content, flags=re.DOTALL | re.MULTILINE):
+            body = m.group(1).rstrip()
+            name_m = re.match(r"def (test_[A-Za-z0-9_]*)", body)
+            if name_m:
+                out[name_m.group(1)] = body + "\n"
+        return out
+    # AST pass: collect FunctionDef whose name starts with test_
+    lines = content.splitlines(keepends=True)
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("test_"):
+            start = node.lineno - 1
+            end = getattr(node, "end_lineno", None) or _function_end_line(node, lines)
+            src = "".join(lines[start:end])
+            out[node.name] = src
+    return out
+
+
+def _function_end_line(node: ast.FunctionDef, lines: List[str]) -> int:
+    """Fallback: walk to the next top-level token to find end line."""
+    return node.lineno + 50  # safe-ish default
+
+
+_ADD_TESTS_RE = re.compile(
+    r"```(?P<kind>add_tests|append)\s+(?P<path>[^\n]+)\n(?P<body>.*?)```",
+    re.DOTALL,
+)
 
 
 # === scenario ================================================================
@@ -302,13 +383,9 @@ class TestGenForExistingScenario(Scenario):
     description = "Write pytest tests for data_pipeline.py; coverage ≥ 80%; exception paths covered"
     default_max_iterations = 6
 
-    # v3.3 B.3: cached verifier instances. Live for the lifetime of the
-    # singleton scenario; reset_for_trial called when trial_id changes.
     _last_verifier_call_order: List[str] = []
 
     def __init__(self) -> None:
-        # Cache instances so AdaptiveThresholdVerifier subclasses retain
-        # calibration state across iterations within one trial.
         self._cached_pytest = PytestPassVerifier()
         self._cached_coverage80 = Coverage80Verifier(target=0.80)
         self._cached_has_exc = HasExceptionTestsVerifier()
@@ -317,8 +394,11 @@ class TestGenForExistingScenario(Scenario):
         self._cached_mutation = MutationScoreVerifier(score_threshold=0.7)
         self._cached_branch = BranchCoverageVerifier(threshold=0.70)
         self._last_trial_id: Optional[str] = None
+        # v3.4 T1: latest model_tier seen via verify(), so plan() (called BEFORE
+        # verify() at iter 1) can fall back to medium if no tier info yet —
+        # but iter 2+ uses the cached tier from prior verify().
+        self._last_model_tier: str = "medium"
 
-    # --- v3.3 helper for B.3 -------------------------------------------------
     def _all_cached_verifiers(self) -> List[Verifier]:
         return [self._cached_pytest, self._cached_coverage80, self._cached_has_exc,
                 self._cached_contract, self._cached_differential,
@@ -346,18 +426,70 @@ class TestGenForExistingScenario(Scenario):
             "_mutation_target_wall_seconds": 10.0,
         }
 
-    def plan(self, task_description: str, workspace_dir: str) -> List[PlanStep]:
+    def plan(self, task_description: str, workspace_dir: str,
+             contract: Optional[Dict[str, Any]] = None) -> List[PlanStep]:
+        """v3.4 T1: small tier gets ADD-only prompt; large/medium get full-rewrite."""
+        contract = contract or {}
+        model_tier = contract.get("model_tier", self._last_model_tier)
+        # cache for next call
+        self._last_model_tier = model_tier
+        is_small = model_tier in ("small", "tiny", "local")
+
         path = os.path.join(workspace_dir, "data_pipeline.py")
         body = open(path, "r", encoding="utf-8").read() if os.path.isfile(path) else "(missing)"
-        existing_tests = sorted(
-            os.path.relpath(os.path.join(r, f), workspace_dir)
-            for r, _, fs in os.walk(workspace_dir) for f in fs
-            if f.startswith("test_") and f.endswith(".py")
-        )
-        existing = "\n".join(f"- {p}" for p in existing_tests) or "(none yet)"
-        return [PlanStep(
-            step_id="write_tests",
-            user_prompt=(
+        # Existing test functions (so the prompt tells small model what NOT to repeat)
+        existing_test_funcs: List[str] = []
+        existing_tests_content = ""
+        for r, _, fs in os.walk(workspace_dir):
+            for f in fs:
+                if f.startswith("test_") and f.endswith(".py"):
+                    fp = os.path.join(r, f)
+                    try:
+                        c = open(fp, "r", encoding="utf-8").read()
+                    except Exception:
+                        continue
+                    existing_tests_content += c
+                    existing_test_funcs.extend(_extract_test_functions(c).keys())
+
+        if is_small:
+            existing_listing = "\n".join(f"  - {n}" for n in existing_test_funcs) or "  (none yet)"
+            user_prompt = (
+                f"## Task\n{task_description}\n\n"
+                "## Source to test (read-only)\n"
+                f"### data_pipeline.py\n```python\n{body}```\n\n"
+                "## Existing test functions in test_data_pipeline.py (DO NOT rewrite these)\n"
+                f"{existing_listing}\n\n"
+                "## Constraints (Y*)\n"
+                "- Every test must pass under `pytest -q`\n"
+                "- Combined coverage of data_pipeline.py must be >= 80% (use pytest-cov)\n"
+                "- At least one test must use `pytest.raises` to exercise an exception path\n"
+                "- Cover edge / error paths: missing fields, wrong types, empty inputs, "
+                "duplicate emails, invalid JSON, missing files\n"
+                "- Do NOT modify data_pipeline.py — only ADD new tests\n\n"
+                "## Output format (ADD-only — IMPORTANT)\n"
+                "Emit ONE block of NEW test functions only. Existing tests in "
+                "test_data_pipeline.py are preserved automatically; do not repeat them. "
+                "If a function name you emit already exists, it will REPLACE the existing "
+                "one (so re-emit a function to fix it). Do NOT include `print(...)`, "
+                "top-level `try/except`, or `if __name__ == '__main__'` blocks — only "
+                "`def test_*(...)` functions and any `pytest` fixtures.\n\n"
+                "```add_tests test_data_pipeline.py\n"
+                "import pytest\n"
+                "from data_pipeline import (load_records, validate_record, normalize_email, "
+                "clean_records, aggregate_by_domain, pipeline, ValidationError, PipelineError)\n\n"
+                "def test_<descriptive_name>():\n"
+                "    # your test body — assert specific values\n"
+                "    ...\n"
+                "```\n"
+            )
+        else:
+            existing_files = sorted(
+                os.path.relpath(os.path.join(r, f), workspace_dir)
+                for r, _, fs in os.walk(workspace_dir) for f in fs
+                if f.startswith("test_") and f.endswith(".py")
+            )
+            existing = "\n".join(f"- {p}" for p in existing_files) or "(none yet)"
+            user_prompt = (
                 f"## Task\n{task_description}\n\n"
                 "## Source to test (read-only)\n"
                 f"### data_pipeline.py\n```python\n{body}```\n\n"
@@ -374,28 +506,19 @@ class TestGenForExistingScenario(Scenario):
                 "<full new test file content>\n"
                 "```\n"
                 "(You can use pytest's tmp_path fixture for the file-loading tests.)\n"
-            ),
-            expected_action_types=["create_file", "edit_file"],
+            )
+
+        return [PlanStep(
+            step_id="write_tests",
+            user_prompt=user_prompt,
+            expected_action_types=["create_file", "edit_file", "add_tests_file"],
         )]
 
     def verify(self, workspace_dir: str, contract: Dict[str, Any]) -> List[VerifierResult]:
-        """v3.3 verifier chain:
-
-          pytest_pass → coverage80 → has_exception_tests
-          → contract_consistency → differential   (inner)
-          → [if all inner passed] {mutation_score, branch_coverage}
-            (parallel final gates, filtered by model_tier)
-
-        - B.3: cached verifier instances; reset_for_trial when trial_id changes.
-        - E.3: chain composition filtered by model_tier — small tier
-          (gemma 4B) skips mutation_score (min_capacity="medium"); branch_coverage
-          (min_capacity="small") remains.
-        - D.3: feedback layer chosen by loop.render_feedback_by_tier; we
-          just emit results, the loop reads message_natural for small models.
-        """
         contract = contract or {}
         self._reset_if_new_trial(contract)
         model_tier = contract.get("model_tier", "medium")
+        self._last_model_tier = model_tier  # cache for plan() on iter 1 next trial
 
         results: List[VerifierResult] = []
         call_order: List[str] = []
@@ -404,13 +527,12 @@ class TestGenForExistingScenario(Scenario):
             self._cached_pytest, self._cached_coverage80, self._cached_has_exc,
             self._cached_contract, self._cached_differential,
         ]
-        # E.3 filter
         inner = [v for v in inner_candidates if tier_compatible(v.min_model_capacity, model_tier)]
         for v in inner:
             try:
                 applicable = v.is_applicable(workspace_dir, contract)
             except TypeError:
-                applicable = v.is_applicable(workspace_dir)  # legacy signature
+                applicable = v.is_applicable(workspace_dir)
             if not applicable:
                 continue
             r = v.run(workspace_dir, contract)
@@ -436,11 +558,81 @@ class TestGenForExistingScenario(Scenario):
         self._last_verifier_call_order = list(call_order)
         return results
 
-    def apply_action(self, action: Dict[str, Any], workspace_dir: str) -> None:
+    def apply_action(self, action: Any, workspace_dir: str) -> None:
+        """v3.4 T1: handle `add_tests_file` (merge by function name into existing
+        file) in addition to the v3.3 `edit_file` / `create_file`.
+        """
         action_type = action.get("type", "") if isinstance(action, dict) else getattr(action, "type", "")
         payload = action.payload if hasattr(action, "payload") else action
+
+        if action_type == "add_tests_file":
+            self._merge_test_functions(workspace_dir,
+                                        payload.get("path", ""),
+                                        payload.get("content", ""))
+            return
         if action_type in ("edit_file", "create_file"):
             self._safe_write(workspace_dir, payload.get("path", ""), payload.get("content", ""))
+
+    def _merge_test_functions(self, workspace_dir: str, rel_path: str, content: str) -> None:
+        """v3.4 T1 ADD-only merge.
+
+        Read existing file (or create blank), parse existing test functions,
+        parse the new content for test_* functions, then write OUT:
+          (existing imports + fixtures) + (existing tests with names not in new) + (new tests)
+        Functions in `content` whose names match existing get REPLACED.
+        Top-level non-test code in `content` is dropped to prevent script-style pollution.
+        """
+        # Path-safety
+        if not rel_path:
+            rel_path = "test_data_pipeline.py"
+        full = os.path.abspath(os.path.join(workspace_dir, rel_path))
+        ws_abs = os.path.abspath(workspace_dir)
+        if not full.startswith(ws_abs + os.sep) and full != ws_abs:
+            raise ValueError(f"Refusing to write outside workspace: {rel_path}")
+        basename = os.path.basename(full)
+        if not (basename.startswith("test_") and basename.endswith(".py")):
+            return  # ADD-only only applies to test files
+
+        existing = ""
+        if os.path.isfile(full):
+            existing = open(full, "r", encoding="utf-8").read()
+
+        # Extract imports / fixtures / helpers from the new content (anything that's
+        # NOT a test function definition, NOT a script-style top-level statement)
+        new_imports, new_fixtures, new_tests = _split_test_block(content)
+        existing_imports, existing_fixtures, existing_tests = _split_test_block(existing)
+
+        # Merge by function name: new takes precedence
+        merged_tests = dict(existing_tests)
+        merged_tests.update(new_tests)
+
+        # Merge imports (dedupe by line text)
+        all_imports_lines: List[str] = []
+        seen_imports = set()
+        for src in (existing_imports + "\n" + new_imports).splitlines():
+            stripped = src.strip()
+            if stripped and stripped not in seen_imports:
+                all_imports_lines.append(src.rstrip())
+                seen_imports.add(stripped)
+
+        # Merge fixtures (by name — keep first-seen unless new replaces)
+        merged_fixtures = dict(existing_fixtures)
+        merged_fixtures.update(new_fixtures)
+
+        out_pieces: List[str] = []
+        if all_imports_lines:
+            out_pieces.append("\n".join(all_imports_lines))
+            out_pieces.append("")
+        for name in merged_fixtures:
+            out_pieces.append(merged_fixtures[name].rstrip())
+            out_pieces.append("")
+        for name in merged_tests:
+            out_pieces.append(merged_tests[name].rstrip())
+            out_pieces.append("")
+
+        os.makedirs(os.path.dirname(full) or workspace_dir, exist_ok=True)
+        with open(full, "w", encoding="utf-8") as f:
+            f.write("\n".join(out_pieces) + "\n")
 
     def _safe_write(self, workspace_dir: str, rel_path: str, content: str) -> None:
         full = os.path.abspath(os.path.join(workspace_dir, rel_path))
@@ -448,7 +640,6 @@ class TestGenForExistingScenario(Scenario):
         if not full.startswith(ws_abs + os.sep) and full != ws_abs:
             raise ValueError(f"Refusing to write outside workspace: {rel_path}")
         basename = os.path.basename(full)
-        # Scenario inverts the usual rule: SOURCE is read-only, test_*.py / conftest are writable
         if not ((basename.startswith("test_") and basename.endswith(".py")) or basename == "conftest.py"):
             return
         if any(d in full for d in (".env", ".git", "secrets")):
@@ -456,6 +647,58 @@ class TestGenForExistingScenario(Scenario):
         os.makedirs(os.path.dirname(full) or workspace_dir, exist_ok=True)
         with open(full, "w", encoding="utf-8") as f:
             f.write(content)
+
+
+def _split_test_block(content: str) -> tuple:
+    """Split a Python source string into (imports_block, fixtures_dict,
+    tests_dict). Drops top-level statements that are NOT imports, fixtures,
+    or test_* functions (e.g. stray `print()` calls, top-level `try/except`).
+    """
+    if not content.strip():
+        return ("", {}, {})
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        # Fall back: try just extracting test functions via regex
+        return ("", {}, _extract_test_functions(content))
+
+    lines = content.splitlines(keepends=True)
+    import_lines: List[str] = []
+    fixtures: Dict[str, str] = {}
+    tests: Dict[str, str] = {}
+
+    for node in tree.body:
+        start = node.lineno - 1
+        end = getattr(node, "end_lineno", None) or (node.lineno + 1)
+        src = "".join(lines[start:end])
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            import_lines.append(src.rstrip())
+        elif isinstance(node, ast.FunctionDef):
+            # check if decorated as @pytest.fixture
+            is_fixture = any(
+                (isinstance(d, ast.Attribute) and d.attr == "fixture") or
+                (isinstance(d, ast.Name) and d.id == "fixture") or
+                (isinstance(d, ast.Call) and (
+                    (isinstance(d.func, ast.Attribute) and d.func.attr == "fixture") or
+                    (isinstance(d.func, ast.Name) and d.func.id == "fixture")
+                ))
+                for d in node.decorator_list
+            )
+            # Decorators are part of the function source — include them
+            # by extending the start back to the topmost decorator's lineno.
+            if node.decorator_list:
+                start = node.decorator_list[0].lineno - 1
+                src = "".join(lines[start:end])
+            if is_fixture:
+                fixtures[node.name] = src
+            elif node.name.startswith("test_"):
+                tests[node.name] = src
+            # else: helper function — drop (encourages model to keep tests focused)
+        # else: top-level Expr / Assign / If / Try / etc → DROPPED (defends
+        # against the v3.3 sanity failure where gemma wrote top-level
+        # `print()` + `try/except` blocks)
+
+    return ("\n".join(import_lines), fixtures, tests)
 
 
 def materialize_workspace(workspace_dir: str) -> str:

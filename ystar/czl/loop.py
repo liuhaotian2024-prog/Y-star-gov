@@ -205,8 +205,29 @@ def run_scenario(
     # current workspace (post-edit) state — without this, small models keep
     # seeing the original file content even after they've changed it, and
     # get confused about what's already been done.
+    # v3.4 T4: keep-last-good-iter rollback state. Snapshots done via git.
+    best_residual: float = float("inf")
+    best_commit_sha: Optional[str] = None
+    rollback_enabled = contract_dict.get("model_tier", "medium") in ("small", "tiny", "local")
+    if rollback_enabled:
+        # Ensure workspace is a git repo with an initial commit so we can
+        # snapshot / rollback. Trial workspaces from run_seven_arm.py
+        # already are git-initialized; this is the defensive path for
+        # standalone runs.
+        _ensure_git_initialised(request.workspace_dir)
+
     for step_idx in range(request.max_iterations):
-        plan_steps = request.scenario.plan(request.task_description, request.workspace_dir)
+        # v3.4 T1: pass contract to plan() so scenarios can branch on
+        # model_tier and emit tier-appropriate prompt formats (e.g. ADD-only
+        # for small tier). Use try/except for backwards compat with scenarios
+        # whose plan() signature pre-dates the contract kwarg.
+        try:
+            plan_steps = request.scenario.plan(
+                request.task_description, request.workspace_dir,
+                contract=contract_dict,
+            )
+        except TypeError:
+            plan_steps = request.scenario.plan(request.task_description, request.workspace_dir)
         if not plan_steps:
             result.failure_reason = "scenario_returned_empty_plan"
             result.stopping_authority = "scenario_returned_empty_plan"
@@ -249,6 +270,27 @@ def run_scenario(
 
         # Trajectory tracking — record residual BEFORE deciding to halt.
         result.residual_trajectory.append(residual)
+
+        # v3.4 T4: keep-last-good-iter rollback (small tier only). Snapshot
+        # this iter; if it's strictly worse than the best so far, restore
+        # the workspace to the best iter's commit BEFORE generating
+        # feedback for the next iter. The model still sees the current
+        # iter's verifier feedback in its next prompt (so it learns the
+        # mistake), but its starting workspace is the best-so-far state.
+        if rollback_enabled:
+            current_commit = _git_commit_iter(request.workspace_dir, step_idx, residual)
+            if residual < best_residual:
+                best_residual = residual
+                best_commit_sha = current_commit
+                _log.info("CZL T4: iter %d new best residual %.0f, snapshot %s",
+                          step_idx, residual, (current_commit or "")[:8])
+            elif residual > best_residual and best_commit_sha:
+                _log.warning(
+                    "CZL T4: iter %d residual %.0f > best %d at iter %s, rolling back workspace to %s",
+                    step_idx, residual, int(best_residual),
+                    "(unknown)", (best_commit_sha or "")[:8],
+                )
+                _git_rollback_to(request.workspace_dir, best_commit_sha)
 
         if residual == 0.0:
             # converged — ship the current workspace as-is. The break here is
@@ -412,15 +454,14 @@ def _format_feedback_for_retry(violations: List[VerifierResult],
     if not violations:
         return ""
     use_natural = model_tier in ("small", "tiny", "local")
-    if use_natural:
-        lines = ["### 上一次尝试没收敛, 请逐条修正下面的问题:"]
-    else:
-        lines = ["### Previous attempt did NOT converge. Address each issue:"]
+    lines = ["### Previous attempt did NOT converge. Address each issue:"]
     for v in violations[:10]:
         if use_natural and getattr(v, "message_natural", None):
+            # v3.4 T2: small tier reads message_natural (raw signal + English hint)
             text = v.message_natural
             lines.append(f"\n[{v.verifier_name}]\n{text}")
         else:
+            # Large / medium tier: structured message + raw stdout tail (no hint)
             lines.append(f"- [{v.verifier_name}] {v.message}")
             if v.details:
                 stdout_tail = (v.details.get("stdout") or "")[-1000:]
@@ -432,10 +473,15 @@ def _format_feedback_for_retry(violations: List[VerifierResult],
                     lines.append("  ```")
     lines.append("")
     if use_natural:
+        # v3.4 T1: small tier is on ADD-only protocol — instruction is
+        # "add or replace ONLY the test functions that need fixing".
         lines.append(
-            "请把每个有问题的文件完整重新输出 (不要只发 patch). "
-            "如果 pytest 报某个值不对, 你的代码必须真的返回那个值 — "
-            "测试就是规范, 不是类型注解."
+            "Output format: emit ONLY new or replacement test functions "
+            "inside an ```add_tests test_data_pipeline.py block. Existing "
+            "passing tests are preserved automatically. Do not include "
+            "top-level print(), try/except, or `if __name__ == '__main__'` "
+            "blocks. If a test you previously wrote needs fixing, emit a "
+            "function with the SAME NAME and it will replace the old one."
         )
     else:
         lines.append(
@@ -480,6 +526,60 @@ def _format_cost_summary(result: CZLResult, backend: Backend) -> str:
         )
     else:
         return f"[czl] converged in {result.iterations} iterations via {backend.name} → cost ${result.total_cost_usd:.4f}"
+
+
+# === v3.4 T4: git snapshot / rollback helpers ===============================
+
+def _ensure_git_initialised(workspace_dir: str) -> None:
+    """Defensive: if not a git repo, initialise + initial commit so the
+    rollback path has a base. Bench workspaces are already initialised."""
+    import subprocess
+    git_dir = os.path.join(workspace_dir, ".git")
+    if os.path.isdir(git_dir):
+        return
+    try:
+        subprocess.run(["git", "init", "-q"], cwd=workspace_dir, timeout=10, check=False)
+        # Configure dummy user for the per-iter commits (no global config required)
+        subprocess.run(["git", "config", "user.email", "trampoline@local"], cwd=workspace_dir, timeout=5, check=False)
+        subprocess.run(["git", "config", "user.name", "trampoline"], cwd=workspace_dir, timeout=5, check=False)
+        subprocess.run(["git", "add", "-A"], cwd=workspace_dir, timeout=10, check=False)
+        subprocess.run(["git", "commit", "-q", "-m", "trampoline initial baseline"],
+                       cwd=workspace_dir, timeout=10, check=False)
+    except Exception as e:
+        _log.warning("CZL T4: could not init git workspace at %s: %s", workspace_dir, e)
+
+
+import os  # for _ensure_git_initialised path check
+
+
+def _git_commit_iter(workspace_dir: str, step_idx: int, residual: float) -> Optional[str]:
+    """Commit workspace state after iter `step_idx`, return new commit sha or None."""
+    import subprocess
+    try:
+        subprocess.run(["git", "add", "-A"], cwd=workspace_dir, timeout=10, check=False)
+        # `--allow-empty` so iters that didn't actually change files still create a commit
+        # (so we have a snapshot to roll back TO).
+        msg = f"trampoline iter {step_idx} residual {int(residual)}"
+        subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", msg],
+                       cwd=workspace_dir, timeout=10, check=False)
+        proc = subprocess.run(["git", "rev-parse", "HEAD"],
+                              cwd=workspace_dir, capture_output=True, text=True, timeout=5)
+        sha = (proc.stdout or "").strip() or None
+        return sha
+    except Exception as e:
+        _log.warning("CZL T4: commit failed at iter %d: %s", step_idx, e)
+        return None
+
+
+def _git_rollback_to(workspace_dir: str, commit_sha: str) -> None:
+    """Restore working tree to `commit_sha` — destructive checkout."""
+    import subprocess
+    try:
+        # `checkout <sha> -- .` restores working tree to that commit's state.
+        subprocess.run(["git", "checkout", "-q", commit_sha, "--", "."],
+                       cwd=workspace_dir, timeout=15, check=False)
+    except Exception as e:
+        _log.warning("CZL T4: rollback to %s failed: %s", commit_sha[:8], e)
 
 
 def _git_stash_create(workspace_dir: str, run_id: str) -> Optional[str]:

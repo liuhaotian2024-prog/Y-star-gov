@@ -261,8 +261,10 @@ def _signature_admits_call(callee: CalleeSignature, site: CallSite) -> Tuple[boo
 def _render_natural_mismatch(site: CallSite,
                              best_candidate: CalleeSignature,
                              structured_reason: str) -> str:
-    """v3.3 A.3: render multi-line Chinese prose for the mismatch."""
-    # Construct the declared signature display: name(param1, param2, ...)
+    """v3.4 T2: structured signal + English hint. Preserves call_source,
+    file:lineno, declared signature, docstring first line verbatim; hint
+    is a single English imperative sentence.
+    """
     sig_params = list(best_candidate.param_names)
     if best_candidate.has_var_positional:
         sig_params.append("*args")
@@ -273,50 +275,54 @@ def _render_natural_mismatch(site: CallSite,
         sig_params.append("**kwargs")
     sig_display = f"{best_candidate.name}({', '.join(sig_params)})"
 
-    # Choose the suggested fix
     fix_hint = ""
     if site.positional_count > best_candidate.max_arity:
         diff = site.positional_count - best_candidate.max_arity
-        if diff == 1:
-            fix_hint = "可能的修正: 删除多出的 1 个参数; 或检查你是否调用了正确的函数."
-        else:
-            fix_hint = f"可能的修正: 删除多出的 {diff} 个参数; 或检查你是否调用了正确的函数."
+        fix_hint = (f"Hint: drop the {diff} extra positional argument"
+                    + ("s" if diff > 1 else "")
+                    + " from this call, OR check that you called the intended function.")
     elif site.positional_count < best_candidate.min_arity:
         missing = best_candidate.min_arity - site.positional_count
-        fix_hint = f"可能的修正: 补充缺少的 {missing} 个位置参数; 或检查函数签名是否变了."
+        fix_hint = (f"Hint: supply the missing {missing} positional argument"
+                    + ("s" if missing > 1 else "")
+                    + f" — the function declares `{sig_display}`.")
     elif site.kw_names_used and not best_candidate.has_var_keyword:
         unknown_kws = site.kw_names_used - (best_candidate.kw_names_accepted | set(best_candidate.param_names))
         if unknown_kws:
             kw = sorted(unknown_kws)[0]
-            fix_hint = f"可能的修正: 删除关键字参数 `{kw}=…`; 或确认函数签名."
+            fix_hint = (f"Hint: remove the keyword argument `{kw}=...` (not declared) "
+                        f"or pick the right function.")
     elif site.lhs_unpack_arity and site.lhs_unpack_arity > 1:
-        fix_hint = f"可能的修正: 不要解包返回值 (改 `x = {best_candidate.name}(…)`); 或确认函数确实返回 tuple."
+        fix_hint = (f"Hint: do not unpack the return — use "
+                    f"`x = {best_candidate.name}(...)`; the function does not return a tuple.")
+    else:
+        fix_hint = "Hint: check the function signature and adjust this call."
 
+    # Docstring preserved verbatim (English or whatever the source uses)
     docstring_line = (
-        f"Docstring 首行: {best_candidate.docstring_first_line}"
+        f"Docstring first line: {best_candidate.docstring_first_line}"
         if best_candidate.docstring_first_line
-        else "Docstring 首行: (函数无 docstring)"
+        else "Docstring first line: (function has no docstring)"
     )
 
     pieces = [
         f"{site.file}:{site.lineno}",
-        f"你的调用: {site.call_source} 用了 {site.positional_count} 个位置参数"
-        + (f" + {site.keyword_count} 个关键字参数" if site.keyword_count else "")
-        + ".",
-        f"函数定义只接受 {best_candidate.min_arity} ~ "
+        f"Your call: {site.call_source} "
+        f"({site.positional_count} positional"
+        + (f" + {site.keyword_count} keyword" if site.keyword_count else "")
+        + " args)",
+        f"Declared range: {best_candidate.min_arity} ~ "
         + ("∞" if best_candidate.max_arity == _MAX_ARITY_SENTINEL else str(best_candidate.max_arity))
-        + " 个位置参数.",
+        + " positional args",
         "",
-        f"函数定义位置: {best_candidate.declared_file}:{best_candidate.declared_lineno}",
-        f"签名: {sig_display}",
+        f"Function defined at: {best_candidate.declared_file}:{best_candidate.declared_lineno}",
+        f"Signature: {sig_display}",
         docstring_line,
+        "",
+        fix_hint,
+        "",
+        f"(structured: {structured_reason})",
     ]
-    if fix_hint:
-        pieces.append("")
-        pieces.append(fix_hint)
-    # Append the original structured reason as a debug-trace line
-    pieces.append("")
-    pieces.append(f"(structured: {structured_reason})")
     return "\n".join(pieces)
 
 
@@ -449,7 +455,7 @@ class ContractConsistencyVerifier(Verifier):
             return VerifierResult(
                 verifier_name=self.name, passed=True,
                 message="contract_consistency: all call sites compatible with callees",
-                message_natural="所有调用都与函数定义匹配, 没有 arity / 关键字 / 返回 shape 错误.",
+                message_natural="contract_consistency: all calls match their function signatures.\nHint: nothing to fix here.",
                 details=details,
                 elapsed_seconds=time.time() - t0,
             )

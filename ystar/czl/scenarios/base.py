@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ystar.czl.verifiers.base import VerifierResult
 
@@ -86,9 +86,14 @@ class Scenario(ABC):
         ...
 
     @abstractmethod
-    def plan(self, task_description: str, workspace_dir: str) -> List[PlanStep]:
+    def plan(self, task_description: str, workspace_dir: str,
+             contract: Optional[Dict[str, Any]] = None) -> List[PlanStep]:
         """
         Generate the ordered list of steps to attempt for this task.
+
+        v3.4: `contract` kwarg is now passed by loop.py so scenarios can
+        branch on `contract["model_tier"]` and emit tier-appropriate prompt
+        formats. Existing scenarios that ignore the kwarg keep working.
 
         A simple scenario might be a single step ("write the fix and prove it").
         A complex one might be several ("read the failing test, then propose fix,
