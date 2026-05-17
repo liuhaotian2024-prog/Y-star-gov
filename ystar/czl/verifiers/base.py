@@ -31,13 +31,48 @@ from typing import Any, Dict, List, Optional, Tuple
 
 @dataclass
 class VerifierResult:
-    """Outcome of one verifier run."""
+    """Outcome of one verifier run.
+
+    v3.5: ports the Y*gov Hook 4-field structure (reason / instruction /
+    reference / example) that v2.x / v21 already proved out as the
+    "coach" feedback shape. Trampoline's repackaging lost these fields
+    in v3.3; v3.4 recovered only one of four (message_natural). v3.5
+    restores the full set so the loop's feedback layer can render WHY
+    (reason) + DIRECTION (instruction with 3 candidates) + RULE
+    (reference) + CONCRETE EXAMPLE (example).
+
+    message_natural can either be (a) populated directly by the verifier
+    or (b) left None and auto-synthesised by loop._format_feedback_for_retry
+    from the 4 Hook fields.
+    """
     verifier_name: str               # "ruff" | "mypy" | "pytest" | ...
     passed: bool
     message: str = ""                # short structured summary (for large-model audiences)
-    message_natural: Optional[str] = None  # v3.3: prose-style (for small-model audiences)
+    # === v3.5 Y*gov Hook 4-field structure (port from v2.x / v21) ============
+    reason: str = ""                 # one-sentence WHY this fails
+    instruction: str = ""            # DIRECTION (NOT the answer): 3 candidates if applicable
+    reference: str = ""              # which rule this verifier enforces
+    example: str = ""                # optional concrete snippet
+    # === v3.4 (kept) =========================================================
+    message_natural: Optional[str] = None  # prose for small models (auto-synthesised if None)
     details: Dict[str, Any] = field(default_factory=dict)
     elapsed_seconds: float = 0.0
+
+    def synthesise_natural(self) -> str:
+        """v3.5: build the small-model prose text from the 4 Hook fields.
+        Called by loop._format_feedback_for_retry when message_natural
+        is None (the verifier didn't populate it directly).
+        """
+        parts: List[str] = []
+        if self.reason:
+            parts.append(f"Reason: {self.reason}")
+        if self.instruction:
+            parts.append(f"Direction:\n{self.instruction}")
+        if self.reference:
+            parts.append(f"Rule: {self.reference}")
+        if self.example:
+            parts.append(f"Example:\n{self.example}")
+        return "\n\n".join(parts) if parts else self.message
 
 
 # === E.1: Verifier base class with metadata =================================

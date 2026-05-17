@@ -205,6 +205,13 @@ def run_scenario(
     # current workspace (post-edit) state — without this, small models keep
     # seeing the original file content even after they've changed it, and
     # get confused about what's already been done.
+    # v3.5 T5: cross-iter ReflectionAnalyzer — cluster + repetition.
+    # Lives for the lifetime of this CZLRun. After each verify(), we
+    # record results into the analyzer, and analyze() yields a META block
+    # that prepends to the next-iter feedback prompt.
+    from ystar.czl.reflection import ReflectionAnalyzer
+    reflection = ReflectionAnalyzer()
+
     # v3.4 T4: keep-last-good-iter rollback state. Snapshots done via git.
     best_residual: float = float("inf")
     best_commit_sha: Optional[str] = None
@@ -308,7 +315,13 @@ def run_scenario(
         # capacity tier — small / tiny models get prose; medium / large
         # keep structured.
         model_tier = contract_dict.get("model_tier", "medium")
-        feedback_block = _format_feedback_for_retry(last_violations, model_tier=model_tier)
+        # v3.5 T5: record this iter into reflection, get META text
+        reflection.record(verifier_results)
+        meta = reflection.analyze()
+        meta_text = meta.render() if not meta.is_empty() else ""
+        feedback_block = _format_feedback_for_retry(
+            last_violations, model_tier=model_tier, meta_text=meta_text,
+        )
 
         # 4e. no-progress halt: if residual hasn't strictly decreased over
         # the last `no_progress_window` iterations, stop. This protects
@@ -437,28 +450,31 @@ def _build_cieu_event(
 
 
 def _format_feedback_for_retry(violations: List[VerifierResult],
-                                model_tier: str = "medium") -> str:
+                                model_tier: str = "medium",
+                                meta_text: str = "") -> str:
     """Compose the retry-feedback text block fed back to the LLM next iteration.
 
-    v3.3 D.3: when model_tier is "small" or "tiny", we prefer
-    `message_natural` (multi-line prose) over `message` (structured jargon)
-    because small models lose the signal in dense structured output. When
-    a verifier didn't populate message_natural, we fall through to
-    `message` as the previous behaviour.
-
-    Includes a tail of each failing verifier's stdout so the model sees the
-    concrete failure (e.g. the pytest assertion line) — without this signal,
-    small models cannot distinguish between competing valid fixes that
-    differ only in test-observable behaviour.
+    v3.5 composition order:
+      1. META block (cluster + repetition from ReflectionAnalyzer)
+      2. per-verifier: small tier reads message_natural (auto-synthesised
+         from the 4 Hook fields reason/instruction/reference/example if
+         message_natural is None); medium/large reads structured message
+         + raw stdout tail.
+      3. retry instructions (tier-conditioned: ADD-only for small).
     """
     if not violations:
         return ""
     use_natural = model_tier in ("small", "tiny", "local")
-    lines = ["### Previous attempt did NOT converge. Address each issue:"]
+    lines: List[str] = []
+    # v3.5 T5: META block first (cluster + repetition cross-iter signals).
+    if meta_text:
+        lines.append(meta_text)
+        lines.append("")
+    lines.append("### Previous attempt did NOT converge. Address each issue:")
     for v in violations[:10]:
-        if use_natural and getattr(v, "message_natural", None):
-            # v3.4 T2: small tier reads message_natural (raw signal + English hint)
-            text = v.message_natural
+        if use_natural:
+            # v3.5: synthesise from 4 Hook fields if message_natural was not set.
+            text = v.message_natural if getattr(v, "message_natural", None) else v.synthesise_natural()
             lines.append(f"\n[{v.verifier_name}]\n{text}")
         else:
             # Large / medium tier: structured message + raw stdout tail (no hint)

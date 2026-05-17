@@ -149,44 +149,181 @@ class PytestPassVerifier(Verifier):
                 return VerifierResult(
                     verifier_name=self.name, passed=True,
                     message="pytest: all pass",
-                    message_natural="pytest: all tests pass.\nHint: nothing to fix here.",
+                    reason="all tests pass",
+                    instruction="",
+                    reference="pytest verifier",
                     elapsed_seconds=time.time() - t0,
                 )
             stdout = proc.stdout or ""
-            # Extract the pytest --tb=short traceback verbatim (small models need raw signal)
-            # and the FAILED summary lines.
-            tb_match = re.search(r"={5,}\s*FAILURES\s*={5,}(.*?)(?:={5,}|short test summary)",
-                                 stdout, re.DOTALL)
-            traceback_block = tb_match.group(1).strip() if tb_match else stdout[-1500:]
-            # Identify the dominant assertion-error pattern for the hint
-            assertion_lines = [ln for ln in stdout.splitlines() if ln.lstrip().startswith("E   ")][:3]
-            failure_pattern = ""
-            if assertion_lines:
-                if any("AssertionError" in ln and "==" in ln for ln in assertion_lines):
-                    failure_pattern = " (assertion expects a different value than what the function returns)"
-                elif any("TypeError" in ln for ln in assertion_lines):
-                    failure_pattern = " (function called with wrong type or arity)"
-                elif any("KeyError" in ln or "AttributeError" in ln for ln in assertion_lines):
-                    failure_pattern = " (test references a key/attribute that doesn't exist)"
+            # Parse failures with the v3.5 cluster module (reuse, don't reinvent)
+            from ystar.czl.reflection.cluster import parse_pytest_failures
+            failures = parse_pytest_failures(stdout)
+            # Group by error type to surface the dominant family
+            err_types: Dict[str, int] = {}
+            for f in failures:
+                et = f.get("error_type") or "Unknown"
+                err_types[et] = err_types.get(et, 0) + 1
+            # Build a single-line reason summarising the failure landscape
+            reason_parts: List[str] = [f"{len(failures)} tests FAILED."]
+            if failures:
+                first = failures[0]
+                reason_parts.append(
+                    f"First: `{first['test_name']}` bottom-frame at "
+                    f"{first['file']}:{first['lineno']} in `{first['function_name']}` — "
+                    f"{first.get('error_type','?')}: {first.get('error_msg','')[:120]}"
+                )
+            if len(err_types) >= 1:
+                top_err = max(err_types, key=lambda k: err_types[k])
+                reason_parts.append(f"Dominant error type: {top_err} ({err_types[top_err]}/{len(failures)}).")
+            reason = " ".join(reason_parts)
+
+            # Build the 3-direction instruction. Templates by dominant error type.
+            instruction = _pytest_instruction_for_error_type(
+                err_types, failures
+            )
+
+            ref = "pytest verifier; rule: tests must run without raising and assertions must match"
+            example = _pytest_example_for_error_type(err_types, failures)
+
             return VerifierResult(
                 verifier_name=self.name, passed=False,
-                message="pytest: failures",
-                message_natural=(
-                    f"pytest: failures.\n\nTraceback:\n{traceback_block}\n\n"
-                    f"Hint: Read the AssertionError carefully — the LEFT side is what your test "
-                    f"computed, the RIGHT side is what you asserted equals it{failure_pattern}. "
-                    f"Fix either the test's expected value OR the test setup so they agree."
-                ),
-                details={"stdout": stdout[-1500:]},
+                message=f"pytest: {len(failures)} failures (dominant {max(err_types, key=lambda k: err_types[k]) if err_types else '?'})",
+                reason=reason,
+                instruction=instruction,
+                reference=ref,
+                example=example,
+                details={"stdout": stdout[-3000:], "failures": failures},
                 elapsed_seconds=time.time() - t0,
             )
         except subprocess.TimeoutExpired:
             return VerifierResult(
                 verifier_name=self.name, passed=False,
                 message="pytest timed out",
-                message_natural="pytest: timed out.\nHint: a test has an infinite loop or unbounded input.",
+                reason="pytest run exceeded 120s — likely an infinite loop or unbounded input in a test",
+                instruction=(
+                    "Three possible directions:\n"
+                    "  (A) Find the test that hangs (run pytest -x to stop at first failure) and narrow its input.\n"
+                    "  (B) Add a smaller boundary input case before the large case.\n"
+                    "  (C) If the test calls a recursive function, check the base case is hit."
+                ),
+                reference="pytest --timeout",
                 elapsed_seconds=time.time() - t0,
             )
+
+
+def _pytest_instruction_for_error_type(err_types: Dict[str, int],
+                                        failures: List[Dict[str, Any]]) -> str:
+    """v3.5 T2: build a WHY+3-DIRECTION instruction for the pytest verifier.
+
+    Template by dominant error type. Mentions the bottom-frame file:lineno
+    when failures share a frame (this is the cluster hint INLINE in
+    instruction; the cluster META block separately surfaces it cross-
+    failure).
+    """
+    if not failures:
+        return ""
+    top_err = max(err_types, key=lambda k: err_types[k])
+    # Bottom-frame the model should look at first (most-common shared frame)
+    frame_counts: Dict[tuple, int] = {}
+    for f in failures:
+        key = (f["file"], f["lineno"], f["function_name"])
+        frame_counts[key] = frame_counts.get(key, 0) + 1
+    shared = max(frame_counts, key=lambda k: frame_counts[k])
+    shared_count = frame_counts[shared]
+    shared_ref = f"{shared[0]}:{shared[1]} in `{shared[2]}`"
+
+    if top_err == "TypeError":
+        if shared_count >= 2:
+            return (
+                f"Three possible directions:\n"
+                f"  (A) Fix the SHARED bottom-frame at {shared_ref} — change the "
+                f"function/fixture so it handles the input types its callers pass "
+                f"(if it's a fixture writing to a file, json.dumps the content first). "
+                f"PREFERRED (single fix point closes {shared_count} failures).\n"
+                f"  (B) Fix every call site to convert the input before passing.\n"
+                f"  (C) Verify the function/fixture is meant to accept these types — "
+                f"maybe the test setup is wrong."
+            )
+        return (
+            f"Three possible directions:\n"
+            f"  (A) Fix the type at the source: the function being called expects a "
+            f"different type than what your test passes.\n"
+            f"  (B) Fix the call site: convert your test data before passing it.\n"
+            f"  (C) Verify the function signature: maybe you're calling the wrong "
+            f"function with the same name."
+        )
+    if top_err == "AssertionError":
+        return (
+            f"Three possible directions:\n"
+            f"  (A) The function returns the right value but your test's EXPECTED "
+            f"value is wrong — recompute by hand what the function should produce "
+            f"and fix the assert RIGHT-hand side.\n"
+            f"  (B) The function is buggy — but you cannot modify it (source is "
+            f"read-only). So this is unlikely; check (A) first.\n"
+            f"  (C) The test setup (fixture or input) produces something different "
+            f"than what you intended. Inspect the actual `result` vs the asserted "
+            f"value: the AssertionError shows both sides."
+        )
+    if top_err in ("KeyError", "AttributeError"):
+        return (
+            f"Three possible directions:\n"
+            f"  (A) The test references a key/attribute the function never sets. "
+            f"Read the function source carefully — what fields DOES it return?\n"
+            f"  (B) The test's input fixture is missing a required field.\n"
+            f"  (C) The function raises this error intentionally and the test "
+            f"should use `with pytest.raises({top_err}):` instead."
+        )
+    if top_err == "ValidationError":
+        return (
+            f"Three possible directions:\n"
+            f"  (A) The test input doesn't match the expected schema — fix the input "
+            f"to satisfy the schema.\n"
+            f"  (B) The test is exercising an error path and should wrap in "
+            f"`with pytest.raises(ValidationError):`.\n"
+            f"  (C) Check the schema definition is what you intended."
+        )
+    # Generic fallback
+    return (
+        f"Three possible directions:\n"
+        f"  (A) Look at {shared_ref} — this is where {shared_count} of {len(failures)} "
+        f"failures point. Fix the issue at that single location.\n"
+        f"  (B) If failures don't share a root, fix each test individually based on "
+        f"its specific error message.\n"
+        f"  (C) Check whether the test's expected behaviour matches what the source "
+        f"function actually does — maybe the test is wrong, not the function."
+    )
+
+
+def _pytest_example_for_error_type(err_types: Dict[str, int],
+                                     failures: List[Dict[str, Any]]) -> str:
+    if not failures:
+        return ""
+    top_err = max(err_types, key=lambda k: err_types[k])
+    if top_err == "TypeError" and "write() argument must be str" in (failures[0].get("error_msg") or ""):
+        return (
+            "Example fix for the fixture (direction A):\n"
+            "```python\n"
+            "import json\n"
+            "@pytest.fixture\n"
+            "def temp_json_file(tmp_path):\n"
+            "    def _create_file(content):\n"
+            "        path = tmp_path / 'test_data.json'\n"
+            "        with open(path, 'w', encoding='utf-8') as f:\n"
+            "            f.write(json.dumps(content))   # ← key change: serialise to JSON string\n"
+            "        return str(path)\n"
+            "    return _create_file\n"
+            "```"
+        )
+    if top_err == "AssertionError":
+        return (
+            "Example fix (direction A):\n"
+            "```python\n"
+            "# Compute the EXPECTED value yourself, e.g. for clean_records:\n"
+            "result = clean_records(records, schema)\n"
+            "assert result == [{'name': 'Alice', 'email': 'alice@example.com'}]  # what clean_records actually returns\n"
+            "```"
+        )
+    return ""
 
 
 class Coverage80Verifier(AdaptiveThresholdVerifier):
@@ -244,26 +381,32 @@ class Coverage80Verifier(AdaptiveThresholdVerifier):
                 return VerifierResult(
                     verifier_name=self.name, passed=True,
                     message=f"coverage: {pct:.1f}% — {adaptive_msg}",
-                    message_natural=(
-                        f"coverage_80: {pct:.0f}% line coverage >= target {self.target*100:.0f}%.\n"
-                        f"Hint: all lines exercised."
-                    ),
+                    reason=f"line coverage {pct:.0f}% >= target {self.target*100:.0f}%",
+                    instruction="",
+                    reference="coverage.py --cov",
                     details=details, elapsed_seconds=time.time() - t0,
                 )
-            # Build the English hint by inspecting which line numbers are missing
             target_lines_str = ", ".join(str(ln) for ln in missing_lines[:10])
             return VerifierResult(
                 verifier_name=self.name, passed=False,
                 message=f"coverage: {pct:.1f}% — {adaptive_msg}",
-                message_natural=(
-                    f"coverage_80: {pct:.0f}% line coverage; target {self.target*100:.0f}% "
-                    f"(gap {self.target - pct/100:.2f}).\n"
-                    f"Uncovered lines in data_pipeline.py: {target_lines_str}\n"
-                    f"Hint: add a test that calls the function whose body spans those lines "
-                    f"(open data_pipeline.py, find which `def` contains line {missing_lines[0] if missing_lines else '?'}, "
-                    f"then write a test that exercises the branch covering those lines — "
-                    f"often this is a try/except path or an `if` branch that's not yet tested)."
+                reason=(
+                    f"line coverage is {pct:.0f}%, target is {self.target*100:.0f}% "
+                    f"(gap {(self.target - pct/100)*100:.0f}pp). "
+                    f"Uncovered lines in data_pipeline.py: {target_lines_str}."
                 ),
+                instruction=(
+                    "Three possible directions:\n"
+                    f"  (A) Add a new test that exercises the function containing the "
+                    f"FIRST uncovered line ({missing_lines[0] if missing_lines else '?'}) — "
+                    f"often these are try/except or `if` paths. PREFERRED for the first missing line.\n"
+                    f"  (B) Extend an existing test to also call that path (e.g. pass an "
+                    f"input that triggers the error branch).\n"
+                    f"  (C) If a line is truly unreachable (dead code in source), note it — "
+                    f"but you cannot modify data_pipeline.py."
+                ),
+                reference="coverage.py --cov data_pipeline; missing_lines from coverage json",
+                example="",
                 details=details,
                 elapsed_seconds=time.time() - t0,
             )
@@ -311,22 +454,32 @@ class HasExceptionTestsVerifier(Verifier):
             return VerifierResult(
                 verifier_name=self.name, passed=True,
                 message=f"has_exception_tests: {n} `pytest.raises` found",
-                message_natural=(
-                    f"has_exception_tests: {n} `pytest.raises` block(s) found.\n"
-                    f"Hint: exception coverage is good."
-                ),
+                reason=f"{n} `pytest.raises` block(s) found",
+                reference="exception path coverage rule",
                 details={"pytest_raises_count": n},
                 elapsed_seconds=time.time() - t0,
             )
         return VerifierResult(
             verifier_name=self.name, passed=False,
             message="has_exception_tests: no pytest.raises found",
-            message_natural=(
-                "has_exception_tests: no `with pytest.raises(...):` block found.\n"
-                "Hint: add a test that asserts a function raises the expected exception, e.g.:\n"
-                "  with pytest.raises(ValueError):\n"
-                "      normalize_email('')\n"
-                "Cover at least one error path (ValidationError on bad schema, ValueError on empty email)."
+            reason="no `with pytest.raises(...):` block in any test file",
+            instruction=(
+                "Three possible directions:\n"
+                "  (A) Add a test for normalize_email('') — it raises ValueError. "
+                "PREFERRED (smallest unit, single function).\n"
+                "  (B) Add a test for validate_record with a missing field or wrong type — "
+                "it raises ValidationError.\n"
+                "  (C) Add a test for load_records with a non-list JSON or non-existent file — "
+                "it raises ValueError or FileNotFoundError."
+            ),
+            reference="exception path coverage rule",
+            example=(
+                "Example (direction A):\n"
+                "```python\n"
+                "def test_normalize_email_empty_raises():\n"
+                "    with pytest.raises(ValueError):\n"
+                "        normalize_email('')\n"
+                "```"
             ),
             details={"pytest_raises_count": n},
             elapsed_seconds=time.time() - t0,

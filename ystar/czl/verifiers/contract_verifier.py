@@ -476,9 +476,32 @@ class ContractConsistencyVerifier(Verifier):
         }
         if skipped:
             details["skipped_unpacking_calls"] = skipped
+        # v3.5 T2: also fill Hook 4 fields (reason / instruction / reference / example)
+        first = mismatches[0]
+        site = first.call_site
+        best = first.candidate_callees[0] if first.candidate_callees else None
+        reason_text = f"{len(mismatches)} call(s) inconsistent with declared signature. First: {site.file}:{site.lineno} — {first.reason[:200]}"
+        instruction_text = (
+            "Three possible directions:\n"
+            "  (A) Fix the CALLING code to match the function signature shown above "
+            "(adjust arity, drop unknown keyword args, or stop unpacking the return).\n"
+            "  (B) Fix the function SIGNATURE to match the call sites — but only if "
+            "the function is yours to change (not external).\n"
+            "  (C) Check you are calling the RIGHT function — there may be a same-named "
+            "function elsewhere that shadows the intended one."
+        )
+        ref_text = (
+            f"contract_consistency verifier; declared at "
+            f"{best.declared_file}:{best.declared_lineno}" if best
+            else "contract_consistency verifier"
+        )
         return VerifierResult(
             verifier_name=self.name, passed=False,
             message=f"contract_consistency: {len(mismatches)} mismatch(es); first: {structured[0][:200]}",
+            reason=reason_text,
+            instruction=instruction_text,
+            reference=ref_text,
+            example="",
             message_natural="\n\n---\n\n".join(natural_blocks),
             details=details,
             elapsed_seconds=time.time() - t0,

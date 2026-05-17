@@ -320,17 +320,27 @@ class DifferentialVerifier(Verifier):
         msgs: List[str] = []
         for m in mismatches[:10]:
             msgs.append(m.reason)
-        # v3.4 T2: structured signal verbatim + English 1-sentence hint
+        # v3.5 T2: structured signal + Hook 4 fields
         return VerifierResult(
             verifier_name=self.name, passed=False,
             message=f"differential: {len(mismatches)} input/output mismatch(es); first: {msgs[0][:160]}",
-            message_natural=(
-                f"differential: {len(mismatches)} input/output mismatch(es) — function returned something "
-                f"different from what a `assert <fn>(...) == LITERAL` test expects.\n\nDifferences:\n"
-                + "\n".join(f"  - {r}" for r in msgs[:5])
-                + "\n\nHint: either fix the function so its return value matches the test expectation, "
-                "or fix the test's expected literal if it was wrong."
+            reason=(
+                f"{len(mismatches)} input/output mismatch(es). "
+                f"Function returned something different from what `assert <fn>(...) == LITERAL` "
+                f"asserted. Differences: " + "; ".join(msgs[:3])
             ),
+            instruction=(
+                "Three possible directions:\n"
+                "  (A) Fix the test's expected LITERAL — recompute what the function should "
+                "return given the input, and update the RHS of the assertion. PREFERRED for "
+                "test-generation scenarios where the source is read-only.\n"
+                "  (B) Fix the function implementation — but you cannot modify the read-only "
+                "source in test-generation scenarios.\n"
+                "  (C) Verify the input is what you intended — maybe you passed the wrong "
+                "value to the function."
+            ),
+            reference="differential verifier; (input, expected) pairs extracted from test assertions",
+            example="",
             details={"mismatches": msgs, "n": len(mismatches)},
             elapsed_seconds=time.time() - t0,
         )
