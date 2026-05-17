@@ -1,0 +1,97 @@
+{
+  "scenario": "type_annotation_completion",
+  "n_records": 35,
+  "fallback_reference": "A2 (since A=0/5 converged on mypy strict pedantry)",
+  "four_dim_judge": [
+    {
+      "arm": "B1",
+      "scores": null,
+      "reason": "did_not_converge"
+    },
+    {
+      "arm": "B2",
+      "scores": {
+        "functional_equivalence": 1.0,
+        "readability_delta": -0.1,
+        "style_conformance": 0.85,
+        "defensive_quality": 1.0
+      },
+      "raw_response": "{\"functional_equivalence\": 1.0, \"readability_delta\": -0.1, \"style_conformance\": 0.85, \"defensive_quality\": 1.0}",
+      "cost_usd": 0.005298,
+      "latency_seconds": 2.386110782623291,
+      "error": null,
+      "retries": 0,
+      "retry_log": [],
+      "api_unavailable": false
+    },
+    {
+      "arm": "C1",
+      "scores": {
+        "functional_equivalence": 1.0,
+        "readability_delta": -0.1,
+        "style_conformance": 0.7,
+        "defensive_quality": 0.85
+      },
+      "raw_response": "{\"functional_equivalence\": 1.0, \"readability_delta\": -0.1, \"style_conformance\": 0.7, \"defensive_quality\": 0.85}",
+      "cost_usd": 0.005228999999999999,
+      "latency_seconds": 3.168073892593384,
+      "error": null,
+      "retries": 0,
+      "retry_log": [],
+      "api_unavailable": false
+    },
+    {
+      "arm": "C2",
+      "scores": {
+        "functional_equivalence": 1.0,
+        "readability_delta": -0.1,
+        "style_conformance": 0.7,
+        "defensive_quality": 0.85
+      },
+      "raw_response": "{\"functional_equivalence\": 1.0, \"readability_delta\": -0.1, \"style_conformance\": 0.7, \"defensive_quality\": 0.85}",
+      "cost_usd": 0.005228999999999999,
+      "latency_seconds": 2.043916940689087,
+      "error": null,
+      "retries": 0,
+      "retry_log": [],
+      "api_unavailable": false
+    },
+    {
+      "arm": "D2",
+      "scores": {
+        "functional_equivalence": 1.0,
+        "readability_delta": -0.1,
+        "style_conformance": 0.7,
+        "defensive_quality": 0.95
+      },
+      "raw_response": "{\"functional_equivalence\": 1.0, \"readability_delta\": -0.1, \"style_conformance\": 0.7, \"defensive_quality\": 0.95}",
+      "cost_usd": 0.005216999999999999,
+      "latency_seconds": 2.0511398315429688,
+      "error": null,
+      "retries": 0,
+      "retry_log": [],
+      "api_unavailable": false
+    }
+  ],
+  "a_failed_vs_a2_ref": {
+    "arm": "A_failed_vs_A2_ref",
+    "scores": {
+      "functional_equivalence": 1.0,
+      "readability_delta": -0.1,
+      "style_conformance": 0.75,
+      "defensive_quality": 0.85
+    },
+    "raw_response": "{\"functional_equivalence\": 1.0, \"readability_delta\": -0.1, \"style_conformance\": 0.75, \"defensive_quality\": 0.85}",
+    "cost_usd": 0.005268,
+    "latency_seconds": 1.9458637237548828,
+    "error": null,
+    "retries": 0,
+    "retry_log": [],
+    "api_unavailable": false
+  },
+  "a_vs_a2_judge": {
+    "scores": null,
+    "reason": "A did not converge \u2014 skipping silent_omission audit (would be uninformative since A failed at type system, not at task semantics)"
+  },
+  "total_judge_cost_usd": 0.0262
+}

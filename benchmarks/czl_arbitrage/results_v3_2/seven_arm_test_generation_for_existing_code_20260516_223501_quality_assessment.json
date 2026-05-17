@@ -1,0 +1,116 @@
+{
+  "scenario": "test_generation_for_existing_code",
+  "n_records": 35,
+  "objective_means_by_arm": {
+    "C1": {
+      "cyclomatic_complexity_avg": 2.38,
+      "duplicated_lines_pct": 9.3,
+      "test_coverage_pct": 100.0,
+      "mypy_strict_type_coverage_pct": 0.0
+    },
+    "A": {
+      "cyclomatic_complexity_avg": 2.38,
+      "duplicated_lines_pct": 9.3,
+      "test_coverage_pct": 100.0,
+      "mypy_strict_type_coverage_pct": 0.0
+    },
+    "D2": {
+      "cyclomatic_complexity_avg": 2.38,
+      "duplicated_lines_pct": 9.3,
+      "test_coverage_pct": 98.48,
+      "mypy_strict_type_coverage_pct": 0.0
+    },
+    "C2": {
+      "cyclomatic_complexity_avg": 2.38,
+      "duplicated_lines_pct": 9.3,
+      "test_coverage_pct": 100.0,
+      "mypy_strict_type_coverage_pct": 0.0
+    },
+    "A2": {
+      "cyclomatic_complexity_avg": 2.38,
+      "duplicated_lines_pct": 9.3,
+      "test_coverage_pct": 100.0,
+      "mypy_strict_type_coverage_pct": 0.0
+    }
+  },
+  "four_dim_judge": [
+    {
+      "arm": "B1",
+      "scores": null,
+      "reason": "did_not_converge"
+    },
+    {
+      "arm": "B2",
+      "scores": null,
+      "reason": "did_not_converge"
+    },
+    {
+      "arm": "C1",
+      "scores": {
+        "functional_equivalence": 0.97,
+        "readability_delta": 0.1,
+        "style_conformance": 0.95,
+        "defensive_quality": 0.92
+      },
+      "raw_response": "{\"functional_equivalence\": 0.97, \"readability_delta\": 0.1, \"style_conformance\": 0.95, \"defensive_quality\": 0.92}",
+      "cost_usd": 0.014981999999999999,
+      "latency_seconds": 1.3113257884979248,
+      "error": null,
+      "retries": 0,
+      "retry_log": [],
+      "api_unavailable": false
+    },
+    {
+      "arm": "C2",
+      "scores": {
+        "functional_equivalence": 0.97,
+        "readability_delta": 0.15,
+        "style_conformance": 0.92,
+        "defensive_quality": 0.88
+      },
+      "raw_response": "```json\n{\"functional_equivalence\": 0.97, \"readability_delta\": 0.15, \"style_conformance\": 0.92, \"defensive_quality\": 0.88}\n```",
+      "cost_usd": 0.015759,
+      "latency_seconds": 1.8417978286743164,
+      "error": null,
+      "retries": 0,
+      "retry_log": [],
+      "api_unavailable": false
+    },
+    {
+      "arm": "D2",
+      "scores": {
+        "functional_equivalence": 0.91,
+        "readability_delta": 0.15,
+        "style_conformance": 0.82,
+        "defensive_quality": 0.78
+      },
+      "raw_response": "```json\n{\"functional_equivalence\": 0.91, \"readability_delta\": 0.15, \"style_conformance\": 0.82, \"defensive_quality\": 0.78}\n```",
+      "cost_usd": 0.017762999999999998,
+      "latency_seconds": 1.5355620384216309,
+      "error": null,
+      "retries": 0,
+      "retry_log": [],
+      "api_unavailable": false
+    }
+  ],
+  "a_vs_a2_judge": {
+    "scores": {
+      "hallucinated_completeness_A": 0.05,
+      "hallucinated_completeness_A2": 0.1,
+      "silent_omission_count_A": 1,
+      "silent_omission_count_A2": 1,
+      "over_engineering_score_A": 0.1,
+      "over_engineering_score_A2": 0.15,
+      "notes": "A\u5728test_load_records_invalid_json\u4e2d\u65ad\u8a00ValueError\u4f46json.JSONDecodeError\u662f\u5176\u5b50\u7c7b\u5b9e\u9645\u53ef\u901a\u8fc7\uff0c\u4e24\u8005\u5747\u672a\u6d4b\u8bd5clean_records\u4e0d\u4fee\u6539\u539f\u59cb\u8f93\u5165\u7684\u884c\u4e3a(A\u6709\u4f46A2\u65e0)\uff1bA2\u65b0\u589e\u7684test_aggregate_by_domain_missing_key_raises\u6d4b\u8bd5\u4e86\u672a\u5728task\u4e2d\u8981\u6c42\u7684\u884c\u4e3a\uff0c\u5c5e\u4e8e\u8f7b\u5fae\u8fc7\u5ea6\u5de5\u7a0b\uff0c\u4e14test_aggregate_by_domain_unknown\u4e2d\u4f7f\u7528\u4e86\u897f\u91cc\u5c14\u5b57\u7b26'\u0430'\u800c\u975eASCII'a'\u53ef\u80fd\u5bfc\u81f4\u6d4b\u8bd5\u610f\u56fe\u6a21\u7cca\u3002"
+    },
+    "raw_response": "```json\n{\n  \"hallucinated_completeness_A\": 0.05,\n  \"hallucinated_completeness_A2\": 0.1,\n  \"silent_omission_count_A\": 1,\n  \"silent_omission_count_A2\": 1,\n  \"over_engineering_score_A\": 0.1,\n  \"over_engineering_score_A2\": 0.15,\n  \"notes\": \"A\u5728test_load_records_invalid_json\u4e2d\u65ad\u8a00ValueError\u4f46json.JSONDecodeError\u662f\u5176\u5b50\u7c7b\u5b9e\u9645\u53ef\u901a\u8fc7\uff0c\u4e24\u8005\u5747\u672a\u6d4b\u8bd5clean_records\u4e0d\u4fee\u6539\u539f\u59cb\u8f93\u5165\u7684\u884c\u4e3a(A\u6709\u4f46A2\u65e0)\uff1bA2\u65b0\u589e\u7684test_aggregate_by_domain_missing_key_raises\u6d4b\u8bd5\u4e86\u672a\u5728task\u4e2d\u8981\u6c42\u7684\u884c\u4e3a\uff0c\u5c5e\u4e8e\u8f7b\u5fae\u8fc7\u5ea6\u5de5\u7a0b\uff0c\u4e14test_aggregate_by_domain_unknown\u4e2d\u4f7f\u7528\u4e86\u897f\u91cc\u5c14\u5b57\u7b26'\u0430'\u800c\u975eASCII'a'\u53ef\u80fd\u5bfc\u81f4\u6d4b\u8bd5\u610f\u56fe\u6a21\u7cca\u3002\"\n}\n```",
+    "cost_usd": 0.019086000000000002,
+    "latency_seconds": 5.226020097732544,
+    "error": null,
+    "retries": 0,
+    "retry_log": [],
+    "api_unavailable": false
+  },
+  "n_anonymized": 35,
+  "total_judge_cost_usd": 0.0676
+}
