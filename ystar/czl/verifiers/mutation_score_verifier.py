@@ -334,9 +334,8 @@ class MutationScoreVerifier(AdaptiveThresholdVerifier):
     ]
 
     def __init__(self, target_wall_seconds: float = 10.0, score_threshold: float = 0.7):
-        # v3.3 B.2: AdaptiveThresholdVerifier — calibrate on first call.
-        AdaptiveThresholdVerifier.__init__(self, target_threshold=score_threshold,
-                                            floor_threshold=max(0.0, score_threshold - 0.30))
+        # v3.4: AdaptiveThresholdVerifier simplified — pass/fail uses real target only.
+        AdaptiveThresholdVerifier.__init__(self, target_threshold=score_threshold)
         self.target_wall_seconds = float(target_wall_seconds)
         # Preserve the original attribute name for any callers that read it
         # (e.g. logging / inline reports); semantics now == self.target.
@@ -532,25 +531,27 @@ class MutationScoreVerifier(AdaptiveThresholdVerifier):
         ][:10]
         common_details["surviving_mutants"] = surviving_for_feedback
 
-        # ===== constraint E + v3.3 B.2: actionable feedback + adaptive threshold =====
-        passed_adaptive, adaptive_msg = self.check_score(score)
-        common_details["adaptive_threshold"] = self.effective_threshold()
-        common_details["adaptive_baseline"] = self._calibration_score
-        common_details["adaptive_call_count"] = self._call_count
-        if passed_adaptive:
-            # Calibration round OR genuinely good score — pass.
-            natural = (
-                f"突变测试: 你的测试杀死了 {killed}/{classifiable} 个变异 ({score:.0%}). "
-                f"{adaptive_msg}."
-            )
+        # ===== v3.4: actionable feedback + real-target pass/fail =====
+        passed_score, adaptive_msg = self.check_score(score)
+        common_details["score_target"] = self.target
+        common_details["score_actual"] = score
+        common_details["score_baseline_iter1"] = self._calibration_score
+        common_details["call_count"] = self._call_count
+        if passed_score:
+            # v3.4 D.3: large/medium tier gets structured message (no hint).
+            # small tier gets the same structured info + English hint via message_natural.
             return VerifierResult(
                 verifier_name=self.name, passed=True,
                 message=f"mutation_score: {killed}/{classifiable} ({score:.0%}) — {adaptive_msg}",
-                message_natural=natural,
+                message_natural=(
+                    f"mutation_score: {killed}/{classifiable} mutants killed ({score:.0%}); "
+                    f"target {self.target:.0%} reached.\n"
+                    f"Hint: All tracked mutations are caught by your tests."
+                ),
                 details=common_details,
                 elapsed_seconds=actual_wall,
             )
-        # Build human-readable actionable feedback (structured + prose).
+        # Build structured feedback (large/medium tier read `message`).
         fb_lines = [
             f"mutation_score: {killed}/{classifiable} ({score:.0%}). {adaptive_msg}",
             "The following mutations were NOT killed by your tests — add tests "
@@ -562,17 +563,27 @@ class MutationScoreVerifier(AdaptiveThresholdVerifier):
             if s["diff"].strip():
                 fb_lines.append(s["diff"])
         common_details["actionable_feedback"] = "\n".join(fb_lines)
+        # v3.4 T2: message_natural for small tier — structured signal + English hint.
+        # Identify the dominant surviving-mutation operator family for the hint.
+        op_counts: Dict[str, int] = {}
+        for s in surviving_for_feedback:
+            op_counts[s.get("operator", "?")] = op_counts.get(s.get("operator", "?"), 0) + 1
+        dominant_op = max(op_counts, key=lambda k: op_counts[k]) if op_counts else "?"
         natural_lines = [
-            f"突变测试: 你的测试只杀死了 {killed}/{classifiable} 个变异 ({score:.0%}), "
-            f"需要超过 {self.effective_threshold():.0%}.",
-            "下面这些代码改动 (mutation) 你的测试没察觉到, 说明这些行为没被测到:",
+            f"mutation_score: {killed}/{classifiable} mutants killed ({score:.0%}); target {self.target:.0%} (gap {self.target - score:.2f}).",
+            "Surviving mutations (your tests do not detect these source edits):",
         ]
         for s in surviving_for_feedback[:5]:
             loc = f"{s['file']}:{s['start_line']}"
             fn = s["definition_name"] or "(unknown function)"
-            natural_lines.append(f"  • {loc} 在 `{fn}` 里改了某个表达式但你的测试没失败.")
-        natural_lines.append("修正方向: 给这些表达式加专门测试用例; "
-                             "或者把现有测试改得更具体 (检查返回值的精确数字而不只是类型).")
+            natural_lines.append(f"  - {loc} in `{fn}`  [{s.get('operator','?')}]")
+            if s["diff"].strip():
+                natural_lines.append("    " + "\n    ".join(s["diff"].splitlines()[:6]))
+        natural_lines.append(
+            f"Hint: most surviving mutations are operator `{dominant_op}` — "
+            f"add a test that asserts on the EXACT return value of the involved "
+            f"function under a boundary input (off-by-one, empty, single-element)."
+        )
         return VerifierResult(
             verifier_name=self.name, passed=False,
             message=common_details["actionable_feedback"][:240],

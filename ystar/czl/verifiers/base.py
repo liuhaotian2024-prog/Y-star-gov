@@ -103,69 +103,54 @@ class Verifier(ABC):
 # === B.1: AdaptiveThresholdVerifier =========================================
 
 class AdaptiveThresholdVerifier(Verifier):
-    """Mixin / base for score-based verifiers (mutation_score,
-    branch_coverage, coverage_80) whose pass/fail threshold should be
-    learned from the first call's baseline rather than hardcoded.
+    """v3.4 redesign: baseline is INFORMATIONAL only — does NOT bend
+    pass/fail. Real target is the sole pass/fail standard.
 
-    Rationale (v3.3 / Phase 7 root cause analysis):
-      - Hardcoded thresholds were calibrated against Opus 4.7's typical
-        score distribution.
-      - Gemma 4B (B2 arm) consistently produced scores in a lower band
-        (e.g. mutation_score 0.4-0.55, branch_coverage 50-65%).
-      - The CZL loop then iterates fruitlessly, asking gemma to push
-        beyond its capability ceiling.
-      - The "binary 0/5 - 5/5" pattern observed in v3.x data on B2
-        suggests a single mode (hard threshold) rather than partial
-        success — exactly what AdaptiveThresholdVerifier removes.
+    Rationale (v3.3 sanity post-mortem):
+      v3.3 used `effective_threshold = min(target, max(floor,
+      baseline + 0.10))`. In the gemma B2 sanity, baseline was 0.75 and
+      target was 0.80, so the "adaptive" threshold collapsed back to
+      0.80 — the verifier was lying about being adaptive. Worse, since
+      iter-1 calibration was ALWAYS pass, iter-1 succeeded, iter-2 then
+      held gemma to the hardcoded target. The "adaptive" layer added
+      surface complexity without helping.
 
-    Semantics:
-      - Call 1 (calibration): record baseline; ALWAYS return passed=True.
-      - Call 2+: pass when actual_score >= min(target, max(floor,
-        baseline + 0.10)). I.e., must improve by 0.10 over baseline OR
-        reach target, whichever is easier. Never reject below `floor`
-        (default = target - 0.30).
+    v3.4 semantics:
+      - Pass/fail is always against `self.target`.
+      - `_calibration_score` (first-call score) is preserved purely as a
+        hint field that the verifier's feedback uses in the prose
+        ("you were at 0.75 last iter, target is 0.80, gap 0.05"). The
+        rollback layer in loop.py is what actually defends against
+        cascade regression — not threshold relaxation.
     """
 
-    def __init__(self, target_threshold: float, floor_threshold: Optional[float] = None):
+    def __init__(self, target_threshold: float):
         self.target = float(target_threshold)
-        self.floor = float(floor_threshold) if floor_threshold is not None else max(0.0, self.target - 0.30)
         self._call_count: int = 0
         self._calibration_score: Optional[float] = None
 
     def reset_for_trial(self) -> None:
-        """Override Verifier.reset_for_trial — wipes per-trial calibration."""
+        """Override Verifier.reset_for_trial — wipes per-trial baseline."""
         self._call_count = 0
         self._calibration_score = None
 
-    def effective_threshold(self) -> float:
-        """Current threshold a candidate must beat."""
-        if self._calibration_score is None:
-            return self.floor
-        return min(self.target, max(self.floor, self._calibration_score + 0.10))
-
     def check_score(self, actual_score: float) -> Tuple[bool, str]:
-        """Returns (passed, message). Caller wraps into VerifierResult."""
+        """Returns (passed, message). Pass/fail is real-target only;
+        baseline is informational.
+        """
         self._call_count += 1
-        if self._call_count == 1:
+        if self._calibration_score is None:
             self._calibration_score = actual_score
-            next_thr = min(self.target, max(self.floor, actual_score + 0.10))
+        gap = self.target - actual_score
+        if actual_score >= self.target:
             return (
                 True,
-                f"calibration round: baseline={actual_score:.2f}; "
-                f"iter2+ threshold will be {next_thr:.2f} "
-                f"(target {self.target:.2f}, floor {self.floor:.2f})"
-            )
-        threshold = self.effective_threshold()
-        if actual_score >= threshold:
-            return (
-                True,
-                f"score={actual_score:.2f} ≥ adaptive threshold {threshold:.2f} "
-                f"(target {self.target:.2f}, baseline {self._calibration_score:.2f})"
+                f"score={actual_score:.2f} >= target {self.target:.2f}"
             )
         return (
             False,
-            f"score={actual_score:.2f} below adaptive threshold {threshold:.2f}. "
-            f"Need to improve by {threshold - actual_score:.2f}."
+            f"score={actual_score:.2f} < target {self.target:.2f} (gap={gap:.2f}, "
+            f"baseline iter1 was {self._calibration_score:.2f})"
         )
 
 

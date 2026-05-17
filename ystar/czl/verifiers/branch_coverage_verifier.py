@@ -1,16 +1,11 @@
 """
-branch_coverage_verifier.py — adaptive branch coverage gate (v3.3).
+branch_coverage_verifier.py — branch coverage gate (v3.4).
 
-v3.3 changes:
-  - B.2: inherits AdaptiveThresholdVerifier — calibration round on first
-    call records the baseline; iter 2+ requires baseline+0.10 or target,
-    whichever is easier. Floor = target - 0.30.
-  - D.2: VerifierResult.message_natural populated (prose for small models).
-  - E.2: class metadata set.
-
-Activates when contract dict has `_mutation_target_file` (same activation
-surface as MutationScoreVerifier — they're both test-generation final
-gates). Threshold target = 0.70 (70% branch coverage).
+v3.4 changes vs v3.3:
+  - T3: AdaptiveThresholdVerifier demoted to informational. Pass/fail uses
+    real target (0.70). Baseline used only in the hint.
+  - T2: message_natural is structured signal (missing branches) + 1-2
+    sentence English hint. NO Chinese paragraphs.
 """
 from __future__ import annotations
 
@@ -28,7 +23,7 @@ class BranchCoverageVerifier(AdaptiveThresholdVerifier):
     is_final_gate = True
     # E.2 metadata
     applies_to_tasks = ["test_generation_for_existing_code"]
-    min_model_capacity = "small"  # branch-coverage is cheap, every tier can target it
+    min_model_capacity = "small"
     feedback_complexity = "low"
     known_limitations = [
         "no branches in target → falls back to line coverage as the signal",
@@ -36,9 +31,8 @@ class BranchCoverageVerifier(AdaptiveThresholdVerifier):
     ]
 
     def __init__(self, threshold: float = 0.70, timeout_seconds: float = 60.0):
-        AdaptiveThresholdVerifier.__init__(self, target_threshold=threshold,
-                                            floor_threshold=max(0.0, threshold - 0.30))
-        self.threshold = float(threshold)  # preserved attr for log readers
+        AdaptiveThresholdVerifier.__init__(self, target_threshold=threshold)
+        self.threshold = float(threshold)
         self.timeout_seconds = float(timeout_seconds)
 
     def is_applicable(self, workspace_dir: str, contract: Optional[Dict[str, Any]] = None) -> bool:
@@ -75,7 +69,11 @@ class BranchCoverageVerifier(AdaptiveThresholdVerifier):
             return VerifierResult(
                 verifier_name=self.name, passed=False,
                 message=f"branch_coverage: coverage run timed out after {self.timeout_seconds}s",
-                message_natural=f"覆盖率检查超时 ({self.timeout_seconds}s). 你的测试可能有死循环或太慢.",
+                message_natural=(
+                    f"branch_coverage: coverage run timed out after {self.timeout_seconds}s.\n"
+                    "Hint: your test suite likely has an infinite loop or extremely slow test — "
+                    "narrow inputs so each test completes in <1s."
+                ),
                 elapsed_seconds=time.time() - t0,
             )
 
@@ -89,7 +87,7 @@ class BranchCoverageVerifier(AdaptiveThresholdVerifier):
             return VerifierResult(
                 verifier_name=self.name, passed=False,
                 message="branch_coverage: coverage json export timed out",
-                message_natural="覆盖率导出超时.",
+                message_natural="branch_coverage: coverage json export timed out.\nHint: rerun.",
                 elapsed_seconds=time.time() - t0,
             )
 
@@ -97,7 +95,11 @@ class BranchCoverageVerifier(AdaptiveThresholdVerifier):
             return VerifierResult(
                 verifier_name=self.name, passed=False,
                 message="branch_coverage: coverage report missing",
-                message_natural="覆盖率报告没生成. 可能是你的测试根本没运行 — 检查 test 文件是否能被 pytest 发现.",
+                message_natural=(
+                    "branch_coverage: coverage report missing.\n"
+                    "Hint: your test file is probably not being discovered by pytest — "
+                    "check it is named `test_*.py` and is in the same directory as the target."
+                ),
                 details={"run_stdout": (run_proc.stdout or "")[-500:],
                          "report_stdout": (report_proc.stdout or "")[-500:]},
                 elapsed_seconds=time.time() - t0,
@@ -109,7 +111,7 @@ class BranchCoverageVerifier(AdaptiveThresholdVerifier):
             return VerifierResult(
                 verifier_name=self.name, passed=False,
                 message=f"branch_coverage: could not parse json ({e})",
-                message_natural=f"覆盖率报告解析失败: {e}",
+                message_natural=f"branch_coverage: parse error ({e}).\nHint: rerun.",
                 elapsed_seconds=time.time() - t0,
             )
         finally:
@@ -128,13 +130,12 @@ class BranchCoverageVerifier(AdaptiveThresholdVerifier):
             branch_pct = line_pct
 
         missing_branches: List[Any] = []
-        files = cov.get("files") or {}
-        for fp, fdata in files.items():
+        for fp, fdata in (cov.get("files") or {}).items():
             for br in (fdata.get("missing_branches") or []):
                 missing_branches.append({"file": fp, "branch": br})
 
-        # v3.3 B.2: adaptive threshold via base class.
-        passed_adaptive, adaptive_msg = self.check_score(branch_pct / 100.0)
+        # v3.4 T3: real-target pass/fail via simplified AdaptiveThresholdVerifier.
+        passed_score, adaptive_msg = self.check_score(branch_pct / 100.0)
         details = {
             "branch_coverage_pct": branch_pct,
             "line_coverage_pct": round(line_pct, 1),
@@ -142,43 +143,54 @@ class BranchCoverageVerifier(AdaptiveThresholdVerifier):
             "total_branches": total_branches,
             "missing_branches": missing_branches[:20],
             "threshold_pct": self.threshold * 100.0,
-            "adaptive_threshold_pct": self.effective_threshold() * 100.0,
-            "adaptive_baseline": self._calibration_score,
-            "adaptive_call_count": self._call_count,
+            "baseline_iter1_pct": (self._calibration_score * 100.0) if self._calibration_score is not None else None,
+            "call_count": self._call_count,
         }
-        if passed_adaptive:
-            natural = (
-                f"分支覆盖率 {branch_pct:.0f}% ({covered_branches}/{total_branches} 分支被测试覆盖). "
-                f"{adaptive_msg}."
-            )
+        if passed_score:
             return VerifierResult(
                 verifier_name=self.name, passed=True,
                 message=f"branch_coverage: {branch_pct:.0f}% ({covered_branches}/{total_branches}) — {adaptive_msg}",
-                message_natural=natural,
+                message_natural=(
+                    f"branch_coverage: {branch_pct:.0f}% "
+                    f"({covered_branches}/{total_branches} branches) >= target {self.threshold*100:.0f}%.\n"
+                    f"Hint: all if/else branches are exercised."
+                ),
                 details=details,
                 elapsed_seconds=time.time() - t0,
             )
-        # Structured feedback (large model)
+        # Identify if/else branches not taken — pick a sample for the English hint.
+        # `missing_branches` entries are [src_line, dst_line] tuples where the
+        # src is the conditional and dst is the not-taken successor.
+        first_miss = missing_branches[0] if missing_branches else None
+        hint_target = ""
+        if first_miss and isinstance(first_miss.get("branch"), (list, tuple)) and len(first_miss["branch"]) == 2:
+            src, dst = first_miss["branch"]
+            hint_target = f" e.g. line {src} -> line {dst}"
         structured_feedback = (
-            f"branch_coverage: {branch_pct:.0f}% ({covered_branches}/{total_branches}) below "
-            f"adaptive threshold {self.effective_threshold()*100:.0f}%. Missing branches:\n"
-            + "\n".join(f"  - {m['file']}: branch {m['branch']}" for m in missing_branches[:5])
+            f"branch_coverage: {branch_pct:.0f}% ({covered_branches}/{total_branches}) "
+            f"below target {self.threshold*100:.0f}% (gap {self.threshold - branch_pct/100:.2f}). "
+            f"Missing branches:\n"
+            + "\n".join(f"  - {os.path.basename(m['file'])}: branch {m['branch']}"
+                       for m in missing_branches[:5])
         )
         details["actionable_feedback"] = structured_feedback
-        # Natural feedback (small model)
         natural_lines = [
-            f"分支覆盖率: {branch_pct:.0f}% (只覆盖了 {covered_branches}/{total_branches} 分支), "
-            f"需要 {self.effective_threshold()*100:.0f}%.",
-            "下面这些分支 (if/else 的某一条路径) 没被你的测试覆盖到:",
+            f"branch_coverage: {branch_pct:.0f}% "
+            f"({covered_branches}/{total_branches} branches) below target {self.threshold*100:.0f}%; "
+            f"gap {self.threshold - branch_pct/100:.2f}.",
+            "Uncovered branches (one path of an if/else / for-else / try-except not exercised):",
         ]
         for m in missing_branches[:5]:
             fname = os.path.basename(m["file"])
             br = m["branch"]
             if isinstance(br, (list, tuple)) and len(br) == 2:
-                natural_lines.append(f"  • {fname}: 从第 {br[0]} 行跳到第 {br[1]} 行的那条路径")
+                natural_lines.append(f"  - {fname}: line {br[0]} -> line {br[1]} not taken")
             else:
-                natural_lines.append(f"  • {fname}: 分支 {br}")
-        natural_lines.append("修正方向: 给这些分支专门加一两个测试用例 (比如 if 条件不满足时的情况).")
+                natural_lines.append(f"  - {fname}: branch {br}")
+        natural_lines.append(
+            f"Hint: add a test that triggers the OPPOSITE side of each `if` "
+            f"or makes the `try` block raise (so the `except` runs){hint_target}."
+        )
         return VerifierResult(
             verifier_name=self.name, passed=False,
             message=structured_feedback[:240],
