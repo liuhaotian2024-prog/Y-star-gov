@@ -141,20 +141,28 @@ class PytestPassVerifier(Verifier):
     def run(self, workspace_dir: str, contract: Dict[str, Any]) -> VerifierResult:
         t0 = time.time()
         try:
+            # v3.6: switch to `-v` so per-test outcomes are parseable for
+            # TransitionTracker (`test_path::test_name STATUS`). `-q` and
+            # `-v` are opposite verbosity; keep --tb=short for the short
+            # traceback format.
             proc = subprocess.run(
-                ["pytest", "-q", "--tb=short", "--no-header"],
+                ["pytest", "-v", "--tb=short", "--no-header", "--color=no"],
                 cwd=workspace_dir, capture_output=True, text=True, timeout=120,
             )
+            stdout = proc.stdout or ""
+            # v3.6: parse per-test outcomes so TransitionTracker can diff.
+            from ystar.czl.reflection.transitions import parse_pytest_v_outcomes
+            per_test_status = parse_pytest_v_outcomes(stdout)
             if proc.returncode == 0:
                 return VerifierResult(
                     verifier_name=self.name, passed=True,
-                    message="pytest: all pass",
+                    message=f"pytest: {sum(per_test_status.values())}/{len(per_test_status)} pass",
                     reason="all tests pass",
                     instruction="",
                     reference="pytest verifier",
+                    details={"stdout": stdout[-3000:], "per_test_status": per_test_status},
                     elapsed_seconds=time.time() - t0,
                 )
-            stdout = proc.stdout or ""
             # Parse failures with the v3.5 cluster module (reuse, don't reinvent)
             from ystar.czl.reflection.cluster import parse_pytest_failures
             failures = parse_pytest_failures(stdout)
@@ -192,7 +200,11 @@ class PytestPassVerifier(Verifier):
                 instruction=instruction,
                 reference=ref,
                 example=example,
-                details={"stdout": stdout[-3000:], "failures": failures},
+                details={
+                    "stdout": stdout[-5000:],
+                    "failures": failures,
+                    "per_test_status": per_test_status,   # v3.6: TransitionTracker uses this
+                },
                 elapsed_seconds=time.time() - t0,
             )
         except subprocess.TimeoutExpired:

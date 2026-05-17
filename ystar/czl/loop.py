@@ -315,9 +315,10 @@ def run_scenario(
         # capacity tier — small / tiny models get prose; medium / large
         # keep structured.
         model_tier = contract_dict.get("model_tier", "medium")
-        # v3.5 T5: record this iter into reflection, get META text
-        reflection.record(verifier_results)
-        meta = reflection.analyze()
+        # v3.5 T5 + v3.6: record this iter into reflection (incl. transition
+        # tracker), then synthesise META text (regression > cluster > repetition).
+        reflection.record(step_idx, verifier_results)
+        meta = reflection.analyze(iter_idx=step_idx)
         meta_text = meta.render() if not meta.is_empty() else ""
         feedback_block = _format_feedback_for_retry(
             last_violations, model_tier=model_tier, meta_text=meta_text,
