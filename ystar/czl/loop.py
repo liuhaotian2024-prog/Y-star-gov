@@ -153,6 +153,17 @@ def run_scenario(
     # Augment contract with scenario-specific invariants (the Y* core)
     contract_dict = _merge_contract(contract_dict, request.scenario.y_star_invariants())
 
+    # v3.3 D.4: inject backend's capability tier so verifiers + chain
+    # assembly can filter verifier complexity per model size. Backend.tier
+    # is the commercial role (frontier/cheap/local); model_capacity is the
+    # v3.3 capacity tier (large/medium/small/tiny). Fallback "medium" for
+    # backends that don't declare.
+    contract_dict["model_tier"] = getattr(request.backend, "model_capacity", "medium")
+    # v3.3 B.3: trial_id so scenarios know when to reset adaptive-threshold
+    # verifiers' calibration state across trials. CZLRun.run_id is unique
+    # per run, so re-use it as the trial_id.
+    contract_dict["trial_id"] = request.run_id
+
     # --- Step 2: confidence routing ----------------------------------------
     diag = diagnose_compilation(request.task_description, contract_dict)
     needs_inspection = _needs_user_inspection(
@@ -250,8 +261,12 @@ def run_scenario(
             result.final_verifier_report = _summarize_verifiers(verifier_results)
             break
 
-        # 4d. not converged — generate feedback via auto_rewrite-style logic
-        feedback_block = _format_feedback_for_retry(last_violations)
+        # 4d. not converged — generate feedback via auto_rewrite-style logic.
+        # v3.3 D.3: pick message vs message_natural based on backend's
+        # capacity tier — small / tiny models get prose; medium / large
+        # keep structured.
+        model_tier = contract_dict.get("model_tier", "medium")
+        feedback_block = _format_feedback_for_retry(last_violations, model_tier=model_tier)
 
         # 4e. no-progress halt: if residual hasn't strictly decreased over
         # the last `no_progress_window` iterations, stop. This protects
@@ -379,8 +394,15 @@ def _build_cieu_event(
     }
 
 
-def _format_feedback_for_retry(violations: List[VerifierResult]) -> str:
+def _format_feedback_for_retry(violations: List[VerifierResult],
+                                model_tier: str = "medium") -> str:
     """Compose the retry-feedback text block fed back to the LLM next iteration.
+
+    v3.3 D.3: when model_tier is "small" or "tiny", we prefer
+    `message_natural` (multi-line prose) over `message` (structured jargon)
+    because small models lose the signal in dense structured output. When
+    a verifier didn't populate message_natural, we fall through to
+    `message` as the previous behaviour.
 
     Includes a tail of each failing verifier's stdout so the model sees the
     concrete failure (e.g. the pytest assertion line) — without this signal,
@@ -389,24 +411,39 @@ def _format_feedback_for_retry(violations: List[VerifierResult]) -> str:
     """
     if not violations:
         return ""
-    lines = ["### Previous attempt did NOT converge. Address each issue:"]
+    use_natural = model_tier in ("small", "tiny", "local")
+    if use_natural:
+        lines = ["### 上一次尝试没收敛, 请逐条修正下面的问题:"]
+    else:
+        lines = ["### Previous attempt did NOT converge. Address each issue:"]
     for v in violations[:10]:
-        lines.append(f"- [{v.verifier_name}] {v.message}")
-        if v.details:
-            stdout_tail = (v.details.get("stdout") or "")[-1000:]
-            if stdout_tail.strip():
-                lines.append("  verifier output:")
-                lines.append("  ```")
-                for line in stdout_tail.strip().splitlines()[-25:]:
-                    lines.append(f"  {line}")
-                lines.append("  ```")
+        if use_natural and getattr(v, "message_natural", None):
+            text = v.message_natural
+            lines.append(f"\n[{v.verifier_name}]\n{text}")
+        else:
+            lines.append(f"- [{v.verifier_name}] {v.message}")
+            if v.details:
+                stdout_tail = (v.details.get("stdout") or "")[-1000:]
+                if stdout_tail.strip():
+                    lines.append("  verifier output:")
+                    lines.append("  ```")
+                    for line in stdout_tail.strip().splitlines()[-25:]:
+                        lines.append(f"  {line}")
+                    lines.append("  ```")
     lines.append("")
-    lines.append(
-        "Re-emit the full corrected content of any file that still has issues. "
-        "Do not restart from scratch. If a pytest failure shows the test "
-        "expects a specific type/value, your fix must produce that — the test "
-        "is the spec, not the type annotation."
-    )
+    if use_natural:
+        lines.append(
+            "请把每个有问题的文件完整重新输出 (不要只发 patch). "
+            "如果 pytest 报某个值不对, 你的代码必须真的返回那个值 — "
+            "测试就是规范, 不是类型注解."
+        )
+    else:
+        lines.append(
+            "Re-emit the full corrected content of any file that still has issues. "
+            "Do not restart from scratch. If a pytest failure shows the test "
+            "expects a specific type/value, your fix must produce that — the test "
+            "is the spec, not the type annotation."
+        )
     return "\n".join(lines)
 
 

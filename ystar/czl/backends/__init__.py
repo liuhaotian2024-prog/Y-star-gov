@@ -28,6 +28,8 @@ from ystar.czl.backends.base import (
 class AnthropicBackend(LiteLLMBackend):
     name = "anthropic"
     tier = "frontier"
+    # v3.3 D.4: capability tier (orthogonal to commercial `tier`)
+    model_capacity = "large"
     default_model = "claude-opus-4-7"
     env_var_for_key = "ANTHROPIC_API_KEY"
     input_price_per_M = 5.00
@@ -40,6 +42,7 @@ class AnthropicBackend(LiteLLMBackend):
 class OpenAIBackend(LiteLLMBackend):
     name = "openai"
     tier = "frontier"
+    model_capacity = "large"
     default_model = "gpt-5"
     env_var_for_key = "OPENAI_API_KEY"
     input_price_per_M = 5.00       # placeholder; check current pricing
@@ -52,6 +55,7 @@ class OpenAIBackend(LiteLLMBackend):
 class DeepSeekBackend(LiteLLMBackend):
     name = "deepseek"
     tier = "cheap"
+    model_capacity = "medium"
     default_model = "deepseek-chat"   # check for newest variant
     env_var_for_key = "DEEPSEEK_API_KEY"
     input_price_per_M = 0.07
@@ -63,6 +67,7 @@ class MiniMaxBackend(LiteLLMBackend):
     """MiniMax international (platform.minimax.io). OpenAI-compatible API."""
     name = "minimax"
     tier = "cheap"
+    model_capacity = "medium"
     default_model = "MiniMax-M2"
     env_var_for_key = "MINIMAX_API_KEY"
     input_price_per_M = 0.20
@@ -78,6 +83,7 @@ class QwenBackend(LiteLLMBackend):
     """Alibaba DashScope — Qwen3 Coder etc."""
     name = "qwen"
     tier = "cheap"
+    model_capacity = "medium"
     default_model = "qwen-coder-plus"
     env_var_for_key = "DASHSCOPE_API_KEY"
     input_price_per_M = 0.40
@@ -92,6 +98,7 @@ class KimiBackend(LiteLLMBackend):
     """Moonshot AI Kimi K series — strong long context."""
     name = "kimi"
     tier = "cheap"
+    model_capacity = "medium"
     default_model = "moonshot-v1-32k"
     env_var_for_key = "MOONSHOT_API_KEY"
     input_price_per_M = 0.60
@@ -108,6 +115,9 @@ class OllamaBackend(LiteLLMBackend):
     """Local Ollama daemon. Probes for a coder model on the box."""
     name = "ollama"
     tier = "local"
+    # v3.3: gemma4:e4b is an 8B model → "small" capacity. The registry filter
+    # routes high-complexity verifiers (e.g. mutation_score) out of its chain.
+    model_capacity = "small"
     default_model = "gemma4:e4b"      # user's confirmed local model
     env_var_for_key = ""              # local — no key
     input_price_per_M = 0.0

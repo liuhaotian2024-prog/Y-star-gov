@@ -1,33 +1,31 @@
 """
-contract_verifier.py — outcome-based contract consistency check.
+contract_verifier.py — outcome-based contract consistency check (v3.3).
 
 Builds two file-AST indexes for the workspace:
   - callee_index: {name -> [CalleeSignature]}  (declared `def`s)
   - call_sites:   list[CallSite]               (observed call expressions)
 
 For each call site, looks up matching callees by name and asks: is this call
-compatible with at least one declared signature? Compatibility = positional
-arity within [min_required, max_accepted_or_∞_if_*args] AND every used
-keyword is accepted (named kw arg, **kwargs, or named-only kw allowed).
+compatible with at least one declared signature?
 
-Optionally, when the loop hands us an intent-contract dict, runs that
-through ystar.governance.contract_lifecycle.validate_y_star_schema_v2 as a
-second outcome-based check (declared spec is itself well-formed).
+v3.3 changes (from v3.2):
+  - **A.1**: Replaced single `unpack=N` field with four explicit counts:
+      positional_count / keyword_count / starred_count / double_starred_count
+    (call.args / call.keywords are walked as in standard ast practice;
+     the old `unpack=1` for ordinary single-target assigns was misleading.)
+  - **A.2**: When starred_count > 0 OR double_starred_count > 0, the call's
+    arity is not statically determinable. Skip from mismatch list (do NOT
+    emit a false positive); record to details.skipped_unpacking_calls.
+  - **A.3**: Mismatch reason rendered as multi-line natural-language prose
+    including the call source, def-site, declared signature, docstring
+    first line, and a concrete suggested fix. Stored as `reason_natural`
+    on ContractMismatch; the verifier's VerifierResult fills BOTH
+    `message` (structured-for-large-model) and `message_natural`
+    (prose-for-small-model).
+  - **D.2**: VerifierResult.message_natural set.
+  - **E.2**: class metadata set (applies_to_tasks, min_model_capacity, ...).
 
-ZERO process-based logic — we do NOT inspect which files were edited, which
-imports the model added, or any other per-iteration artifact. Only the
-final source-AST state matters.
-
-Reused-asset provenance (copied, not imported, to keep verifier
-self-contained and free of cross-repo coupling):
-  - signature-extraction shape from K9Audit/k9log/contract_builder.py:112
-    `_analyze_function_ast(func)` (Callable input, single-function scope)
-  - param-walking idiom from ystar/kernel/prefill.py:844
-    `_analyze_ast(func)` (Callable input, AST walk over args.args)
-Both are CALLABLE-input helpers; we adapt the pattern to a file-AST input.
-
-Schema-dict synergy (imported, not copied — per Phase 2 spec):
-  - ystar.governance.contract_lifecycle.validate_y_star_schema_v2
+ZERO process-based logic — we do NOT inspect which files were edited.
 """
 from __future__ import annotations
 
@@ -46,30 +44,40 @@ from ystar.czl.verifiers.base import Verifier, VerifierResult
 class CalleeSignature:
     name: str
     min_arity: int                 # positional args without defaults (excluding *args/**kwargs)
-    max_arity: int                 # total positional args; sys.maxsize sentinel if *args
+    max_arity: int                 # total positional args; _MAX_ARITY_SENTINEL if *args
     kw_names_accepted: Set[str]    # named kw param names (excluding **kwargs target)
     has_var_positional: bool       # *args present
     has_var_keyword: bool          # **kwargs present
     return_annotation: Optional[str]  # ast.unparse() of return annotation, or None
     declared_file: str
     declared_lineno: int
+    param_names: Tuple[str, ...] = ()       # v3.3: ordered positional param names (post self/cls strip)
+    docstring_first_line: Optional[str] = None  # v3.3: for human-readable error messages
 
 
 @dataclass
 class CallSite:
     called_name: str
-    positional_arity: int
+    # v3.3 split: four explicit counts. positional_count = args without `*`;
+    # starred_count = args using `*` (e.g. f(*args)); keyword_count = named
+    # kwargs (f(x=1)); double_starred_count = `**kwargs` calls (f(**d)).
+    positional_count: int
+    keyword_count: int
+    starred_count: int
+    double_starred_count: int
     kw_names_used: Set[str]
-    unpack_arity: Optional[int]    # `a, b = foo()` -> 2; `x = foo()` -> 1; bare call -> None
+    lhs_unpack_arity: Optional[int]    # LHS unpack arity (`a, b = foo()` -> 2; bare → None)
     file: str
     lineno: int
+    call_source: str = ""              # v3.3: ast.unparse of the call expression (for human msg)
 
 
 @dataclass
 class ContractMismatch:
     call_site: CallSite
     candidate_callees: List[CalleeSignature] = field(default_factory=list)
-    reason: str = ""
+    reason: str = ""                       # structured (for large model)
+    reason_natural: str = ""               # v3.3: multi-line prose (for small model)
 
 
 # === extraction =============================================================
@@ -78,17 +86,7 @@ _MAX_ARITY_SENTINEL = 10_000  # acts as "unbounded" without using sys.maxsize
 
 
 def _extract_callees_from_tree(tree: ast.AST, file_path: str) -> List[CalleeSignature]:
-    """Walk module-level + class-level FunctionDefs. Returns one signature per def.
-
-    For methods (FunctionDef inside ClassDef) whose first arg is `self` or
-    `cls`, we DECREMENT min/max arity by one so the stored signature
-    reflects the callable-from-outside shape (Python auto-binds self/cls
-    on attribute-style invocation `obj.method(args)`). Without this
-    adjustment every `obj.method(x)` call would falsely fail arity check
-    against a `def method(self, x)` signature.
-
-    Param-walking idiom adapted from prefill.py:844 _analyze_ast.
-    """
+    """Walk module-level + class-level FunctionDefs. Returns one signature per def."""
     out: List[CalleeSignature] = []
 
     def _handle_func(node: ast.FunctionDef | ast.AsyncFunctionDef,
@@ -105,6 +103,10 @@ def _extract_callees_from_tree(tree: ast.AST, file_path: str) -> List[CalleeSign
             ret = ast.unparse(node.returns) if node.returns is not None else None
         except Exception:
             ret = None
+        param_names = tuple(a.arg for a in positional)
+        # docstring_first_line via ast.get_docstring (returns clean text or None)
+        doc = ast.get_docstring(node)
+        doc_first = doc.split("\n", 1)[0].strip() if doc else None
         out.append(CalleeSignature(
             name=qualname,
             min_arity=min_arity,
@@ -115,6 +117,8 @@ def _extract_callees_from_tree(tree: ast.AST, file_path: str) -> List[CalleeSign
             return_annotation=ret,
             declared_file=file_path,
             declared_lineno=node.lineno,
+            param_names=param_names,
+            docstring_first_line=doc_first,
         ))
 
     for node in tree.body:
@@ -123,8 +127,6 @@ def _extract_callees_from_tree(tree: ast.AST, file_path: str) -> List[CalleeSign
         elif isinstance(node, ast.ClassDef):
             for body_node in node.body:
                 if isinstance(body_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    # method's plain name; the call-site index keys by plain
-                    # name too (we don't do receiver-type inference)
                     _handle_func(body_node, body_node.name, is_method=True)
     return out
 
@@ -139,22 +141,24 @@ def _call_target_name(call: ast.Call) -> Optional[str]:
 
 
 def _extract_call_sites_from_tree(tree: ast.AST, file_path: str) -> List[CallSite]:
-    """Walk all Call nodes and Assign targets to capture unpack arity.
+    """Walk all Call nodes and Assign targets to capture LHS unpack arity.
 
-    We do a two-pass walk: first identify Assign nodes whose `value` is a
-    Call, recording the LHS unpack arity for those calls; then walk every
-    Call and emit a CallSite with the unpack info (or None for bare calls).
+    v3.3: separates the 4 call-side counts (positional / keyword / starred /
+    double_starred) so downstream logic can correctly skip statically-
+    undeterminable cases without confusing them with LHS unpack arity.
     """
-    # Map id(call_node) -> unpack arity (None if not in a tuple-unpack Assign)
-    unpack_arity_by_call_id: Dict[int, int] = {}
+    # Map id(call_node) -> LHS unpack arity (None if not in a tuple-unpack Assign)
+    lhs_unpack_by_call_id: Dict[int, int] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
             target = node.targets[0] if node.targets else None
             if isinstance(target, (ast.Tuple, ast.List)):
-                unpack_arity_by_call_id[id(node.value)] = len(target.elts)
+                lhs_unpack_by_call_id[id(node.value)] = len(target.elts)
             else:
-                # x = foo() — single target; treat as 1
-                unpack_arity_by_call_id[id(node.value)] = 1
+                # Single-target assign — NOT a tuple-unpack situation.
+                # v3.2's confused convention of recording this as `unpack=1`
+                # made `f(a, b)` look like unpacking; we now leave this None.
+                pass
 
     out: List[CallSite] = []
     for node in ast.walk(tree):
@@ -163,22 +167,27 @@ def _extract_call_sites_from_tree(tree: ast.AST, file_path: str) -> List[CallSit
         name = _call_target_name(node)
         if name is None:
             continue
-        positional_arity = sum(1 for a in node.args if not isinstance(a, ast.Starred))
-        # Starred positional args mean we can't determine exact arity → mark unknown
-        has_star = any(isinstance(a, ast.Starred) for a in node.args)
-        if has_star:
-            positional_arity = -1  # sentinel: "unknown, treat as compatible"
-        kw_names_used: Set[str] = set()
-        for kw in node.keywords:
-            if kw.arg is not None:
-                kw_names_used.add(kw.arg)
+        # v3.3 — explicit 4-count breakdown
+        positional_count = sum(1 for a in node.args if not isinstance(a, ast.Starred))
+        starred_count = sum(1 for a in node.args if isinstance(a, ast.Starred))
+        keyword_count = sum(1 for kw in node.keywords if kw.arg is not None)
+        double_starred_count = sum(1 for kw in node.keywords if kw.arg is None)
+        kw_names_used: Set[str] = {kw.arg for kw in node.keywords if kw.arg is not None}
+        try:
+            call_source = ast.unparse(node)
+        except Exception:
+            call_source = f"{name}(…)"
         out.append(CallSite(
             called_name=name,
-            positional_arity=positional_arity,
+            positional_count=positional_count,
+            keyword_count=keyword_count,
+            starred_count=starred_count,
+            double_starred_count=double_starred_count,
             kw_names_used=kw_names_used,
-            unpack_arity=unpack_arity_by_call_id.get(id(node)),
+            lhs_unpack_arity=lhs_unpack_by_call_id.get(id(node)),
             file=file_path,
             lineno=node.lineno,
+            call_source=call_source,
         ))
     return out
 
@@ -196,12 +205,7 @@ def _iter_workspace_py(workspace_dir: str) -> List[str]:
 # === compatibility logic ====================================================
 
 def _return_is_tuple_like(ret_annotation: Optional[str]) -> Optional[int]:
-    """If `ret_annotation` is a tuple-typed annotation, return the inferred arity.
-    Returns:
-      - integer arity for `tuple[X, Y]` / `Tuple[X, Y]` (length of inner type args)
-      - 0 for `tuple[()]` / unparameterised tuple (unknown arity)
-      - None for non-tuple annotations
-    """
+    """If `ret_annotation` is a tuple-typed annotation, return the inferred arity."""
     if ret_annotation is None:
         return None
     a = ret_annotation.replace(" ", "")
@@ -210,32 +214,27 @@ def _return_is_tuple_like(ret_annotation: Optional[str]) -> Optional[int]:
     inner = a[a.index("[") + 1: a.rindex("]")] if "[" in a and "]" in a else ""
     if not inner or inner == "()":
         return 0
-    # naive comma split (good enough for the kinds of annotations we see)
     parts = [p for p in inner.split(",") if p]
-    # `Tuple[int, ...]` → variadic; treat as unknown
     if any(p == "..." for p in parts):
         return 0
     return len(parts)
 
 
 def _signature_admits_call(callee: CalleeSignature, site: CallSite) -> Tuple[bool, str]:
-    """Return (compatible, reason_if_not)."""
-    pos = site.positional_arity
-    if pos != -1:  # -1 means starred-call, unknown — be lenient
-        if pos < callee.min_arity:
-            return False, (
-                f"call provides {pos} positional arg(s) but `{callee.name}` "
-                f"requires at least {callee.min_arity}"
-            )
-        if pos > callee.max_arity:
-            return False, (
-                f"call provides {pos} positional arg(s) but `{callee.name}` "
-                f"accepts at most {callee.max_arity}"
-            )
+    """Return (compatible, reason_if_not). v3.3 uses split call-site fields."""
+    pos = site.positional_count
+    if pos < callee.min_arity:
+        return False, (
+            f"call provides {pos} positional arg(s) but `{callee.name}` "
+            f"requires at least {callee.min_arity}"
+        )
+    if pos > callee.max_arity:
+        return False, (
+            f"call provides {pos} positional arg(s) but `{callee.name}` "
+            f"accepts at most {callee.max_arity}"
+        )
     if site.kw_names_used:
-        accepted = callee.kw_names_accepted
-        # also treat positional param names as keyword-accepted
-        # (we don't have them here — conservative: only flag if has_var_keyword is False AND name not in accepted)
+        accepted = callee.kw_names_accepted | set(callee.param_names)
         if not callee.has_var_keyword:
             for kw in site.kw_names_used:
                 if kw not in accepted:
@@ -243,31 +242,94 @@ def _signature_admits_call(callee: CalleeSignature, site: CallSite) -> Tuple[boo
                         f"call passes keyword `{kw}` but `{callee.name}` has no "
                         f"such parameter (and no **kwargs)"
                     )
-    # Return-shape check: caller does tuple-unpacking with arity N, but
-    # callee declares a non-tuple return (or tuple of different arity).
-    if site.unpack_arity and site.unpack_arity > 1 and callee.return_annotation is not None:
+    # LHS-unpack return-shape check
+    if site.lhs_unpack_arity and site.lhs_unpack_arity > 1 and callee.return_annotation is not None:
         tup_n = _return_is_tuple_like(callee.return_annotation)
         if tup_n is None:
             return False, (
-                f"call unpacks {site.unpack_arity}-tuple, but `{callee.name}` "
+                f"call unpacks {site.lhs_unpack_arity}-tuple, but `{callee.name}` "
                 f"returns `{callee.return_annotation}` (not a tuple)"
             )
-        if tup_n and tup_n != site.unpack_arity:
+        if tup_n and tup_n != site.lhs_unpack_arity:
             return False, (
-                f"call unpacks {site.unpack_arity}-tuple, but `{callee.name}` "
+                f"call unpacks {site.lhs_unpack_arity}-tuple, but `{callee.name}` "
                 f"returns tuple of arity {tup_n}"
             )
     return True, ""
 
 
+def _render_natural_mismatch(site: CallSite,
+                             best_candidate: CalleeSignature,
+                             structured_reason: str) -> str:
+    """v3.3 A.3: render multi-line Chinese prose for the mismatch."""
+    # Construct the declared signature display: name(param1, param2, ...)
+    sig_params = list(best_candidate.param_names)
+    if best_candidate.has_var_positional:
+        sig_params.append("*args")
+    if best_candidate.kw_names_accepted:
+        for kw in sorted(best_candidate.kw_names_accepted):
+            sig_params.append(kw)
+    if best_candidate.has_var_keyword:
+        sig_params.append("**kwargs")
+    sig_display = f"{best_candidate.name}({', '.join(sig_params)})"
+
+    # Choose the suggested fix
+    fix_hint = ""
+    if site.positional_count > best_candidate.max_arity:
+        diff = site.positional_count - best_candidate.max_arity
+        if diff == 1:
+            fix_hint = "可能的修正: 删除多出的 1 个参数; 或检查你是否调用了正确的函数."
+        else:
+            fix_hint = f"可能的修正: 删除多出的 {diff} 个参数; 或检查你是否调用了正确的函数."
+    elif site.positional_count < best_candidate.min_arity:
+        missing = best_candidate.min_arity - site.positional_count
+        fix_hint = f"可能的修正: 补充缺少的 {missing} 个位置参数; 或检查函数签名是否变了."
+    elif site.kw_names_used and not best_candidate.has_var_keyword:
+        unknown_kws = site.kw_names_used - (best_candidate.kw_names_accepted | set(best_candidate.param_names))
+        if unknown_kws:
+            kw = sorted(unknown_kws)[0]
+            fix_hint = f"可能的修正: 删除关键字参数 `{kw}=…`; 或确认函数签名."
+    elif site.lhs_unpack_arity and site.lhs_unpack_arity > 1:
+        fix_hint = f"可能的修正: 不要解包返回值 (改 `x = {best_candidate.name}(…)`); 或确认函数确实返回 tuple."
+
+    docstring_line = (
+        f"Docstring 首行: {best_candidate.docstring_first_line}"
+        if best_candidate.docstring_first_line
+        else "Docstring 首行: (函数无 docstring)"
+    )
+
+    pieces = [
+        f"{site.file}:{site.lineno}",
+        f"你的调用: {site.call_source} 用了 {site.positional_count} 个位置参数"
+        + (f" + {site.keyword_count} 个关键字参数" if site.keyword_count else "")
+        + ".",
+        f"函数定义只接受 {best_candidate.min_arity} ~ "
+        + ("∞" if best_candidate.max_arity == _MAX_ARITY_SENTINEL else str(best_candidate.max_arity))
+        + " 个位置参数.",
+        "",
+        f"函数定义位置: {best_candidate.declared_file}:{best_candidate.declared_lineno}",
+        f"签名: {sig_display}",
+        docstring_line,
+    ]
+    if fix_hint:
+        pieces.append("")
+        pieces.append(fix_hint)
+    # Append the original structured reason as a debug-trace line
+    pieces.append("")
+    pieces.append(f"(structured: {structured_reason})")
+    return "\n".join(pieces)
+
+
 def check_contract_consistency(
     workspace_dir: str,
     intent_contract: Optional[Dict[str, Any]] = None,
-) -> List[ContractMismatch]:
-    """Top-level: gather all callee signatures + all call sites in the
-    workspace, then flag every call site that has no compatible callee.
+) -> Tuple[List[ContractMismatch], List[Dict[str, Any]]]:
+    """v3.3: returns (mismatches, skipped_unpacking_calls).
 
-    Optionally also validates `intent_contract` via Y* schema.
+    A.2: when a call uses `*args` or `**kwargs` (starred_count > 0 OR
+    double_starred_count > 0), its arity is not statically determinable;
+    we MUST NOT emit a mismatch. Such calls are recorded into the second
+    return value so the verifier can log them in details for transparency.
     """
     callee_index: Dict[str, List[CalleeSignature]] = {}
     call_sites: List[CallSite] = []
@@ -275,15 +337,12 @@ def check_contract_consistency(
         try:
             tree = ast.parse(open(path, "r", encoding="utf-8").read(), filename=path)
         except SyntaxError:
-            # A SyntaxError in workspace source is itself a contract violation;
-            # surface it as one mismatch with no candidates.
             call_sites.append(CallSite(
                 called_name="<syntax_error>",
-                positional_arity=0,
-                kw_names_used=set(),
-                unpack_arity=None,
-                file=path,
-                lineno=0,
+                positional_count=0, keyword_count=0,
+                starred_count=0, double_starred_count=0,
+                kw_names_used=set(), lhs_unpack_arity=None,
+                file=path, lineno=0, call_source="",
             ))
             continue
         for cs in _extract_callees_from_tree(tree, path):
@@ -291,22 +350,31 @@ def check_contract_consistency(
         call_sites.extend(_extract_call_sites_from_tree(tree, path))
 
     mismatches: List[ContractMismatch] = []
+    skipped_unpacking: List[Dict[str, Any]] = []
 
-    # External callees (stdlib / 3rd-party) won't be in callee_index. Those
-    # are NOT flagged — we only check intra-workspace consistency. Filter:
-    intra_names = set(callee_index.keys())
     for site in call_sites:
         if site.called_name == "<syntax_error>":
             mismatches.append(ContractMismatch(
                 call_site=site, candidate_callees=[],
                 reason=f"SyntaxError in {site.file}",
+                reason_natural=f"{site.file} 有 Python 语法错误, 无法解析. 请修正语法后重试.",
             ))
             continue
         candidates = callee_index.get(site.called_name, [])
         if not candidates:
-            # External call, skip (no in-workspace callee)
+            # External call (stdlib / 3rd-party), skip — we only check intra-workspace consistency.
             continue
-        # If ANY candidate is compatible, the call is OK.
+        # A.2: skip calls with `*args` or `**kwargs` unpacking — arity not
+        # statically determinable. Conservative: never emit a false positive.
+        if site.starred_count > 0 or site.double_starred_count > 0:
+            skipped_unpacking.append({
+                "file": site.file, "lineno": site.lineno,
+                "call_source": site.call_source,
+                "starred_count": site.starred_count,
+                "double_starred_count": site.double_starred_count,
+                "reason": "arity not statically determinable due to *args/**kwargs",
+            })
+            continue
         compatible_reasons: List[str] = []
         any_ok = False
         for c in candidates:
@@ -316,41 +384,54 @@ def check_contract_consistency(
                 break
             compatible_reasons.append(reason)
         if not any_ok:
+            best = candidates[0]
+            structured = "; ".join(compatible_reasons[:3])
             mismatches.append(ContractMismatch(
                 call_site=site,
                 candidate_callees=candidates,
-                reason="; ".join(compatible_reasons[:3]),
+                reason=structured,
+                reason_natural=_render_natural_mismatch(site, best, structured),
             ))
 
-    # Schema-dict synergy: validate the intent contract itself if supplied.
+    # Schema-dict synergy: validate intent contract if supplied.
     if intent_contract:
         try:
             from ystar.governance.contract_lifecycle import validate_y_star_schema_v2
             schema_result = validate_y_star_schema_v2(intent_contract)
             if schema_result.get("errors"):
                 fake_site = CallSite(
-                    called_name="<intent_contract>", positional_arity=0,
-                    kw_names_used=set(), unpack_arity=None,
+                    called_name="<intent_contract>",
+                    positional_count=0, keyword_count=0,
+                    starred_count=0, double_starred_count=0,
+                    kw_names_used=set(), lhs_unpack_arity=None,
                     file="<contract_dict>", lineno=0,
                 )
+                err_summary = f"intent contract schema errors: {schema_result['errors'][:3]}"
                 mismatches.append(ContractMismatch(
                     call_site=fake_site, candidate_callees=[],
-                    reason=f"intent contract schema errors: {schema_result['errors'][:3]}",
+                    reason=err_summary,
+                    reason_natural=f"任务的意图 contract 不符合 Y* schema: {err_summary}",
                 ))
         except Exception:
-            # Don't let schema-helper bugs poison the verifier; log to details only.
             pass
 
-    return mismatches
+    return mismatches, skipped_unpacking
 
 
 # === Verifier interface =====================================================
 
 class ContractConsistencyVerifier(Verifier):
     name = "contract_consistency"
+    # E.2 metadata
+    applies_to_tasks: List[str] = ["all"]
+    min_model_capacity: str = "small"
+    feedback_complexity: str = "medium"
+    known_limitations: List[str] = [
+        "intra-workspace only (no stdlib/3rd-party type-check)",
+        "skips calls using *args/**kwargs (statically undeterminable, A.2 safety policy)",
+    ]
 
-    def is_applicable(self, workspace_dir: str) -> bool:
-        # Always applicable to any .py workspace.
+    def is_applicable(self, workspace_dir: str, contract: Optional[Dict[str, Any]] = None) -> bool:
         for root, _, files in os.walk(workspace_dir):
             if any(f.endswith(".py") for f in files):
                 return True
@@ -358,25 +439,41 @@ class ContractConsistencyVerifier(Verifier):
 
     def run(self, workspace_dir: str, contract: Dict[str, Any]) -> VerifierResult:
         t0 = time.time()
-        mismatches = check_contract_consistency(workspace_dir, intent_contract=contract or None)
+        mismatches, skipped = check_contract_consistency(
+            workspace_dir, intent_contract=contract or None
+        )
         if not mismatches:
+            details: Dict[str, Any] = {}
+            if skipped:
+                details["skipped_unpacking_calls"] = skipped
             return VerifierResult(
                 verifier_name=self.name, passed=True,
                 message="contract_consistency: all call sites compatible with callees",
+                message_natural="所有调用都与函数定义匹配, 没有 arity / 关键字 / 返回 shape 错误.",
+                details=details,
                 elapsed_seconds=time.time() - t0,
             )
-        # Format a useful, model-readable summary
-        msgs: List[str] = []
+        # v3.3 structured + natural messages
+        structured: List[str] = []
+        natural_blocks: List[str] = []
         for m in mismatches[:10]:
             site = m.call_site
-            msgs.append(
+            structured.append(
                 f"{site.file}:{site.lineno}: call `{site.called_name}` "
-                f"(arity={site.positional_arity}, kw={sorted(site.kw_names_used) or '[]'}, "
-                f"unpack={site.unpack_arity}) — {m.reason}"
+                f"(positional={site.positional_count}, keyword={site.keyword_count}, "
+                f"kw_names={sorted(site.kw_names_used) or '[]'}) — {m.reason}"
             )
+            natural_blocks.append(m.reason_natural)
+        details = {
+            "mismatches": structured,
+            "n": len(mismatches),
+        }
+        if skipped:
+            details["skipped_unpacking_calls"] = skipped
         return VerifierResult(
             verifier_name=self.name, passed=False,
-            message=f"contract_consistency: {len(mismatches)} mismatch(es); first: {msgs[0][:160]}",
-            details={"mismatches": msgs, "n": len(mismatches)},
+            message=f"contract_consistency: {len(mismatches)} mismatch(es); first: {structured[0][:200]}",
+            message_natural="\n\n---\n\n".join(natural_blocks),
+            details=details,
             elapsed_seconds=time.time() - t0,
         )

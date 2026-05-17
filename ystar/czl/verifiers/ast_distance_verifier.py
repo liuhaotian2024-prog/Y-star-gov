@@ -9,6 +9,12 @@ that informs the iteration_confidence weighting downstream.
 
 This is a weighting signal, NOT a gating verifier — passed=True always,
 but details.distance_ratio is read by the agreement-rate calculator.
+
+v3.3 E.2 metadata: not a Verifier subclass — uses a module-level function
+interface that quality_assessment calls. Listed here for documentation:
+  applies_to_tasks: ["test_generation_for_existing_code", "type_annotation_completion"]
+  min_model_capacity: "small"  (always-on signal)
+  feedback_complexity: "low"
 """
 from __future__ import annotations
 

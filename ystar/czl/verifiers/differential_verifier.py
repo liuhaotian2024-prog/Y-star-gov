@@ -288,8 +288,17 @@ def check_differential(workspace_dir: str) -> List[DifferentialMismatch]:
 
 class DifferentialVerifier(Verifier):
     name = "differential"
+    # v3.3 E.2 metadata
+    applies_to_tasks = ["test_generation_for_existing_code", "bug_fix_with_implicit_dependency", "all"]
+    min_model_capacity = "small"
+    feedback_complexity = "medium"
+    known_limitations = [
+        "no synthetic input generator (Hypothesis cut from Phase 2)",
+        "only re-checks literals that pytest already asserts",
+        "cannot catch semantic drift on untested inputs",
+    ]
 
-    def is_applicable(self, workspace_dir: str) -> bool:
+    def is_applicable(self, workspace_dir: str, contract: Optional[Dict[str, Any]] = None) -> bool:
         for root, _, files in os.walk(workspace_dir):
             if any(f.startswith("test_") and f.endswith(".py") for f in files):
                 return True
@@ -302,14 +311,23 @@ class DifferentialVerifier(Verifier):
             return VerifierResult(
                 verifier_name=self.name, passed=True,
                 message="differential: model output matches expected on all extractable test cases",
+                message_natural="差异检查: 函数的实际输出跟测试里 assert 的期望值都一致.",
                 elapsed_seconds=time.time() - t0,
             )
         msgs: List[str] = []
+        natural_blocks: List[str] = []
         for m in mismatches[:10]:
             msgs.append(m.reason)
+            # v3.3 D.2 prose: re-frame structured reason as natural language
+            natural_blocks.append("差异: " + m.reason.replace("expected ", "测试期望 ").replace("got ", "实际得到 "))
         return VerifierResult(
             verifier_name=self.name, passed=False,
             message=f"differential: {len(mismatches)} input/output mismatch(es); first: {msgs[0][:160]}",
+            message_natural=(
+                f"差异检查: 发现 {len(mismatches)} 处函数输出跟测试期望对不上.\n"
+                + "\n".join(f"  • {nb}" for nb in natural_blocks[:5])
+                + "\n修正方向: 调整函数实现让它返回测试期望的值; 或如果测试期望本身错了, 修正测试."
+            ),
             details={"mismatches": msgs, "n": len(mismatches)},
             elapsed_seconds=time.time() - t0,
         )

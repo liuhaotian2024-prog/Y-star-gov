@@ -68,7 +68,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path, PosixPath
 from typing import Any, Dict, List, Optional, Tuple
 
-from ystar.czl.verifiers.base import Verifier, VerifierResult
+from ystar.czl.verifiers.base import Verifier, VerifierResult, AdaptiveThresholdVerifier
 
 
 # === resource detection =====================================================
@@ -321,12 +321,25 @@ def _worker_run_mutant(args: Tuple[str, Dict[str, Any], str, float]) -> Dict[str
 
 # === Verifier ===============================================================
 
-class MutationScoreVerifier(Verifier):
+class MutationScoreVerifier(AdaptiveThresholdVerifier):
     name = "mutation_score"
     is_final_gate = True  # scenario.verify() runs this only after inner pass
+    # E.2 metadata
+    applies_to_tasks = ["test_generation_for_existing_code"]
+    min_model_capacity = "medium"   # gemma 4B (small) is exempt — registry filter routes around
+    feedback_complexity = "high"
+    known_limitations = [
+        "cosmic-ray timeout / memory bound on large modules",
+        "requires git diff (selective mutation) — fresh workspaces use unconditional path",
+    ]
 
     def __init__(self, target_wall_seconds: float = 10.0, score_threshold: float = 0.7):
+        # v3.3 B.2: AdaptiveThresholdVerifier — calibrate on first call.
+        AdaptiveThresholdVerifier.__init__(self, target_threshold=score_threshold,
+                                            floor_threshold=max(0.0, score_threshold - 0.30))
         self.target_wall_seconds = float(target_wall_seconds)
+        # Preserve the original attribute name for any callers that read it
+        # (e.g. logging / inline reports); semantics now == self.target.
         self.score_threshold = float(score_threshold)
 
     def _effective_target_wall(self, contract: Dict[str, Any]) -> float:
@@ -519,17 +532,27 @@ class MutationScoreVerifier(Verifier):
         ][:10]
         common_details["surviving_mutants"] = surviving_for_feedback
 
-        # ===== constraint E: actionable feedback for next CZL iter =====
-        if score >= self.score_threshold:
+        # ===== constraint E + v3.3 B.2: actionable feedback + adaptive threshold =====
+        passed_adaptive, adaptive_msg = self.check_score(score)
+        common_details["adaptive_threshold"] = self.effective_threshold()
+        common_details["adaptive_baseline"] = self._calibration_score
+        common_details["adaptive_call_count"] = self._call_count
+        if passed_adaptive:
+            # Calibration round OR genuinely good score — pass.
+            natural = (
+                f"突变测试: 你的测试杀死了 {killed}/{classifiable} 个变异 ({score:.0%}). "
+                f"{adaptive_msg}."
+            )
             return VerifierResult(
                 verifier_name=self.name, passed=True,
-                message=f"mutation_score: {killed}/{classifiable} ({score:.0%}) ≥ threshold {self.score_threshold:.0%}",
+                message=f"mutation_score: {killed}/{classifiable} ({score:.0%}) — {adaptive_msg}",
+                message_natural=natural,
                 details=common_details,
                 elapsed_seconds=actual_wall,
             )
-        # Build human-readable actionable feedback
+        # Build human-readable actionable feedback (structured + prose).
         fb_lines = [
-            f"mutation_score: {killed}/{classifiable} ({score:.0%}) below {self.score_threshold:.0%}.",
+            f"mutation_score: {killed}/{classifiable} ({score:.0%}). {adaptive_msg}",
             "The following mutations were NOT killed by your tests — add tests "
             "that distinguish each mutation from the original behaviour:",
         ]
@@ -539,9 +562,21 @@ class MutationScoreVerifier(Verifier):
             if s["diff"].strip():
                 fb_lines.append(s["diff"])
         common_details["actionable_feedback"] = "\n".join(fb_lines)
+        natural_lines = [
+            f"突变测试: 你的测试只杀死了 {killed}/{classifiable} 个变异 ({score:.0%}), "
+            f"需要超过 {self.effective_threshold():.0%}.",
+            "下面这些代码改动 (mutation) 你的测试没察觉到, 说明这些行为没被测到:",
+        ]
+        for s in surviving_for_feedback[:5]:
+            loc = f"{s['file']}:{s['start_line']}"
+            fn = s["definition_name"] or "(unknown function)"
+            natural_lines.append(f"  • {loc} 在 `{fn}` 里改了某个表达式但你的测试没失败.")
+        natural_lines.append("修正方向: 给这些表达式加专门测试用例; "
+                             "或者把现有测试改得更具体 (检查返回值的精确数字而不只是类型).")
         return VerifierResult(
             verifier_name=self.name, passed=False,
             message=common_details["actionable_feedback"][:240],
+            message_natural="\n".join(natural_lines),
             details=common_details,
             elapsed_seconds=actual_wall,
         )

@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""
+ystar CLI binary — v3.3 entry point.
+
+Subcommands:
+  trampoline run --task "..." --source path/        v3.3 auto-routed run
+  trampoline route --task "..." --source path/      preview which scenario routes
+
+The legacy `ystar czl run-scenario` etc. CLI lives in ystar.czl.cli and is
+kept for backwards compatibility.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def _load_source_files(source_dir: str) -> dict:
+    """Load all .py + .toml + .ini files under source_dir as
+    {relative_path: content}. Skips __pycache__ and .git."""
+    out = {}
+    root_abs = os.path.abspath(source_dir)
+    if not os.path.isdir(root_abs):
+        print(f"error: --source path does not exist or is not a directory: {source_dir}", file=sys.stderr)
+        sys.exit(2)
+    for r, dirs, files in os.walk(root_abs):
+        dirs[:] = [d for d in dirs if d != "__pycache__" and not d.startswith(".")]
+        for f in files:
+            if not (f.endswith(".py") or f.endswith(".toml") or f.endswith(".ini")):
+                continue
+            full = os.path.join(r, f)
+            try:
+                content = open(full, "r", encoding="utf-8").read()
+            except Exception:
+                continue
+            rel = os.path.relpath(full, root_abs)
+            out[rel] = content
+    return out
+
+
+def cmd_route(args) -> int:
+    """Preview the routing decision without actually running."""
+    from ystar.czl.task_router import get_default_router
+    # Trigger scenario registrations
+    from ystar.czl import scenarios as _  # noqa: F401
+    router = get_default_router()
+    source_files = _load_source_files(args.source) if args.source else {}
+    name, confidence, reason = router.route(args.task, source_files)
+    print(json.dumps({
+        "selected_scenario": name,
+        "confidence": round(confidence, 3),
+        "reason": reason,
+        "n_source_files": len(source_files),
+        "available_scenarios": list(router.scenarios.keys()),
+    }, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_run(args) -> int:
+    """Auto-route the task to a scenario, then execute one CZL run."""
+    from ystar.czl.task_router import get_default_router
+    from ystar.czl.loop import CZLRun, run_scenario
+    from ystar.czl.scenarios.base import ScenarioRegistry
+    from ystar.czl.backends import BackendRegistry, AnthropicBackend, DeepSeekBackend, OllamaBackend
+    # Trigger registrations
+    from ystar.czl import scenarios as _scenarios  # noqa: F401
+    from ystar.czl import backends as _backends  # noqa: F401
+
+    source_files = _load_source_files(args.source) if args.source else {}
+    router = get_default_router()
+    scenario_name, confidence, reason = router.route(args.task, source_files)
+    print(f"[trampoline] routed to scenario '{scenario_name}' (confidence {confidence:.2f}); {reason}")
+
+    scenario = ScenarioRegistry.get(scenario_name)
+    if scenario is None:
+        print(f"error: scenario '{scenario_name}' not in registry", file=sys.stderr)
+        return 3
+
+    backend_name = args.backend
+    backend = BackendRegistry.get(backend_name)
+    if backend is None:
+        # Try a sensible default order
+        for cand in ("anthropic", "deepseek", "ollama"):
+            backend = BackendRegistry.get(cand)
+            if backend and (not hasattr(backend, "is_available") or backend.is_available()):
+                print(f"[trampoline] backend defaulted to '{backend.name}'")
+                break
+        if backend is None:
+            print("error: no backend available", file=sys.stderr)
+            return 4
+
+    request = CZLRun(
+        task_description=args.task,
+        scenario=scenario,
+        backend=backend,
+        workspace_dir=os.path.abspath(args.source or "."),
+        max_iterations=args.max_iterations,
+        no_progress_window=args.no_progress_window,
+    )
+    result = run_scenario(request)
+    print()
+    print(f"[trampoline] converged={result.converged} iterations={result.iterations} "
+          f"cost=${result.total_cost_usd:.4f} stopping_authority={result.stopping_authority}")
+    print(result.cost_summary_line)
+    if not result.converged:
+        print(f"[trampoline] failure: {result.failure_reason}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def main() -> int:
+    # ensure repo root is on path when called as `bin/ystar`
+    repo_root = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(repo_root))
+
+    p = argparse.ArgumentParser(prog="ystar", description="Y-star / Trampoline CLI")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    p_tramp = sub.add_parser("trampoline", help="Trampoline / CZL substrate")
+    sub_tramp = p_tramp.add_subparsers(dest="trampoline_cmd", required=True)
+
+    p_run = sub_tramp.add_parser("run", help="Auto-route task to scenario and run CZL loop")
+    p_run.add_argument("--task", required=True, help="natural-language task description")
+    p_run.add_argument("--source", default=".", help="source directory (default: cwd)")
+    p_run.add_argument("--backend", default=None, help="backend name (anthropic / deepseek / ollama / ...)")
+    p_run.add_argument("--max-iterations", type=int, default=50)
+    p_run.add_argument("--no-progress-window", type=int, default=3)
+
+    p_route = sub_tramp.add_parser("route", help="Preview routing without running")
+    p_route.add_argument("--task", required=True)
+    p_route.add_argument("--source", default=".")
+
+    args = p.parse_args()
+    if args.cmd == "trampoline":
+        if args.trampoline_cmd == "run":
+            return cmd_run(args)
+        if args.trampoline_cmd == "route":
+            return cmd_route(args)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

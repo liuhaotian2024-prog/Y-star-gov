@@ -1,9 +1,21 @@
 """
-ystar.czl.scenarios.test_gen_for_existing — v3 scenario #3
+ystar.czl.scenarios.test_gen_for_existing — v3.3 scenario #3
 
 Indie task: write a complete pytest suite for an existing data_pipeline.py
-module. Coverage ≥ 80%, includes edge cases and exception paths. The agent
-may only create test_*.py files; the source data_pipeline.py is read-only.
+module. Coverage ≥ 80%, includes edge cases and exception paths.
+
+v3.3 changes:
+  - B.2/B.3: Coverage80Verifier inherits AdaptiveThresholdVerifier;
+    scenario caches verifier instances in __init__ and calls
+    reset_for_trial() when contract["trial_id"] changes.
+  - D.2: every inline verifier populates VerifierResult.message_natural
+    (multi-line Chinese prose) for small-model audiences.
+  - E.2: every verifier has applies_to_tasks / min_model_capacity /
+    feedback_complexity / known_limitations.
+  - E.3: verify() filters the verifier chain by `contract["model_tier"]`
+    — verifiers whose min_model_capacity exceeds the model_tier are
+    skipped. For gemma 4B (small), mutation_score (medium) is filtered
+    out; branch_coverage (small) remains.
 """
 from __future__ import annotations
 
@@ -12,10 +24,12 @@ import json
 import os
 import subprocess
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ystar.czl.scenarios.base import Scenario, PlanStep, ScenarioRegistry
-from ystar.czl.verifiers.base import Verifier, VerifierResult
+from ystar.czl.verifiers.base import (
+    Verifier, VerifierResult, AdaptiveThresholdVerifier, tier_compatible,
+)
 from ystar.czl.verifiers.contract_verifier import ContractConsistencyVerifier
 from ystar.czl.verifiers.differential_verifier import DifferentialVerifier
 from ystar.czl.verifiers.mutation_score_verifier import MutationScoreVerifier
@@ -110,12 +124,15 @@ TASK_DESCRIPTION = (
 )
 
 
-# === verifiers ===============================================================
+# === inline verifiers (v3.3 with metadata + message_natural) ================
 
 class PytestPassVerifier(Verifier):
     name = "pytest"
+    applies_to_tasks = ["test_generation_for_existing_code", "bug_fix_with_implicit_dependency"]
+    min_model_capacity = "small"
+    feedback_complexity = "low"
 
-    def is_applicable(self, workspace_dir: str) -> bool:
+    def is_applicable(self, workspace_dir: str, contract: Optional[Dict[str, Any]] = None) -> bool:
         for root, _, files in os.walk(workspace_dir):
             if any(f.startswith("test_") and f.endswith(".py") for f in files):
                 return True
@@ -129,22 +146,46 @@ class PytestPassVerifier(Verifier):
                 cwd=workspace_dir, capture_output=True, text=True, timeout=120,
             )
             if proc.returncode == 0:
-                return VerifierResult(verifier_name=self.name, passed=True,
-                                      message="pytest: all pass",
-                                      elapsed_seconds=time.time() - t0)
-            return VerifierResult(verifier_name=self.name, passed=False,
-                                  message="pytest: failures",
-                                  details={"stdout": (proc.stdout or "")[-1500:]},
-                                  elapsed_seconds=time.time() - t0)
+                return VerifierResult(
+                    verifier_name=self.name, passed=True,
+                    message="pytest: all pass",
+                    message_natural="pytest: 所有测试都通过.",
+                    elapsed_seconds=time.time() - t0,
+                )
+            tb = (proc.stdout or "")[-1500:]
+            # Extract failure summary lines for natural feedback
+            fail_lines = [ln for ln in (proc.stdout or "").splitlines()
+                          if " FAILED " in ln or "FAILED " in ln or ln.startswith("E  ")
+                          or ln.lstrip().startswith("assert ")][:10]
+            natural = "pytest: 测试运行失败.\n下面是失败的细节:\n" + "\n".join(f"  {ln}" for ln in fail_lines[:10])
+            return VerifierResult(
+                verifier_name=self.name, passed=False,
+                message="pytest: failures",
+                message_natural=natural,
+                details={"stdout": tb},
+                elapsed_seconds=time.time() - t0,
+            )
         except subprocess.TimeoutExpired:
-            return VerifierResult(verifier_name=self.name, passed=False,
-                                  message="pytest timed out", elapsed_seconds=time.time() - t0)
+            return VerifierResult(
+                verifier_name=self.name, passed=False,
+                message="pytest timed out",
+                message_natural="pytest 超时了 (可能有死循环).",
+                elapsed_seconds=time.time() - t0,
+            )
 
 
-class Coverage80Verifier(Verifier):
+class Coverage80Verifier(AdaptiveThresholdVerifier):
+    """v3.3: now adaptive. target=0.80; floor=0.50. First call records
+    baseline, subsequent calls require baseline + 0.10 (or target)."""
     name = "coverage_80"
+    applies_to_tasks = ["test_generation_for_existing_code"]
+    min_model_capacity = "small"
+    feedback_complexity = "low"
 
-    def is_applicable(self, workspace_dir: str) -> bool:
+    def __init__(self, target: float = 0.80):
+        AdaptiveThresholdVerifier.__init__(self, target_threshold=target, floor_threshold=0.50)
+
+    def is_applicable(self, workspace_dir: str, contract: Optional[Dict[str, Any]] = None) -> bool:
         return os.path.isfile(os.path.join(workspace_dir, "data_pipeline.py"))
 
     def run(self, workspace_dir: str, contract: Dict[str, Any]) -> VerifierResult:
@@ -159,32 +200,69 @@ class Coverage80Verifier(Verifier):
             )
             cov_path = os.path.join(workspace_dir, "coverage.json")
             if not os.path.isfile(cov_path):
-                return VerifierResult(verifier_name=self.name, passed=False,
-                                      message="coverage report missing",
-                                      details={"stdout": (proc.stdout or "")[-1000:]},
-                                      elapsed_seconds=time.time() - t0)
+                return VerifierResult(
+                    verifier_name=self.name, passed=False,
+                    message="coverage report missing",
+                    message_natural="覆盖率报告没生成. 你的测试文件可能没被 pytest 发现, 或测试一上来就报错.",
+                    details={"stdout": (proc.stdout or "")[-1000:]},
+                    elapsed_seconds=time.time() - t0,
+                )
             cov = json.loads(open(cov_path, "r", encoding="utf-8").read())
             pct = cov.get("totals", {}).get("percent_covered", 0.0)
-            passed = pct >= 80.0
+            # Missing lines from coverage report
+            missing_lines: List[Any] = []
+            for fp, fdata in (cov.get("files") or {}).items():
+                missing_lines.extend(fdata.get("missing_lines", [])[:10])
+            passed_adaptive, adaptive_msg = self.check_score(pct / 100.0)
+            details = {
+                "percent_covered": pct,
+                "missing_lines": missing_lines[:20],
+                "adaptive_threshold_pct": self.effective_threshold() * 100.0,
+                "adaptive_baseline": self._calibration_score,
+                "adaptive_call_count": self._call_count,
+            }
+            if passed_adaptive:
+                return VerifierResult(
+                    verifier_name=self.name, passed=True,
+                    message=f"coverage: {pct:.1f}% — {adaptive_msg}",
+                    message_natural=f"行覆盖率 {pct:.0f}%. {adaptive_msg}.",
+                    details=details, elapsed_seconds=time.time() - t0,
+                )
             return VerifierResult(
-                verifier_name=self.name, passed=passed,
-                message=f"coverage: {pct:.1f}% (need ≥80%)",
-                details={"percent_covered": pct},
+                verifier_name=self.name, passed=False,
+                message=f"coverage: {pct:.1f}% — {adaptive_msg}",
+                message_natural=(
+                    f"行覆盖率: {pct:.0f}% (需要 {self.effective_threshold()*100:.0f}%). "
+                    f"下面这些行还没被任何测试执行到:\n"
+                    + "\n".join(f"  data_pipeline.py 第 {ln} 行" for ln in missing_lines[:8])
+                    + "\n修正方向: 给这些行写专门的 test_xxx 函数 (重点关注 try/except 分支 + edge case)."
+                ),
+                details=details,
                 elapsed_seconds=time.time() - t0,
             )
         except subprocess.TimeoutExpired:
-            return VerifierResult(verifier_name=self.name, passed=False,
-                                  message="coverage run timed out", elapsed_seconds=time.time() - t0)
+            return VerifierResult(
+                verifier_name=self.name, passed=False,
+                message="coverage run timed out",
+                message_natural="覆盖率测试运行超时.",
+                elapsed_seconds=time.time() - t0,
+            )
         except Exception as e:
-            return VerifierResult(verifier_name=self.name, passed=False,
-                                  message=f"coverage check failed: {e}", elapsed_seconds=time.time() - t0)
+            return VerifierResult(
+                verifier_name=self.name, passed=False,
+                message=f"coverage check failed: {e}",
+                message_natural=f"覆盖率检查异常: {e}",
+                elapsed_seconds=time.time() - t0,
+            )
 
 
 class HasExceptionTestsVerifier(Verifier):
-    """At least one test uses pytest.raises (or with-pytest.raises ctx)."""
     name = "has_exception_tests"
+    applies_to_tasks = ["test_generation_for_existing_code"]
+    min_model_capacity = "small"
+    feedback_complexity = "low"
 
-    def is_applicable(self, workspace_dir: str) -> bool:
+    def is_applicable(self, workspace_dir: str, contract: Optional[Dict[str, Any]] = None) -> bool:
         return True
 
     def run(self, workspace_dir: str, contract: Dict[str, Any]) -> VerifierResult:
@@ -196,9 +274,8 @@ class HasExceptionTestsVerifier(Verifier):
             for f in files:
                 if not (f.startswith("test_") and f.endswith(".py")):
                     continue
-                p = os.path.join(root, f)
                 try:
-                    body = open(p, "r", encoding="utf-8").read()
+                    body = open(os.path.join(root, f), "r", encoding="utf-8").read()
                 except Exception:
                     continue
                 n += body.count("pytest.raises")
@@ -206,6 +283,13 @@ class HasExceptionTestsVerifier(Verifier):
         return VerifierResult(
             verifier_name=self.name, passed=passed,
             message=("≥1 pytest.raises found" if passed else "no pytest.raises found"),
+            message_natural=(
+                f"找到 {n} 个使用 `pytest.raises` 的异常路径测试."
+                if passed
+                else "测试里没有任何 `with pytest.raises(...)` 块. "
+                     "请至少加一个测试: 用 `pytest.raises(ValueError)` 检查 normalize_email('') 会抛异常. "
+                     "也建议覆盖 validate_record 缺字段 / 类型错的情况."
+            ),
             details={"pytest_raises_count": n},
             elapsed_seconds=time.time() - t0,
         )
@@ -218,10 +302,34 @@ class TestGenForExistingScenario(Scenario):
     description = "Write pytest tests for data_pipeline.py; coverage ≥ 80%; exception paths covered"
     default_max_iterations = 6
 
-    # Captured per verify() call so the bench harness can inspect that
-    # mutation_score only fires after inner verifiers all pass (Phase-4
-    # checkpoint 4). Reset at the start of every verify().
+    # v3.3 B.3: cached verifier instances. Live for the lifetime of the
+    # singleton scenario; reset_for_trial called when trial_id changes.
     _last_verifier_call_order: List[str] = []
+
+    def __init__(self) -> None:
+        # Cache instances so AdaptiveThresholdVerifier subclasses retain
+        # calibration state across iterations within one trial.
+        self._cached_pytest = PytestPassVerifier()
+        self._cached_coverage80 = Coverage80Verifier(target=0.80)
+        self._cached_has_exc = HasExceptionTestsVerifier()
+        self._cached_contract = ContractConsistencyVerifier()
+        self._cached_differential = DifferentialVerifier()
+        self._cached_mutation = MutationScoreVerifier(score_threshold=0.7)
+        self._cached_branch = BranchCoverageVerifier(threshold=0.70)
+        self._last_trial_id: Optional[str] = None
+
+    # --- v3.3 helper for B.3 -------------------------------------------------
+    def _all_cached_verifiers(self) -> List[Verifier]:
+        return [self._cached_pytest, self._cached_coverage80, self._cached_has_exc,
+                self._cached_contract, self._cached_differential,
+                self._cached_mutation, self._cached_branch]
+
+    def _reset_if_new_trial(self, contract: Dict[str, Any]) -> None:
+        tid = (contract or {}).get("trial_id")
+        if tid is not None and tid != self._last_trial_id:
+            for v in self._all_cached_verifiers():
+                v.reset_for_trial()
+            self._last_trial_id = tid
 
     def y_star_invariants(self) -> Dict[str, Any]:
         return {
@@ -233,10 +341,6 @@ class TestGenForExistingScenario(Scenario):
             ],
             "only_paths": ["./"],
             "deny": [".env", ".git/", "secrets"],
-            # Phase-4 mutation-score gate metadata. _mutation_unconditional
-            # intentionally omitted (defaults to False); production uses
-            # selective git-diff to gate activation (which counts test-file
-            # writes too, since model produces tests not source here).
             "_mutation_target_file": "data_pipeline.py",
             "_mutation_test_command": "python3.11 -m pytest -x -q --tb=no --no-header",
             "_mutation_target_wall_seconds": 10.0,
@@ -275,34 +379,39 @@ class TestGenForExistingScenario(Scenario):
         )]
 
     def verify(self, workspace_dir: str, contract: Dict[str, Any]) -> List[VerifierResult]:
-        """v3.2 verifier chain:
+        """v3.3 verifier chain:
 
-            pytest_pass -> coverage80 -> has_exception_tests
-            -> contract_consistency -> differential   (the inner verifiers)
-            -> [if all inner passed]  mutation_score + branch_coverage
-                                       (parallel final gates)
+          pytest_pass → coverage80 → has_exception_tests
+          → contract_consistency → differential   (inner)
+          → [if all inner passed] {mutation_score, branch_coverage}
+            (parallel final gates, filtered by model_tier)
 
-        v3.1 → v3.2 change: branch_coverage is added as a SECOND parallel
-        final gate alongside mutation_score. Both fire in the same iter
-        when inner verifiers pass; either failure returns passed=False so
-        CZL iterates with combined feedback. They are NOT serialised — at
-        most one extra iter per failure, no cascade. This is the v3.2
-        defense against the v3.1 sample where test_coverage_pct=100 but
-        mutation_score=0.93 caused weak-test convergence on Sonnet's
-        judgment band.
+        - B.3: cached verifier instances; reset_for_trial when trial_id changes.
+        - E.3: chain composition filtered by model_tier — small tier
+          (gemma 4B) skips mutation_score (min_capacity="medium"); branch_coverage
+          (min_capacity="small") remains.
+        - D.3: feedback layer chosen by loop.render_feedback_by_tier; we
+          just emit results, the loop reads message_natural for small models.
         """
+        contract = contract or {}
+        self._reset_if_new_trial(contract)
+        model_tier = contract.get("model_tier", "medium")
+
         results: List[VerifierResult] = []
         call_order: List[str] = []
 
-        inner = [
-            PytestPassVerifier(),
-            Coverage80Verifier(),
-            HasExceptionTestsVerifier(),
-            ContractConsistencyVerifier(),
-            DifferentialVerifier(),
+        inner_candidates: List[Verifier] = [
+            self._cached_pytest, self._cached_coverage80, self._cached_has_exc,
+            self._cached_contract, self._cached_differential,
         ]
+        # E.3 filter
+        inner = [v for v in inner_candidates if tier_compatible(v.min_model_capacity, model_tier)]
         for v in inner:
-            if not v.is_applicable(workspace_dir):
+            try:
+                applicable = v.is_applicable(workspace_dir, contract)
+            except TypeError:
+                applicable = v.is_applicable(workspace_dir)  # legacy signature
+            if not applicable:
                 continue
             r = v.run(workspace_dir, contract)
             results.append(r)
@@ -311,17 +420,14 @@ class TestGenForExistingScenario(Scenario):
         all_inner_passed = bool(results) and all(r.passed for r in results)
 
         if all_inner_passed:
-            target_wall = float((contract or {}).get("_mutation_target_wall_seconds") or 10.0)
-            final_gates = [
-                MutationScoreVerifier(target_wall_seconds=target_wall, score_threshold=0.7),
-                BranchCoverageVerifier(threshold=0.70),
-            ]
+            final_candidates: List[Verifier] = [self._cached_mutation, self._cached_branch]
+            final_gates = [v for v in final_candidates
+                           if tier_compatible(v.min_model_capacity, model_tier)]
             for fg in final_gates:
-                applicable = (
-                    fg.is_applicable(workspace_dir, contract)
-                    if fg.name == "mutation_score"
-                    else fg.is_applicable(workspace_dir, contract)
-                )
+                try:
+                    applicable = fg.is_applicable(workspace_dir, contract)
+                except TypeError:
+                    applicable = fg.is_applicable(workspace_dir)
                 if applicable:
                     fr = fg.run(workspace_dir, contract)
                     results.append(fr)
