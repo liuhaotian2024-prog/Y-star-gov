@@ -1,0 +1,38 @@
+{
+  "scenario": "type_annotation_completion",
+  "n_records": 35,
+  "objective_means_by_arm": {
+    "C1": {
+      "cyclomatic_complexity_avg": 2.75,
+      "duplicated_lines_pct": 0.0,
+      "mypy_strict_type_coverage_pct": 100.0
+    },
+    "C2": {
+      "cyclomatic_complexity_avg": 2.75,
+      "duplicated_lines_pct": 0.0,
+      "mypy_strict_type_coverage_pct": 100.0
+    },
+    "A2": {
+      "cyclomatic_complexity_avg": 3.33,
+      "duplicated_lines_pct": 0.0,
+      "mypy_strict_type_coverage_pct": 100.0
+    },
+    "D2": {
+      "cyclomatic_complexity_avg": 3.33,
+      "duplicated_lines_pct": 0.0,
+      "mypy_strict_type_coverage_pct": 100.0
+    },
+    "B2": {
+      "cyclomatic_complexity_avg": 3.33,
+      "duplicated_lines_pct": 0.0,
+      "mypy_strict_type_coverage_pct": 100.0
+    }
+  },
+  "four_dim_judge": [],
+  "a_vs_a2_judge": {
+    "scores": null,
+    "reason": "no_a_or_a2_converged"
+  },
+  "n_anonymized": 35,
+  "total_judge_cost_usd": 0.0
+}
