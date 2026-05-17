@@ -12,10 +12,6 @@ license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
-
-[project.optional-dependencies]
-czl = ["litellm>=1.40.0"]
-
 keywords = [
     "ai-governance",
     "agent-safety",
@@ -34,7 +30,6 @@ keywords = [
     "claude-code",
     "openclaw",
 ]
-
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -52,6 +47,9 @@ classifiers = [
     "Topic :: Software Development :: Testing",
     "Typing :: Typed",
 ]
+
+[project.optional-dependencies]
+czl = ["litellm>=1.40.0"]
 
 [project.urls]
 Homepage = "https://github.com/liuhaotian2024-prog/Y-star-gov"
