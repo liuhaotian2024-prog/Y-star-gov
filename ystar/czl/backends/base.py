@@ -308,6 +308,11 @@ _EDIT_BLOCK_RE = re.compile(
     re.DOTALL,
 )
 _RUN_BLOCK_RE = re.compile(r"```run\n(?P<body>.*?)```", re.DOTALL)
+# v4.0 T3: probe blocks. No path — the command IS the body. Distinct from
+# `run` because `run` is the legacy single-command-no-path action; probe
+# semantically requests a READ-ONLY observation that does NOT modify
+# workspace state (loop captures stdout/stderr and feeds to next iter).
+_PROBE_BLOCK_RE = re.compile(r"```probe\n(?P<body>.*?)```", re.DOTALL)
 
 
 def _parse_actions_from_text(text: str) -> List[BackendAction]:
@@ -333,6 +338,13 @@ def _parse_actions_from_text(text: str) -> List[BackendAction]:
     for m in _RUN_BLOCK_RE.finditer(text):
         actions.append(BackendAction(
             type="run_command",
+            payload={"command": m.group("body").strip()},
+        ))
+
+    # v4.0 T3: probe blocks (no path, read-only observation)
+    for m in _PROBE_BLOCK_RE.finditer(text):
+        actions.append(BackendAction(
+            type="probe_command",
             payload={"command": m.group("body").strip()},
         ))
 

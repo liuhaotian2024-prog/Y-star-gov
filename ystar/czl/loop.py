@@ -142,6 +142,8 @@ class CZLResult:
     iter_prompts: List[str] = field(default_factory=list)
     # v3.7 T1: per-iter snapshots for rollback diagnostics
     iter_snapshots: List[Dict[str, Any]] = field(default_factory=list)
+    # v4.0 T4: per-iter probe executions (List[List[probe_result_dict]])
+    iter_probes: List[List[Dict[str, Any]]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         d = dict(self.__dict__)
@@ -314,13 +316,18 @@ def run_scenario(
         step = plan_steps[min(step_idx, len(plan_steps) - 1)]
         result.iterations = step_idx + 1
 
-        # v3.7 T2: capture the full prompt the model sees this iter
-        # (system + user + feedback_block incl. any META) so trial-level
-        # diagnostics can verify "did the model actually see regression
-        # META at iter N?". Append BEFORE invoke so any backend exception
-        # still leaves a record.
+        # v3.7 T2: capture the full prompt the model sees this iter.
+        # v4.0 T4: prepend prior iter's probe results so the model sees
+        # what it observed last time. Order: probes → task prompt → feedback.
+        probe_section = ""
+        if step_idx > 0 and (step_idx - 1) < len(result.iter_probes) and result.iter_probes[step_idx - 1]:
+            from ystar.czl.probe import render_probe_results_block
+            probe_section = render_probe_results_block(
+                step_idx - 1, result.iter_probes[step_idx - 1]
+            ) + "\n\n"
         composed_user_prompt = (
-            step.user_prompt
+            probe_section
+            + step.user_prompt
             + ("\n\n" + feedback_block if feedback_block else "")
         )
         result.iter_prompts.append(
@@ -338,7 +345,11 @@ def run_scenario(
         result.total_output_tokens += backend_response.output_tokens
         result.total_cost_usd += backend_response.cost_usd
 
-        # 4b. apply the backend's proposed actions, gated by boundary_enforcer
+        # 4b. apply the backend's proposed actions, gated by boundary_enforcer.
+        # v4.0 T4: probe_command actions are handled separately — they do
+        # NOT touch workspace state; ProbeExecutor runs them and the
+        # result is fed back to the next iter's prompt.
+        this_iter_probes: List[Dict[str, Any]] = []
         for action in backend_response.actions:
             cieu_event = _build_cieu_event(
                 run_id=request.run_id,
@@ -350,8 +361,26 @@ def run_scenario(
             allowed = _enforce_boundary(action, contract_dict)
             cieu_event["decision"] = DECISION_ALLOW if allowed else DECISION_DENY
             result.cieu_events.append(cieu_event)
-            if allowed:
+            if not allowed:
+                continue
+            action_type = getattr(action, "type", None) or (
+                action.get("type") if isinstance(action, dict) else None
+            )
+            if action_type == "probe_command":
+                # v4.0 T4: execute probe, capture for next iter's prompt
+                from ystar.czl.probe import ProbeExecutor
+                if "_probe_executor" not in dir(result):
+                    pass  # lazy init below
+                payload = action.payload if hasattr(action, "payload") else action
+                cmd = (payload or {}).get("command", "")
+                executor = ProbeExecutor(workspace_dir=request.workspace_dir)
+                pr = executor.run(cmd)
+                this_iter_probes.append(pr.to_dict())
+            else:
                 request.scenario.apply_action(action, request.workspace_dir)
+        # Append this iter's probe results (always — even if empty) so
+        # iter index aligns with result.iter_probes[step_idx].
+        result.iter_probes.append(this_iter_probes)
 
         # 4c. run scenario verifiers → compute Rt+1
         verifier_results = request.scenario.verify(request.workspace_dir, contract_dict)

@@ -593,12 +593,20 @@ class TestGenForExistingScenario(Scenario):
 
     def plan(self, task_description: str, workspace_dir: str,
              contract: Optional[Dict[str, Any]] = None) -> List[PlanStep]:
-        """v3.4 T1: small tier gets ADD-only prompt; large/medium get full-rewrite."""
+        """v3.4 T1: small tier gets ADD-only prompt; large/medium get full-rewrite.
+        v4.0 T5: prepend environment inventory + probe tool description.
+        """
         contract = contract or {}
         model_tier = contract.get("model_tier", self._last_model_tier)
         # cache for next call
         self._last_model_tier = model_tier
         is_small = model_tier in ("small", "tiny", "local")
+
+        # v4.0 T5: environment inventory section at the very top.
+        from ystar.czl.inventory import WorkspaceInventory
+        from ystar.czl.scenarios.base import render_environment_inventory
+        _inv = WorkspaceInventory.scan(workspace_dir)
+        inventory_section = render_environment_inventory(_inv)
 
         path = os.path.join(workspace_dir, "data_pipeline.py")
         body = open(path, "r", encoding="utf-8").read() if os.path.isfile(path) else "(missing)"
@@ -673,10 +681,11 @@ class TestGenForExistingScenario(Scenario):
                 "(You can use pytest's tmp_path fixture for the file-loading tests.)\n"
             )
 
+        # v4.0 T5: prepend inventory + probe tool description to the user_prompt
         return [PlanStep(
             step_id="write_tests",
-            user_prompt=user_prompt,
-            expected_action_types=["create_file", "edit_file", "add_tests_file"],
+            user_prompt=inventory_section + "\n\n" + user_prompt,
+            expected_action_types=["create_file", "edit_file", "add_tests_file", "probe_command"],
         )]
 
     def verify(self, workspace_dir: str, contract: Dict[str, Any]) -> List[VerifierResult]:

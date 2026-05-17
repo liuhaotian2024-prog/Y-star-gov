@@ -157,6 +157,92 @@ class Scenario(ABC):
         return f"<Scenario {self.name}>"
 
 
+# === v4.0 T5: environment inventory prompt helper ============================
+# Pure render of WorkspaceInventory.scan() output. No recommendations. No
+# scenario-specific bias. The model reads facts and decides what to do.
+
+def render_environment_inventory(inventory: Dict[str, Any]) -> str:
+    """Render a fact-only environment section, plus a universal `probe`
+    tool description. Used by scenario.plan() — prepended to user_prompt.
+    """
+    lines: List[str] = ["## Environment inventory (auto-discovered, no recommendations)", ""]
+
+    # Files
+    files = inventory.get("files") or []
+    lines.append("### Files in workspace")
+    if files:
+        for f in files:
+            lines.append(f"  - {f}")
+    else:
+        lines.append("  (none)")
+
+    # Interpreters
+    interps = inventory.get("interpreters") or {}
+    lines.append("")
+    lines.append("### Commands available on this system")
+    if interps:
+        for cmd, path in sorted(interps.items()):
+            lines.append(f"  - {cmd}  ({path})")
+    else:
+        lines.append("  (none detected)")
+
+    # Source interfaces
+    src = inventory.get("source_interfaces") or {}
+    if src:
+        lines.append("")
+        lines.append("### Source code interfaces (auto-extracted from AST)")
+        for filename, info in src.items():
+            if isinstance(info, dict) and "error" in info:
+                continue
+            lines.append("")
+            lines.append(f"  {filename}:")
+            for fn in (info.get("functions") or []):
+                lines.append(f"    - {fn['name']}{fn.get('signature', '(?)')}")
+                doc = fn.get("docstring_first_line")
+                if doc:
+                    lines.append(f"      doc: {doc}")
+            for cls in (info.get("classes") or []):
+                lines.append(f"    - class {cls['name']}")
+
+    # Probe tool description — generic, no recommendations.
+    lines.append("")
+    lines.append("### Probe tool")
+    lines.append("")
+    lines.append(
+        "You can execute any shell command in the workspace before writing code. "
+        "This is faster and more reliable than guessing what a function returns "
+        "or how a tool behaves. Use the probe block format:"
+    )
+    lines.append("")
+    lines.append("```probe")
+    lines.append("{any shell command here}")
+    lines.append("```")
+    lines.append("")
+    lines.append("Examples (these are not recommendations — they show the format):")
+    lines.append("")
+    lines.append("```probe")
+    lines.append('python3.11 -c "from data_pipeline import aggregate_by_domain; '
+                 'print(repr(aggregate_by_domain([{\'email\':\'a@x.com\'}])))"')
+    lines.append("```")
+    lines.append("")
+    lines.append("```probe")
+    lines.append("pytest test_data_pipeline.py::test_specific -v --tb=short")
+    lines.append("```")
+    lines.append("")
+    lines.append("```probe")
+    lines.append("ls -la")
+    lines.append("cat data_pipeline.py | head -30")
+    lines.append("```")
+    lines.append("")
+    lines.append(
+        "After your probe block(s), write code in the normal output block "
+        "(```add_tests``` for test_generation, ```edit``` for other scenarios). "
+        "You may probe multiple times across multiple iters — there's no per-iter "
+        "limit. Probe whenever you're unsure about anything."
+    )
+    return "\n".join(lines)
+
+
 # === registry ================================================================
 
 class ScenarioRegistry:
