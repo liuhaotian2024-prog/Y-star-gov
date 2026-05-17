@@ -205,6 +205,10 @@ def run_one_trial(
         "trial": trial_idx,
         "backend": backend.name,
         "use_czl": arm_cfg["use_czl"],
+        # task_description added in v3.2 — without it, A-vs-A2 专项 Sonnet
+        # judge sees empty task context and audit replay is incomplete.
+        # See CIEU `step_v3_1_trial_schema_missing_task_description`.
+        "task_description": task_description,
         "converged": False,
         "iterations": 0,
         "wall_clock_seconds": 0.0,

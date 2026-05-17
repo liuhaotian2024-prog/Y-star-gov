@@ -19,6 +19,7 @@ from ystar.czl.verifiers.base import Verifier, VerifierResult
 from ystar.czl.verifiers.contract_verifier import ContractConsistencyVerifier
 from ystar.czl.verifiers.differential_verifier import DifferentialVerifier
 from ystar.czl.verifiers.mutation_score_verifier import MutationScoreVerifier
+from ystar.czl.verifiers.branch_coverage_verifier import BranchCoverageVerifier
 
 
 # === workspace fixture =======================================================
@@ -274,16 +275,21 @@ class TestGenForExistingScenario(Scenario):
         )]
 
     def verify(self, workspace_dir: str, contract: Dict[str, Any]) -> List[VerifierResult]:
-        """v3 + Phase-4 verifier chain:
+        """v3.2 verifier chain:
 
             pytest_pass -> coverage80 -> has_exception_tests
             -> contract_consistency -> differential   (the inner verifiers)
-            -> [if all inner passed]  mutation_score  (final gate)
+            -> [if all inner passed]  mutation_score + branch_coverage
+                                       (parallel final gates)
 
-        Final-gate logic: mutation_score runs ONLY when every inner
-        verifier passed. A failure at the gate returns passed=False so
-        the CZL loop iterates once more with the surviving-mutants diff as
-        feedback; no_progress halt protects against unbounded retries.
+        v3.1 → v3.2 change: branch_coverage is added as a SECOND parallel
+        final gate alongside mutation_score. Both fire in the same iter
+        when inner verifiers pass; either failure returns passed=False so
+        CZL iterates with combined feedback. They are NOT serialised — at
+        most one extra iter per failure, no cascade. This is the v3.2
+        defense against the v3.1 sample where test_coverage_pct=100 but
+        mutation_score=0.93 caused weak-test convergence on Sonnet's
+        judgment band.
         """
         results: List[VerifierResult] = []
         call_order: List[str] = []
@@ -306,11 +312,20 @@ class TestGenForExistingScenario(Scenario):
 
         if all_inner_passed:
             target_wall = float((contract or {}).get("_mutation_target_wall_seconds") or 10.0)
-            mut = MutationScoreVerifier(target_wall_seconds=target_wall, score_threshold=0.7)
-            if mut.is_applicable(workspace_dir, contract):
-                mr = mut.run(workspace_dir, contract)
-                results.append(mr)
-                call_order.append(mut.name)
+            final_gates = [
+                MutationScoreVerifier(target_wall_seconds=target_wall, score_threshold=0.7),
+                BranchCoverageVerifier(threshold=0.70),
+            ]
+            for fg in final_gates:
+                applicable = (
+                    fg.is_applicable(workspace_dir, contract)
+                    if fg.name == "mutation_score"
+                    else fg.is_applicable(workspace_dir, contract)
+                )
+                if applicable:
+                    fr = fg.run(workspace_dir, contract)
+                    results.append(fr)
+                    call_order.append(fg.name)
 
         self._last_verifier_call_order = list(call_order)
         return results

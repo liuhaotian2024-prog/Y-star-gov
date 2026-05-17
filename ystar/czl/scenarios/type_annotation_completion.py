@@ -1,10 +1,23 @@
 """
-ystar.czl.scenarios.type_annotation_completion — v3 scenario #2
+ystar.czl.scenarios.type_annotation_completion — v3.2 (redesigned)
 
 Indie task: add type annotations to an untyped Python module so it passes
-mypy --strict. Behaviour must be preserved. Tests must still pass. AST
-check ensures function SIGNATURES are not changed (param names, default
-values, *args/**kwargs preserved); only annotations can be added.
+mypy --strict. v3 + v3.1 fixture was self-contradictory (forbade ANY
+signature change, but mypy strict requires adding annotations which IS a
+signature change). v3.2 redesigns:
+
+  1. New fixture `data_processor.py` (3 functions, no class) — narrower
+     surface, easier to reason about + verify.
+  2. `FunctionSignatureFrozenVerifier` acquires `mode` parameter:
+       - "full" (default, preserves v3 behaviour)
+       - "name_and_arity_only" (v3.2): checks function names + param COUNT
+         only. Param names can change. Annotations naturally allowed
+         since they don't affect arity.
+  3. New task wording explicitly permits annotations, forbids rename /
+     reorder / default-change / add/remove params.
+
+CIEU record `step_type_annotation_fixture_redesign` documents the r=1
+catch and rationale.
 """
 from __future__ import annotations
 
@@ -12,191 +25,110 @@ import ast
 import os
 import subprocess
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ystar.czl.scenarios.base import Scenario, PlanStep, ScenarioRegistry
 from ystar.czl.verifiers.base import Verifier, VerifierResult
 
 
-# === workspace fixture =======================================================
-# A realistic ~200 line module that exercises Optional, Union, Protocol,
-# TypeVar, plus list/dict containers. Untyped at baseline.
+# === workspace fixture (v3.2) ================================================
+# 3 small functions — filter / aggregate / count — that need annotations.
+# Easier for an 8B model to reason about than the 12-function v3 class +
+# top-level module. Mypy --strict will demand annotations on all 3.
 
 BASELINE_FILES: Dict[str, str] = {
-    "data_ops.py": (
-        "from collections import defaultdict\n"
+    "data_processor.py": (
+        "def filter_active_users(users):\n"
+        "    return [u for u in users if u.get('active')]\n"
         "\n"
         "\n"
-        "class Cache:\n"
-        "    def __init__(self):\n"
-        "        self._store = {}\n"
-        "\n"
-        "    def get(self, key, default=None):\n"
-        "        return self._store.get(key, default)\n"
-        "\n"
-        "    def put(self, key, value):\n"
-        "        self._store[key] = value\n"
-        "\n"
-        "    def remove(self, key):\n"
-        "        return self._store.pop(key, None)\n"
-        "\n"
-        "    def keys(self):\n"
-        "        return list(self._store.keys())\n"
+        "def compute_avg_age(users):\n"
+        "    ages = [u['age'] for u in users if 'age' in u]\n"
+        "    if not ages:\n"
+        "        return 0.0\n"
+        "    return sum(ages) / len(ages)\n"
         "\n"
         "\n"
-        "def normalize_record(row):\n"
-        "    out = {}\n"
-        "    for k, v in row.items():\n"
-        "        if isinstance(v, str):\n"
-        "            out[k] = v.strip().lower()\n"
-        "        else:\n"
-        "            out[k] = v\n"
-        "    return out\n"
-        "\n"
-        "\n"
-        "def merge_dicts(a, b):\n"
-        "    result = dict(a)\n"
-        "    result.update(b)\n"
-        "    return result\n"
-        "\n"
-        "\n"
-        "def group_by(items, key_fn):\n"
-        "    groups = defaultdict(list)\n"
-        "    for item in items:\n"
-        "        groups[key_fn(item)].append(item)\n"
-        "    return dict(groups)\n"
-        "\n"
-        "\n"
-        "def first_or_none(items):\n"
-        "    return items[0] if items else None\n"
-        "\n"
-        "\n"
-        "def find_one(items, predicate):\n"
-        "    for x in items:\n"
-        "        if predicate(x):\n"
-        "            return x\n"
-        "    return None\n"
-        "\n"
-        "\n"
-        "def filter_keys(d, allowed):\n"
-        "    return {k: v for k, v in d.items() if k in allowed}\n"
-        "\n"
-        "\n"
-        "def safe_int(value, default=0):\n"
-        "    try:\n"
-        "        return int(value)\n"
-        "    except (TypeError, ValueError):\n"
-        "        return default\n"
-        "\n"
-        "\n"
-        "def chunked(items, size):\n"
-        "    return [items[i:i + size] for i in range(0, len(items), size)]\n"
-        "\n"
-        "\n"
-        "def flatten(nested):\n"
-        "    out = []\n"
-        "    for sub in nested:\n"
-        "        out.extend(sub)\n"
-        "    return out\n"
-        "\n"
-        "\n"
-        "def histogram(items):\n"
+        "def count_by_domain(emails):\n"
         "    counts = {}\n"
-        "    for x in items:\n"
-        "        counts[x] = counts.get(x, 0) + 1\n"
+        "    for e in emails:\n"
+        "        if '@' not in e:\n"
+        "            continue\n"
+        "        d = e.split('@', 1)[1].lower()\n"
+        "        counts[d] = counts.get(d, 0) + 1\n"
         "    return counts\n"
-        "\n"
-        "\n"
-        "def best_by(items, score_fn):\n"
-        "    best = None\n"
-        "    best_score = None\n"
-        "    for x in items:\n"
-        "        score = score_fn(x)\n"
-        "        if best is None or score > best_score:\n"
-        "            best = x\n"
-        "            best_score = score\n"
-        "    return best\n"
     ),
     "mypy.ini": (
         "[mypy]\n"
         "strict = True\n"
         "disallow_untyped_defs = True\n"
         "disallow_incomplete_defs = True\n"
-        "disallow_untyped_decorators = True\n"
         "no_implicit_optional = True\n"
         "warn_redundant_casts = True\n"
         "warn_unused_ignores = True\n"
     ),
-    "test_data_ops.py": (
-        "from data_ops import (\n"
-        "    Cache, normalize_record, merge_dicts, group_by,\n"
-        "    first_or_none, find_one, filter_keys, safe_int,\n"
-        "    chunked, flatten, histogram, best_by,\n"
-        ")\n"
+    # 11 asserts across 9 test functions
+    "test_data_processor.py": (
+        "from data_processor import filter_active_users, compute_avg_age, count_by_domain\n"
         "\n"
         "\n"
-        "def test_cache_put_get():\n"
-        "    c = Cache()\n"
-        "    c.put('a', 1)\n"
-        "    assert c.get('a') == 1\n"
-        "    assert c.get('missing') is None\n"
+        "def test_filter_active_basic():\n"
+        "    out = filter_active_users([{'id': 1, 'active': True}, {'id': 2, 'active': False}])\n"
+        "    assert len(out) == 1\n"
+        "    assert out[0]['id'] == 1\n"
         "\n"
         "\n"
-        "def test_normalize_record():\n"
-        "    assert normalize_record({'Name': '  Bob  ', 'age': 30}) == {'Name': 'bob', 'age': 30}\n"
+        "def test_filter_active_empty():\n"
+        "    assert filter_active_users([]) == []\n"
         "\n"
         "\n"
-        "def test_merge_dicts():\n"
-        "    assert merge_dicts({'a': 1}, {'b': 2}) == {'a': 1, 'b': 2}\n"
+        "def test_filter_active_missing_field():\n"
+        "    assert filter_active_users([{'id': 1}]) == []\n"
         "\n"
         "\n"
-        "def test_group_by():\n"
-        "    g = group_by([1, 2, 3, 4], lambda x: x % 2)\n"
-        "    assert g[0] == [2, 4]\n"
-        "    assert g[1] == [1, 3]\n"
+        "def test_compute_avg_age_basic():\n"
+        "    assert compute_avg_age([{'age': 20}, {'age': 30}]) == 25.0\n"
         "\n"
         "\n"
-        "def test_first_or_none():\n"
-        "    assert first_or_none([1, 2]) == 1\n"
-        "    assert first_or_none([]) is None\n"
+        "def test_compute_avg_age_empty():\n"
+        "    assert compute_avg_age([]) == 0.0\n"
         "\n"
         "\n"
-        "def test_find_one():\n"
-        "    assert find_one([1, 2, 3], lambda x: x > 1) == 2\n"
-        "    assert find_one([1, 2, 3], lambda x: x > 10) is None\n"
+        "def test_compute_avg_age_skip_missing():\n"
+        "    assert compute_avg_age([{'age': 20}, {'name': 'x'}]) == 20.0\n"
         "\n"
         "\n"
-        "def test_filter_keys():\n"
-        "    assert filter_keys({'a': 1, 'b': 2}, {'a'}) == {'a': 1}\n"
+        "def test_count_by_domain_basic():\n"
+        "    out = count_by_domain(['a@x.com', 'b@x.com', 'c@y.com'])\n"
+        "    assert out['x.com'] == 2\n"
+        "    assert out['y.com'] == 1\n"
         "\n"
         "\n"
-        "def test_safe_int():\n"
-        "    assert safe_int('5') == 5\n"
-        "    assert safe_int('bad', default=-1) == -1\n"
+        "def test_count_by_domain_case_insensitive():\n"
+        "    assert count_by_domain(['A@X.com']) == {'x.com': 1}\n"
         "\n"
         "\n"
-        "def test_chunked():\n"
-        "    assert chunked([1, 2, 3, 4, 5], 2) == [[1, 2], [3, 4], [5]]\n"
-        "\n"
-        "\n"
-        "def test_flatten():\n"
-        "    assert flatten([[1, 2], [3]]) == [1, 2, 3]\n"
-        "\n"
-        "\n"
-        "def test_histogram():\n"
-        "    assert histogram(['a', 'b', 'a']) == {'a': 2, 'b': 1}\n"
-        "\n"
-        "\n"
-        "def test_best_by():\n"
-        "    assert best_by([1, 5, 3], lambda x: -x) == 1\n"
+        "def test_count_by_domain_skip_no_at():\n"
+        "    assert count_by_domain(['foo', 'a@x.com']) == {'x.com': 1}\n"
     ),
 }
 
 
 TASK_DESCRIPTION = (
-    "给这个未注解的 Python 模块补齐类型注解，必须通过 mypy --strict。"
-    "不能改变函数行为。"
+    "给 data_processor.py 中的 3 个函数补齐类型注解，必须通过 mypy --strict。"
+    "函数名和参数数量不能改 (不能加/删/重排参数，不能改默认值)；"
+    "参数名可保留或改名都可。"
+    "行为不能变，test_data_processor.py 全部测试必须仍然通过。"
 )
+
+
+# baseline signature map: name → (arity, exact_param_names)
+# v3.2 verifier uses mode="name_and_arity_only" → exact names ignored.
+BASELINE_SIGS_V3_2: Dict[str, Tuple[str, ...]] = {
+    "filter_active_users": ("users",),
+    "compute_avg_age":     ("users",),
+    "count_by_domain":     ("emails",),
+}
 
 
 # === verifiers ===============================================================
@@ -204,14 +136,17 @@ TASK_DESCRIPTION = (
 class MypyStrictVerifier(Verifier):
     name = "mypy_strict"
 
+    def __init__(self, target_file: str = "data_processor.py"):
+        self.target_file = target_file
+
     def is_applicable(self, workspace_dir: str) -> bool:
-        return os.path.isfile(os.path.join(workspace_dir, "data_ops.py"))
+        return os.path.isfile(os.path.join(workspace_dir, self.target_file))
 
     def run(self, workspace_dir: str, contract: Dict[str, Any]) -> VerifierResult:
         t0 = time.time()
         try:
             proc = subprocess.run(
-                ["mypy", "--strict", "--show-error-codes", "--no-error-summary", "."],
+                ["mypy", "--strict", "--show-error-codes", "--no-error-summary", self.target_file],
                 cwd=workspace_dir, capture_output=True, text=True, timeout=120,
             )
             if proc.returncode == 0:
@@ -257,10 +192,24 @@ class PytestPassVerifier(Verifier):
 
 
 class FunctionSignatureFrozenVerifier(Verifier):
-    """Function names + param names + param order + *args/**kwargs unchanged from baseline."""
+    """Frozen function set with two modes:
+
+      - mode="full" (default, preserves v3 behaviour):
+            name + exact param names + order
+      - mode="name_and_arity_only" (v3.2):
+            name + param COUNT only.  Param names can change.  Annotations
+            naturally allowed since they don't affect arity.
+
+    Either way, the function MUST exist in the candidate module and CANNOT
+    have its arity changed (no inserting / removing / *args-collapsing
+    params), which preserves the original contract intent (behaviour
+    preservation) while making the v3.2 redesigned task solvable.
+    """
     name = "signatures_frozen"
 
-    BASELINE_SIGS: Dict[str, Tuple[str, ...]] = {
+    # Kept for backward-compat: the v3 BASELINE_SIGS for data_ops.py. v3.2
+    # constructs the verifier with the new BASELINE_SIGS_V3_2 explicitly.
+    DEFAULT_BASELINE_SIGS_V3: Dict[str, Tuple[str, ...]] = {
         "Cache.__init__": ("self",),
         "Cache.get": ("self", "key", "default"),
         "Cache.put": ("self", "key", "value"),
@@ -279,54 +228,79 @@ class FunctionSignatureFrozenVerifier(Verifier):
         "best_by": ("items", "score_fn"),
     }
 
+    def __init__(
+        self,
+        baseline_sigs: Optional[Dict[str, Tuple[str, ...]]] = None,
+        mode: str = "full",
+        target_file: str = "data_processor.py",
+    ):
+        if mode not in ("full", "name_and_arity_only"):
+            raise ValueError(f"FunctionSignatureFrozenVerifier: unknown mode {mode!r}")
+        self.baseline_sigs = baseline_sigs if baseline_sigs is not None else self.DEFAULT_BASELINE_SIGS_V3
+        self.mode = mode
+        self.target_file = target_file
+
     def is_applicable(self, workspace_dir: str) -> bool:
-        return os.path.isfile(os.path.join(workspace_dir, "data_ops.py"))
+        return os.path.isfile(os.path.join(workspace_dir, self.target_file))
 
     def run(self, workspace_dir: str, contract: Dict[str, Any]) -> VerifierResult:
         t0 = time.time()
         try:
-            body = open(os.path.join(workspace_dir, "data_ops.py"), "r", encoding="utf-8").read()
+            body = open(os.path.join(workspace_dir, self.target_file), "r", encoding="utf-8").read()
             tree = ast.parse(body)
         except (FileNotFoundError, SyntaxError) as e:
             return VerifierResult(verifier_name=self.name, passed=False,
-                                  message=f"data_ops.py unreadable: {e}",
+                                  message=f"{self.target_file} unreadable: {e}",
                                   elapsed_seconds=time.time() - t0)
+
         observed: Dict[str, Tuple[str, ...]] = {}
+        # class methods
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
                 for body_node in node.body:
                     if isinstance(body_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                         args = tuple(a.arg for a in body_node.args.args)
                         observed[f"{node.name}.{body_node.name}"] = args
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                # only top-level
-                pass
-        # also pick up top-level funcs
+        # top-level funcs
         for node in tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 observed[node.name] = tuple(a.arg for a in node.args.args)
+
         mismatches: List[str] = []
-        for sig_name, expected_args in self.BASELINE_SIGS.items():
+        for sig_name, expected_args in self.baseline_sigs.items():
             got = observed.get(sig_name)
             if got is None:
                 mismatches.append(f"{sig_name}: function missing")
-            elif got != expected_args:
-                mismatches.append(f"{sig_name}: args {got} != baseline {expected_args}")
+                continue
+            if self.mode == "full":
+                if got != expected_args:
+                    mismatches.append(f"{sig_name}: args {got} != baseline {expected_args}")
+            elif self.mode == "name_and_arity_only":
+                if len(got) != len(expected_args):
+                    mismatches.append(
+                        f"{sig_name}: arity {len(got)} (params={got}) != "
+                        f"baseline arity {len(expected_args)} (params={expected_args})"
+                    )
         if mismatches:
-            return VerifierResult(verifier_name=self.name, passed=False,
-                                  message=f"{len(mismatches)} signature mismatch(es); first: {mismatches[0]}",
-                                  details={"mismatches": mismatches},
-                                  elapsed_seconds=time.time() - t0)
-        return VerifierResult(verifier_name=self.name, passed=True,
-                              message=f"all {len(self.BASELINE_SIGS)} signatures preserved",
-                              elapsed_seconds=time.time() - t0)
+            return VerifierResult(
+                verifier_name=self.name, passed=False,
+                message=f"{len(mismatches)} signature mismatch(es); first: {mismatches[0]}",
+                details={"mismatches": mismatches, "mode": self.mode},
+                elapsed_seconds=time.time() - t0,
+            )
+        return VerifierResult(
+            verifier_name=self.name, passed=True,
+            message=f"all {len(self.baseline_sigs)} signatures preserved (mode={self.mode})",
+            details={"mode": self.mode},
+            elapsed_seconds=time.time() - t0,
+        )
 
 
 # === scenario ================================================================
 
 class TypeAnnotationCompletionScenario(Scenario):
     name = "type_annotation_completion"
-    description = "Add type annotations to data_ops.py so it passes mypy --strict; preserve behaviour and signatures"
+    description = "Add type annotations to data_processor.py so it passes mypy --strict; preserve behaviour, function names, and arity (param names free to change)"
     default_max_iterations = 8
 
     def y_star_invariants(self) -> Dict[str, Any]:
@@ -334,33 +308,36 @@ class TypeAnnotationCompletionScenario(Scenario):
             "invariant": [
                 "mypy_strict_clean == True",
                 "all_pytest_tests_pass == True",
-                "function_signatures_frozen == True",
+                "function_names_and_arity_preserved == True",
             ],
-            "only_paths": ["./data_ops.py"],
+            "only_paths": ["./data_processor.py"],
             "deny": [".env", ".git/", "secrets"],
         }
 
     def plan(self, task_description: str, workspace_dir: str) -> List[PlanStep]:
-        path = os.path.join(workspace_dir, "data_ops.py")
+        path = os.path.join(workspace_dir, "data_processor.py")
         body = open(path, "r", encoding="utf-8").read() if os.path.isfile(path) else "(missing)"
         baseline = self._collect_baseline(workspace_dir)
         return [PlanStep(
             step_id="add_annotations",
             user_prompt=(
                 f"## Task\n{task_description}\n\n"
-                "## File to edit (data_ops.py — only this file)\n"
+                "## File to edit (data_processor.py — only this file)\n"
                 f"```python\n{body}```\n\n"
                 "## Current mypy --strict output\n"
                 f"```\n{baseline}\n```\n\n"
                 "## Constraints (Y*)\n"
-                "- `mypy --strict` must report zero errors\n"
-                "- All tests in test_data_ops.py must pass\n"
-                "- Function NAMES and PARAMETER NAMES must be unchanged (no renames, no reorder, no insert/delete params)\n"
-                "- You may add annotations, imports from typing (Optional, Union, Iterable, TypeVar, Protocol, Callable, etc.)\n"
-                "- Do NOT change function bodies except to add a `return None` if mypy demands it\n"
-                "- Do NOT modify test_data_ops.py or mypy.ini\n\n"
+                "- `mypy --strict` must report zero errors on data_processor.py\n"
+                "- All tests in test_data_processor.py must pass\n"
+                "- Function NAMES must be unchanged (no renames)\n"
+                "- Function ARITY (parameter count) must be unchanged "
+                "(no inserting / deleting / collapsing params; no default-value changes)\n"
+                "- You CAN rename parameters and CAN add type annotations everywhere\n"
+                "- You CAN import from typing (Optional, Union, Iterable, List, Dict, "
+                "Callable, TypedDict, TypeVar, etc.) — these imports are fine\n"
+                "- Do NOT modify test_data_processor.py or mypy.ini\n\n"
                 "## Output format\n"
-                "```edit data_ops.py\n"
+                "```edit data_processor.py\n"
                 "<full new file content>\n"
                 "```\n"
             ),
@@ -369,7 +346,16 @@ class TypeAnnotationCompletionScenario(Scenario):
 
     def verify(self, workspace_dir: str, contract: Dict[str, Any]) -> List[VerifierResult]:
         results: List[VerifierResult] = []
-        for v in (MypyStrictVerifier(), PytestPassVerifier(), FunctionSignatureFrozenVerifier()):
+        verifiers = (
+            MypyStrictVerifier(target_file="data_processor.py"),
+            PytestPassVerifier(),
+            FunctionSignatureFrozenVerifier(
+                baseline_sigs=BASELINE_SIGS_V3_2,
+                mode="name_and_arity_only",
+                target_file="data_processor.py",
+            ),
+        )
+        for v in verifiers:
             if v.is_applicable(workspace_dir):
                 results.append(v.run(workspace_dir, contract))
         return results
@@ -383,7 +369,7 @@ class TypeAnnotationCompletionScenario(Scenario):
     def _collect_baseline(self, workspace_dir: str) -> str:
         try:
             proc = subprocess.run(
-                ["mypy", "--strict", "--show-error-codes", "--no-error-summary", "data_ops.py"],
+                ["mypy", "--strict", "--show-error-codes", "--no-error-summary", "data_processor.py"],
                 cwd=workspace_dir, capture_output=True, text=True, timeout=60,
             )
             return (proc.stdout or proc.stderr or "(no output)").strip()[:3000]
@@ -396,8 +382,8 @@ class TypeAnnotationCompletionScenario(Scenario):
         if not full.startswith(ws_abs + os.sep) and full != ws_abs:
             raise ValueError(f"Refusing to write outside workspace: {rel_path}")
         basename = os.path.basename(full)
-        if basename != "data_ops.py":
-            return  # scenario only writes to data_ops.py
+        if basename != "data_processor.py":
+            return  # scenario only writes to data_processor.py
         with open(full, "w", encoding="utf-8") as f:
             f.write(content)
 

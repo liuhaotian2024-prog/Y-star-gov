@@ -1,0 +1,31 @@
+{
+  "arm": "D2",
+  "arm_label": "minimax + CZL",
+  "scenario": "type_annotation_completion",
+  "trial": 4,
+  "backend": "minimax",
+  "use_czl": true,
+  "task_description": "\u7ed9 data_processor.py \u4e2d\u7684 3 \u4e2a\u51fd\u6570\u8865\u9f50\u7c7b\u578b\u6ce8\u89e3\uff0c\u5fc5\u987b\u901a\u8fc7 mypy --strict\u3002\u51fd\u6570\u540d\u548c\u53c2\u6570\u6570\u91cf\u4e0d\u80fd\u6539 (\u4e0d\u80fd\u52a0/\u5220/\u91cd\u6392\u53c2\u6570\uff0c\u4e0d\u80fd\u6539\u9ed8\u8ba4\u503c)\uff1b\u53c2\u6570\u540d\u53ef\u4fdd\u7559\u6216\u6539\u540d\u90fd\u53ef\u3002\u884c\u4e3a\u4e0d\u80fd\u53d8\uff0ctest_data_processor.py \u5168\u90e8\u6d4b\u8bd5\u5fc5\u987b\u4ecd\u7136\u901a\u8fc7\u3002",
+  "converged": true,
+  "iterations": 2,
+  "wall_clock_seconds": 21.93792200088501,
+  "input_tokens": 1237,
+  "output_tokens": 1579,
+  "cost_usd": 0.0015106000000000002,
+  "failure_reason": "",
+  "post_state_files": {
+    "data_processor.py": "from typing import Any, Dict, List\n\n\ndef filter_active_users(users: List[Dict[str, Any]]) -> List[Dict[str, Any]]:\n    return [u for u in users if u.get('active')]\n\n\ndef compute_avg_age(users: List[Dict[str, Any]]) -> float:\n    ages: List[float] = [u['age'] for u in users if 'age' in u]\n    if not ages:\n        return 0.0\n    return sum(ages) / len(ages)\n\n\ndef count_by_domain(emails: List[str]) -> Dict[str, int]:\n    counts: Dict[str, int] = {}\n    for e in emails:\n        if '@' not in e:\n            continue\n        d = e.split('@', 1)[1].lower()\n        counts[d] = counts.get(d, 0) + 1\n    return counts\n",
+    "test_data_processor.py": "from data_processor import filter_active_users, compute_avg_age, count_by_domain\n\n\ndef test_filter_active_basic():\n    out = filter_active_users([{'id': 1, 'active': True}, {'id': 2, 'active': False}])\n    assert len(out) == 1\n    assert out[0]['id'] == 1\n\n\ndef test_filter_active_empty():\n    assert filter_active_users([]) == []\n\n\ndef test_filter_active_missing_field():\n    assert filter_active_users([{'id': 1}]) == []\n\n\ndef test_compute_avg_age_basic():\n    assert compute_avg_age([{'age': 20}, {'age': 30}]) == 25.0\n\n\ndef test_compute_avg_age_empty():\n    assert compute_avg_age([]) == 0.0\n\n\ndef test_compute_avg_age_skip_missing():\n    assert compute_avg_age([{'age': 20}, {'name': 'x'}]) == 20.0\n\n\ndef test_count_by_domain_basic():\n    out = count_by_domain(['a@x.com', 'b@x.com', 'c@y.com'])\n    assert out['x.com'] == 2\n    assert out['y.com'] == 1\n\n\ndef test_count_by_domain_case_insensitive():\n    assert count_by_domain(['A@X.com']) == {'x.com': 1}\n\n\ndef test_count_by_domain_skip_no_at():\n    assert count_by_domain(['foo', 'a@x.com']) == {'x.com': 1}\n"
+  },
+  "objective_metrics": {
+    "cyclomatic_complexity_avg": 3.33,
+    "duplicated_lines_pct": 0.0,
+    "test_coverage_pct": null,
+    "mypy_strict_type_coverage_pct": 100.0
+  },
+  "stopping_authority": "converged",
+  "residual_trajectory": [
+    1.0,
+    0.0
+  ]
+}

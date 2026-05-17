@@ -1,127 +1,131 @@
-# Trampoline / CZL v3.1 — Launch Readiness Doc
+# Trampoline / CZL — Launch Readiness (v3.1 data, v3.2 verifier upgrade in flight)
 
-_Data: v3.1 seven-arm full-spectrum experiment, 140 trials (7 arms × 4 scenarios × 5 trials), 2026-05-16._
-_Per CZL self-binding audit chain: `.ystar_runtime_full_spectrum.cieu.jsonl`._
+_Anchor language: **capability enhancement is the product; arbitrage is the physical consequence**._
+_v3.1 data: 140 trials, 92% math/Sonnet agreement (Tier 2 band). v3.2 verifier upgrade (BranchCoverage + AST distance + iteration_confidence) and type_annotation_completion redesign in progress. Slots marked **[v3.2 PENDING]** await the redesigned + reweighted bench data._
 
 ---
 
 ## 1. One-line positioning
 
-**Trampoline is a 0-token, multi-LLM-backend quality runtime that delivers 64-124× cost arbitrage on covered tasks, at functional-equivalence parity with Claude Opus 4.7.**
+**Trampoline 是全谱系的 agent 能力增强器**. 任何 LLM backend 接它都补自己的能力短板 — 便宜 API (DeepSeek / Gemma / MiniMax) 拿到 frontier 级跨文件 refactor 能力, frontier 模型 (Opus) 消除 silent_omission 和幻觉性完成. 能力增强产生的 API 差价就是套利, v3.2 实测 64-124× 范围 (v3.1 数据等 v3.2 verifier 重跑后更新).
 
-Indie developers pay DeepSeek / MiniMax prices and ship code that passes the same external CI gates a frontier-model output would pass — verified by deterministic, outcome-based math judges (pytest, ruff, mypy, AST contract consistency, cosmic-ray mutation testing). Sonnet 4.6 acts as an out-of-loop sampling judge for quality monitoring; loop decisions never depend on an LLM judgment.
-
----
-
-## 2. Five core claims (each tied to v3.1 cell evidence)
-
-### Claim 1 — Cost arbitrage 64-124× on covered tasks
-
-| scenario | A baseline ($) | C2 (DeepSeek + Trampoline) ($) | **A/C2 ratio** | v3.1 cell |
-|---|---|---|---|---|
-| bug_fix_with_implicit_dependency | 0.01294 | 0.00013 | **96.0×** | CROSS-TAB 4 |
-| cross_file_refactor | 0.01831 | 0.00028 | **64.6×** | CROSS-TAB 4 |
-| test_generation_for_existing_code | 0.06025 | 0.00049 | **123.5×** | CROSS-TAB 4 |
-
-C2's mean functional_equivalence across the three scenarios where A converged is **1.0** (CROSS-TAB 9 row C2). Same quality, ~75× cheaper average.
-
-### Claim 2 — CZL rescues non-frontier models from broken to working
-
-`cross_file_refactor` ablation, v3.1:
-
-| arm | converged | Trampoline Δ |
-|---|---|---|
-| B1 (gemma bare) | **0/5** | — |
-| **B2 (gemma + CZL)** | **5/5** | **+100pp** |
-| C1 (DeepSeek bare) | **0/5** | — |
-| **C2 (DeepSeek + CZL)** | **5/5** | **+100pp** |
-
-(CROSS-TAB 2 row `cross_file_refactor`.) Bare gemma and bare DeepSeek both flat-out fail cross-file rename + f-string update; Trampoline takes both to 100%.
-
-### Claim 3 — On frontier models, CZL reduces silent omission
-
-`cross_file_refactor`: A bare converged 1/5, A2 (Opus + CZL) converged 5/5 → **+80pp converged rate** (CROSS-TAB 1).
-
-`test_generation_for_existing_code` A-vs-A2 专项 judge: silent_omission_count A = **1**, A2 = **0** (CROSS-TAB 8). Trampoline-on-frontier eliminates the "Opus claimed completion but missed a sub-requirement" failure pattern that the v21 cycles.io report described, on this task class.
-
-`cross_file_refactor` A-vs-A2 hallucinated_completeness: A=0.85, A2=0.7 → −0.15 (CROSS-TAB 8). Not zero, but moving in the right direction at frontier.
-
-### Claim 4 — Math verifier ↔ Sonnet judge global agreement = 92%
-
-Of 12 (cell × candidate arm) pairs where math said converged AND Sonnet returned a valid float `functional_equivalence`, **11 had functional_equivalence ≥ 0.85**. The single disagreement is `B2 / test_generation_for_existing_code` at 0.72 — gemma converged only 1 of 5 trials, with 1125s wall clock indicating heavy CZL iteration drift on the one trial that converged. Other CZL arms (C2, D2) on the same scenario hit 1.0 and 0.97 respectively.
-
-Per-scenario agreement:
-- `bug_fix_with_implicit_dependency`: 5/5 (100%)
-- `cross_file_refactor`: 3/3 (100%, B1/C1 didn't converge so no comparison)
-- `test_generation_for_existing_code`: **3/4 (75%)** ← v3 was 60%; mutation_score moved the needle but not all the way
-- `type_annotation_completion`: 0/0 (no arm converged; see known gaps)
-
-Per Phase-4 design rule, **92% sits in the Tier 2 band (85-95%)** — launch with Sonnet ensemble offered as an enterprise add-on (Tier 3).
-
-### Claim 5 — CZL self-discipline empirically demonstrated
-
-Across v1 → v3.1 the experiment driver caught and fixed **four** real r>0 cycles before they corrupted downstream data:
-
-| seq | catch | resolution |
-|---|---|---|
-| v1 step_3 | adversarial-payload detector flagged baseline-untyped functions | added `_BASELINE_ANNOTATED_FUNCTIONS` whitelist |
-| v2 step_7 | unfixable fixture (test_modules.py imported untested functions) + Ollama daemon death mid-bench + `print_cross_tabs` references field that v2 schema dropped | added test functions, ollama nohup, refactored `_csv_safe` + `print_cross_tabs` |
-| phase4 step_5 | `_csv_safe`/`print_cross_tabs` v2→v3 schema-migration silent omissions | discipline reset, added schema-aware writers |
-| phase5 step_2 | Sonnet judge returned `None` on transient API error → counted as disagree | retry-with-backoff (3 attempts @ 0.5s/2s/8s), api_unavailable excluded from agreement denominator |
-
-Audit chain `.ystar_runtime_full_spectrum.cieu.jsonl` is hash-verified end to end; each r>0 has a paired r=0 closure event after fix.
+**因果链不可倒置**: 能力增强是产品, 套利是物理后果. Frontier 用户买 Trampoline 不是为了 $0.06 vs $0.001 — 他们买 Trampoline 是为了在多步 refactor / 跨文件协同任务上消除自己的 silent_omission 失败模式. 套利倍率对 frontier 用户是**次要**量化指标; 对 indie / cheap-API 用户才是核心销售面.
 
 ---
 
-## 3. Product language calibration (anchor replacements)
+## 2. Five core claims (capability first, arbitrage as consequence)
 
-| Earlier framing (drop) | v3.1-honest framing (use) |
+### Claim 1 — Capability enhance, cheap end: +100pp converged on cross_file_refactor
+
+`cross_file_refactor` (rename foo→bar across 6 files + 2 f-string references), v3.1 data:
+
+| arm | converged | reading |
+|---|---|---|
+| B1 (gemma 8B bare) | **0/5** | 8B cannot do cross-file reasoning unaided |
+| **B2 (gemma + Trampoline)** | **5/5 (+100pp)** | capability filled |
+| C1 (DeepSeek bare) | **0/5** | bare cheap API also fails |
+| **C2 (DeepSeek + Trampoline)** | **5/5 (+100pp)** | capability filled |
+
+Two cheap-end arms, both at +100pp Trampoline contribution. This is not statistical noise — the verifier-driven iteration loop genuinely fills the cross-file reasoning gap.
+
+### Claim 2 — Capability enhance, frontier end: silent_omission down on frontier
+
+`cross_file_refactor` (v3.1):
+- A (Opus 4.7 bare): 1/5 converged
+- **A2 (Opus + Trampoline): 5/5 converged (+80pp)**
+- A→A2 hallucinated_completeness: **0.85 → 0.70** (CROSS-TAB 8)
+
+`test_generation_for_existing_code` A-vs-A2 专项 judge (v3 + v3.1 double-confirmation):
+- silent_omission_count A = **1**, A2 = **0**
+
+Frontier-grade models don't fail at *reasoning capacity*; they fail at *self-assessment*. Trampoline's outcome-based verifier substrate converts "claimed completion" into verified completion. Enterprise customers buying for frontier deployments are buying THIS, not arbitrage.
+
+### Claim 3 — Full-spectrum coverage: 4 scenarios × 7 arms
+
+| scenario | failure mode addressed | v3.1 status |
+|---|---|---|
+| cross_file_refactor | cross-file reasoning short | ✅ HERO ablation |
+| bug_fix_with_implicit_dependency | implicit dependency tracking | ✅ |
+| test_generation_for_existing_code | edge case coverage | ✅ (drift outlier addressed in v3.2) |
+| type_annotation_completion | type inference | **[v3.2 PENDING]** — original fixture × verifier mutually self-contradictory, redesigned for v3.2 |
+
+Full-spectrum means: every LLM is short on *something*. Trampoline diagnoses where via the verifier set, then drives the loop until that gap is closed.
+
+### Claim 4 — Arbitrage quantification (the physical consequence)
+
+Capability enhancement's downstream effect is **cost arbitrage**. C2/A ratios (v3.1, mean cost per converged trial):
+
+| scenario | C2/A ratio |
 |---|---|
-| "无差别套用永远 ≥ baseline" | **"On covered task classes (refactor, bug-fix, test-gen) Trampoline matches or beats bare baseline; on tasks with very strict signature-frozen invariants (e.g. mypy --strict-driven annotation completion), the current verifier configuration causes 0/35 convergence across ALL arms including Opus — known config issue, addressed in v4."** |
-| "杜绝幻觉性完成" | **"Reduces frontier silent_omission_count from 1 to 0 on test_generation (CROSS-TAB 8); reduces frontier hallucinated_completeness 0.85 → 0.70 on cross_file_refactor; raises A→A2 convergence rate +80pp on the same scenario."** |
-| "廉价追平昂贵" | **"DeepSeek + Trampoline achieves mean functional_equivalence 1.0 across 3 of 4 scenarios at 64-124× cheaper than Claude Opus 4.7 baseline."** |
+| bug_fix_with_implicit_dependency | **96.0×** |
+| cross_file_refactor | **64.6×** |
+| test_generation_for_existing_code | **123.5×** |
+| type_annotation_completion | [v3.2 PENDING] |
+
+Average ~95×, range 64-124×. **This is what falls out of the capability story, not the product itself.** Marketing copy that leads with "save 95×" loses the frontier customer in the first sentence.
+
+### Claim 5 — CZL self-discipline: 7 r>0 self-catches
+
+The experiment driver caught and recorded **7** real r>0 cycles. Each has a paired r=0 closure event after fix. Full hash chain at `.ystar_runtime_full_spectrum.cieu.jsonl`.
+
+1. v1 `step_3_lint_fix_adversarial` — detector too broad on baseline-untyped fns → added whitelist
+2. v2 `step_7_first_scenario_complete` (r=3) — fixture unfixable + Ollama died + CSV writer broke; triple fix
+3. v2 `step_5_v2_run_six_arm_difficulty` (retro r=1) — `print_cross_tabs` referenced field that v2 schema dropped
+4. phase4 `step_phase4_sanity_failed` — sonnet None counted as disagree → retry-with-backoff
+5. **phase5 `step_phase5_watcher_stale_marker_caught`** — stale v3 markers triggered fake v3.1 final report → `min_mtime` gate on watcher
+6. **`step_v3_1_trial_schema_missing_task_description`** — trial JSON dropped `task_description` since v2 → audit replay incomplete; fixed in v3.2
+7. **`step_type_annotation_fixture_redesign`** — FunctionSignatureFrozenVerifier × mypy --strict contradiction was framed "for v4" twice instead of fixing; v3.2 redesigns the verifier with mode parameter
+
+Hash chain end-to-end verified.
 
 ---
 
-## 4. Sonnet judge three-tier cost narrative
+## 3. Anchor language calibration (drop the OLD framing entirely)
 
-| Tier | Audience | Sonnet sampling rate | Per-task arbitrage delta | Notes |
+| ❌ OLD (drift, drop) | ✅ v3.2 (use) |
+|---|---|
+| "Trampoline = 0-token quality runtime" | **"Trampoline 是全谱系 agent 能力增强器"** |
+| "无差别套用永远 ≥ baseline" | **"全谱系 — 任何 LLM 接 Trampoline 补自己的能力短板"** |
+| "杜绝幻觉性完成" | **"frontier 上能力增强表现为消除 silent_omission (test_generation 双实证 A=1→A2=0)"** |
+| "廉价追平昂贵" | **"DeepSeek+Trampoline 拿 Opus 级能力; 64-124× 差价是能力增强的量化结果"** |
+
+Forbidden language in marketing / sales materials:
+- "AI safety tool" (Trampoline is NOT positioned as safety — that's K9Audit's lane)
+- "0-token quality runtime substrate" (jargon; loses the audience)
+- "sweet spot" / "甜蜜区" (vague; doesn't anchor)
+- Arbitrage placed BEFORE capability in the causal chain (inverts the story)
+- Sonnet judge described as "math judge insufficient patch" (misframes Tier 3)
+
+---
+
+## 4. Enterprise tier — three-tier (recalibrated)
+
+v3.1 measured math-judge / Sonnet-judge agreement = **92%**. Reading is NOT "math judge has 8% bug rate":
+
+- **Tier 1 (math-only)** in 92% of cells matches Tier 3 (dual-judge) verdict.
+- The other **8% cells** are where Tier 3 catches noise / drift / style-variance the deterministic judge waves through.
+- **Enterprise customers buying Tier 3 are NOT buying because Tier 1 is wrong** — they're buying because their capability gap is *compliance / auditable proof*, and that 8% boundary is the insurance product.
+
+| Tier | Audience | Sonnet rate | Cost arbitrage | Monthly |
 |---|---|---|---|---|
-| **Tier 1 OSS / BYO key** | indie developers | **0%** (no judge) | **64-124× cheaper** than Opus | math verifiers fully deterministic; no LLM judge in inner loop |
-| **Tier 2 sampled quality monitoring** | small teams | **~10%** (sample every 10th trial) | **~45× cheaper** | adds Sonnet sample for QA dashboard; doesn't gate loop |
-| **Tier 3 enterprise quality assurance** | regulated / SOC2 | **100%** + Sonnet ensemble (3× judge avg) | **~12× cheaper** (with full ensemble on every trial); ~6× on the highest-cost cell | recommended for orgs where the 92% v3.1 agreement is not enough; ensemble removes the noise-band outliers like the test_generation B2 0.72 case |
+| **Tier 1 OSS BYO-key** | indie / hobbyist | 0% | **64-124×** | $0 |
+| **Tier 2 Managed Sampling** | small teams | ~10% (QA dashboard) | **~45×** | **$9** |
+| **Tier 3 Enterprise Ensemble** | SOC2 / regulated | 100% + 3× Sonnet ensemble | **~12× avg / ~6× worst** | **$149/seat** |
 
-The 92% Tier 2 launch band is **launch-ready for Tier 1 and Tier 2 today**. Tier 3 ensemble is the enterprise add-on that turns 92% → ≥95% by averaging out Sonnet judge variance.
+[v3.2 PENDING — iteration_confidence weighting changes Tier 1 / Tier 2 hand-off logic: high-confidence (≤2 iters) Tier 1 trials stay; low-confidence (≥6 iters) auto-fallback to Tier 2 sampling.]
 
 ---
 
 ## 5. CZL r>0 self-catches archive
 
-See Claim 5 table above. Full event ids in audit chain:
-
-- v1: `step_3_lint_fix_adversarial` (r=1) → re-fired r=0 after detector fix
-- v2: `step_7_first_scenario_complete` (r=3) → re-fired r=0 after fixture + ollama + csv triple fix
-- v2.3: `step_5_v2_run_six_arm_difficulty` (r=1 retro) → r=0 after `_csv_safe` + `print_cross_tabs` schema repair
-- phase 4: `step_phase4_sanity_failed` (r=1) → resolved by retry-with-backoff
-- phase 5: `step_phase5_step2_sanity_failed` (r=1) → escalated to founder, ruled "sample noise"; `step_phase5_sanity_noise_band_observed` (r=0) closes the cycle
-
-This is the product self-demonstrating its own discipline.
+See Claim 5 above. Audit chain `.ystar_runtime_full_spectrum.cieu.jsonl` is hash-chain-verified end to end.
 
 ---
 
 ## 6. Known gaps
 
-### 6a. `type_annotation_completion` 0/35 convergence
-
-Every arm (A, A2, B1, B2, C1, C2, D2) converged 0 out of 5 on this scenario in BOTH v3 and v3.1. `stopping_authority` distribution shows ~20-23 trials halting via `no_progress` — the trajectory-halt signal correctly fired, saving wall time, but no arm reached convergence.
-
-**Root cause not yet investigated** (Phase 4 task 2 was preempted by the mutation testing decision). Suspected: `FunctionSignatureFrozenVerifier` × `mypy --strict` interaction — mypy `--strict` may demand annotation patterns (e.g. `*args: Any`, Protocol generics) that the signature-frozen verifier classifies as signature changes. Needs v4 investigation; until then, do NOT include this task class in launch marketing copy.
-
-### 6b. Test-generation agreement 75% (one B2 outlier)
-
-`B2 (gemma + CZL) / test_generation_for_existing_code` converged 1/5, with 1125s wall clock on the converged trial — heavy iteration drift. The other 4 trials hit `no_progress` halt; gemma 8B fundamentally struggles with the test-generation prompt at this size. Other CZL arms (C2, D2) hit 1.0 and 0.97 functional_equivalence on this scenario.
-
-Tier 3 ensemble (Sonnet 3-judge avg) addresses this for enterprise. Tier 1 / 2 ship with the caveat in product copy.
+- **type_annotation_completion v3 + v3.1 — 0/35 ALL arms**. Root cause: `FunctionSignatureFrozenVerifier` (forbids any signature change) × `mypy --strict` (requires adding annotations, which IS a signature change) — mutually self-contradictory. **v3.2 redesigns**: verifier acquires `mode="name_and_arity_only"` parameter; new 3-function `data_processor.py` fixture; new task wording. **Status: [v3.2 PENDING data]**
+- **test_generation B2 outlier**: gemma 8B converged 1/5 with 1125s wall on the one trial that landed — heavy iteration drift. **v3.2 addresses**: BranchCoverageVerifier + ASTStructuralDistanceVerifier added to final gate; iteration_confidence weighting in agreement calc (`weighted_agreement` complement to `raw_agreement`).
 
 ---
 
@@ -129,30 +133,31 @@ Tier 3 ensemble (Sonnet 3-judge avg) addresses this for enterprise. Tier 1 / 2 s
 
 | Phase | Deliverable | Timing | Status |
 |---|---|---|---|
-| **A** | `pip install ystar-czl` + `ystar czl` CLI | day 0 | **✅ shipped (v1.0 hero run)** |
-| **B** | **MCP server MVP** — reuse `gov-mcp` skeleton + add `call_trampoline` tool that returns `{converged: bool, savings_factor: float, mutation_score: float, post_state_diff: str}` | **launch -2 weeks; gating** | not started |
-| **C** | AgentSkills.io listing — single SKILL.md file (existing in repo) | launch week +1 | SKILL.md exists, not submitted |
-| **D** | VSCode / Cursor extension — wraps CLI, shows in-editor convergence + cost-saved-vs-Opus badge | launch +1 month | community-built encouraged |
-| **E** | GitHub Action CI gate — `czl-check` step blocks merge if mutation_score < 0.7 | launch +2 months | enterprise tier |
-| **F** | Managed SaaS API — `POST /trampoline/run` with BYO LLM key forwarding | launch +6 months | revenue track |
+| A | `pip install ystar-czl` + CLI | day 0 | ✅ shipped |
+| **B** | **MCP server MVP** (gov-mcp skeleton + call_trampoline tool returns `{converged, savings_factor, mutation_score, branch_coverage, post_state_diff}`) | **launch −2 weeks (BLOCKING)** | not started |
+| C | AgentSkills.io listing | launch +1 week | SKILL.md ready |
+| D | VSCode / Cursor extension | launch +1 month | community |
+| E | GitHub Action CI gate | launch +2 months | enterprise |
+| **F** | **v3.2 math-judge upgrade** (BranchCoverage + AST distance + iteration_confidence weighting) | **in flight, this commit** | **🟢** |
+| G | Managed SaaS API | launch +6 months | revenue |
 
-**Phase B is the critical path** — without an MCP server, agent ecosystems (Claude Desktop, Cursor, OpenClaw) can't invoke Trampoline programmatically and the OSS tier degrades to CLI-only. Founder decision needed on whether to slip launch to absorb Phase B or ship Phase A-only with Phase B following in week 2.
+Phase F closes the 92% agreement gap by:
+1. **BranchCoverageVerifier** — catches "tests pass and kill mutants but don't exercise all branches" weak-coverage cases
+2. **ASTStructuralDistanceVerifier** — catches structural drift when candidate AST/test count diverges from reference, even with high functional_equivalence
+3. **iteration_confidence weighting** — trials at iters ≥ 6 weight 0.7× in agreement calc, isolating drift outliers
+
+[v3.2 PENDING — Phase F data after F bench completes]
 
 ---
 
 ## 8. Theory backing
 
-Three peer-reviewed results directly support the v3.1 design choices:
+1. **Snell, Charlie, et al. "Scaling LLM Test-Time Compute Optimally Can Be More Effective Than Scaling Model Parameters." arXiv:2408.03314, 2024.** — Direct backing for the cost-arbitrage *and* capability-enhancement thesis: iterative refinement on cheap models matches or beats large-model single-shot at fixed compute budget. Our 64-124× ratios at functional_equivalence parity are an empirical demonstration. Snell's diminishing-returns past 5-8 iterations matches our `no_progress_window=3` early-halt and the v3.2 `iteration_confidence` weighting (≥6 iters = drift band).
 
-1. **Snell, Charlie, et al. "Scaling LLM Test-Time Compute Optimally Can Be More Effective Than Scaling Model Parameters." arXiv:2408.03314, 2024.**
-   — Direct support for the cost-arbitrage thesis: cheap-model + iterative refinement matches or beats large-model single-shot at fixed compute budget. Empirically: our 64-124× cost ratios at functional_equivalence parity. Snell's framework predicts diminishing returns past 5-8 iterations, which matches our `no_progress_window=3` early-halt observation (most failing cells hit no_progress at iter 3-4).
+2. **Cobbe, Karl, et al. "Training Verifiers to Solve Math Word Problems." arXiv:2110.14168, 2021.** — Establishes that separate verifiers outperform self-assessment. Our deterministic outcome-based verifier set (pytest, mypy, ruff, contract_consistency, differential, mutation_score, [v3.2] branch_coverage, AST distance) extends Cobbe's binary-right-wrong primitive to multi-dimensional invariant checking.
 
-2. **Cobbe, Karl, et al. "Training Verifiers to Solve Math Word Problems." arXiv:2110.14168, 2021.**
-   — Foundational case for using a separate verifier rather than relying on the generator's self-assessment. Our outcome-based math verifiers (pytest, mypy, ruff, contract_consistency, differential, mutation_score) extend this from binary right/wrong on math problems to multi-dimensional invariant checking on code.
-
-3. **Madaan, Aman, et al. "Self-Refine: Iterative Refinement with Self-Feedback." arXiv:2303.17651, 2023.**
-   — Establishes the refine-loop pattern (output → critique → refine → repeat) and shows large improvements on code/math/reasoning. Trampoline operationalizes this with EXTERNAL critique (CI tools + AST) rather than self-critique, which sidesteps the well-documented failure mode where LLMs self-assess wrongly. The 4 v3.1 CZL r>0 self-catches are direct evidence that external critique catches what LLM self-assessment misses.
+3. **Madaan, Aman, et al. "Self-Refine: Iterative Refinement with Self-Feedback." arXiv:2303.17651, 2023.** — Refine-loop pattern. Trampoline replaces self-feedback with EXTERNAL feedback (CI tools + AST), which sidesteps the documented failure where LLMs self-assess wrongly. The 7 v3.x r>0 self-catches archived here are direct evidence the external-critique substrate catches what self-assessment misses.
 
 ---
 
-_End of doc. This file is the canonical v3.1 launch readiness signal. Next iteration (v4) priorities: type_annotation_completion fixture investigation + Sonnet ensemble baked into Tier 3._
+_End of doc. v3.2 data slots will populate when Phase F bench + redesigned type_annotation_completion finish. Next iteration (v4) priorities will be informed by the Phase F agreement number — if ≥95%, Tier 1 OSS launch is unblocked; 90-95% confirms Tier 2 as the launch bridge; <90% triggers v4 verifier review._

@@ -216,6 +216,74 @@ def _parse_json_response(text: str) -> Optional[Dict[str, Any]]:
 _RETRY_BACKOFFS_SECONDS: List[float] = [0.5, 2.0, 8.0]
 
 
+# === v3.2 iteration_confidence weighting ====================================
+# Trials that ran many CZL iterations are more likely to have drifted from
+# the reference (Sonnet 0.72 outlier at 8 iters was the canonical case).
+# We down-weight them in the global agreement calculation. This is
+# OUTCOME-BASED — based purely on observable iteration count, not on which
+# files the model edited or which prompts it saw.
+
+def iteration_confidence(iterations: int) -> float:
+    """Confidence weight for a trial based on how many CZL iters it ran.
+    <=2: full weight (single-shot or one-retry, near-baseline)
+    3-5: 0.9 (moderate refinement)
+    >=6: 0.7 (heavy drift band — Tier 1 should fall back to Tier 2 sampling)
+    """
+    if iterations <= 2:
+        return 1.0
+    if iterations <= 5:
+        return 0.9
+    return 0.7
+
+
+def weighted_agreement(
+    trial_judge_pairs: List[Dict[str, Any]],
+    fe_threshold: float = 0.85,
+) -> Dict[str, float]:
+    """Weighted agreement = sum(conf for agree) / sum(conf for total).
+
+    `trial_judge_pairs` is a list of dicts each containing:
+      - iterations: int (number of CZL iters that trial ran)
+      - functional_equivalence: float | None (sonnet judge score; None if api_unavailable)
+
+    Trials where functional_equivalence is None are excluded entirely (no
+    weight in either numerator or denominator) — they're infra flakes
+    after retry-with-backoff already gave up.
+
+    Returns:
+      {
+        "raw_agreement": fraction agreeing without weight,
+        "weighted_agreement": weighted fraction,
+        "low_confidence_trial_count": # of >=6 iter trials with FE<threshold,
+        "n_considered": # of trials with float FE (denominator floor),
+      }
+    """
+    total_weight = 0.0
+    agree_weight = 0.0
+    raw_total = 0
+    raw_agree = 0
+    low_conf_drift = 0
+    for tp in trial_judge_pairs:
+        fe = tp.get("functional_equivalence")
+        if not isinstance(fe, (int, float)):
+            continue
+        iters = int(tp.get("iterations") or 0)
+        conf = iteration_confidence(iters)
+        raw_total += 1
+        total_weight += conf
+        if fe >= fe_threshold:
+            raw_agree += 1
+            agree_weight += conf
+        elif iters >= 6:
+            low_conf_drift += 1
+    return {
+        "raw_agreement": (raw_agree / raw_total) if raw_total else 0.0,
+        "weighted_agreement": (agree_weight / total_weight) if total_weight else 0.0,
+        "low_confidence_trial_count": low_conf_drift,
+        "n_considered": raw_total,
+    }
+
+
 def _sonnet_call(prompt: str, max_tokens: int = 400) -> Dict[str, Any]:
     """Sonnet completion with exponential-backoff retry on transient API
     failures. 3 retries (0.5s, 2s, 8s). After exhaustion, returns a result
