@@ -614,10 +614,16 @@ class TestGenForExistingScenario(Scenario):
         is_small = model_tier in ("small", "tiny", "local")
 
         # v4.0 T5: environment inventory section at the very top.
-        from ystar.czl.inventory import WorkspaceInventory
-        from ystar.czl.scenarios.base import render_environment_inventory
-        _inv = WorkspaceInventory.scan(workspace_dir)
-        inventory_section = render_environment_inventory(_inv)
+        # pure_r_strict: skip inventory + probe rendering entirely — initial
+        # prompt has only task / Y* spec / output format per founder design.
+        _strict = os.environ.get("CZL_FEEDBACK_MODE") == "pure_r_strict"
+        if _strict:
+            inventory_section = ""
+        else:
+            from ystar.czl.inventory import WorkspaceInventory
+            from ystar.czl.scenarios.base import render_environment_inventory
+            _inv = WorkspaceInventory.scan(workspace_dir)
+            inventory_section = render_environment_inventory(_inv)
 
         path = os.path.join(workspace_dir, "data_pipeline.py")
         body = open(path, "r", encoding="utf-8").read() if os.path.isfile(path) else "(missing)"
@@ -637,34 +643,51 @@ class TestGenForExistingScenario(Scenario):
 
         if is_small:
             existing_listing = "\n".join(f"  - {n}" for n in existing_test_funcs) or "  (none yet)"
+            # pure_r_strict: strip "Existing test functions (DO NOT rewrite these)"
+            # section — it's prompt-engineering coaching, not Y* spec.
+            existing_section = (
+                "" if _strict
+                else f"## Existing test functions in test_data_pipeline.py (DO NOT rewrite these)\n{existing_listing}\n\n"
+            )
             user_prompt = (
                 f"## Task\n{task_description}\n\n"
                 "## Source to test (read-only)\n"
                 f"### data_pipeline.py\n```python\n{body}```\n\n"
-                "## Existing test functions in test_data_pipeline.py (DO NOT rewrite these)\n"
-                f"{existing_listing}\n\n"
-                "## Constraints (Y*)\n"
+                + existing_section
+                + "## Constraints (Y*)\n"
                 "- Every test must pass under `pytest -q`\n"
                 "- Combined coverage of data_pipeline.py must be >= 80% (use pytest-cov)\n"
                 "- At least one test must use `pytest.raises` to exercise an exception path\n"
                 "- Cover edge / error paths: missing fields, wrong types, empty inputs, "
                 "duplicate emails, invalid JSON, missing files\n"
                 "- Do NOT modify data_pipeline.py — only ADD new tests\n\n"
-                "## Output format (ADD-only — IMPORTANT)\n"
-                "Emit ONE block of NEW test functions only. Existing tests in "
-                "test_data_pipeline.py are preserved automatically; do not repeat them. "
-                "If a function name you emit already exists, it will REPLACE the existing "
-                "one (so re-emit a function to fix it). Do NOT include `print(...)`, "
-                "top-level `try/except`, or `if __name__ == '__main__'` blocks — only "
-                "`def test_*(...)` functions and any `pytest` fixtures.\n\n"
-                "```add_tests test_data_pipeline.py\n"
-                "import pytest\n"
-                "from data_pipeline import (load_records, validate_record, normalize_email, "
-                "clean_records, aggregate_by_domain, pipeline, ValidationError, PipelineError)\n\n"
-                "def test_<descriptive_name>():\n"
-                "    # your test body — assert specific values\n"
-                "    ...\n"
-                "```\n"
+                + (
+                    # pure_r_strict: strip ADD-only protocol narrative; keep
+                    # the code-block format example as the bare output spec.
+                    "## Output format\n"
+                    "```add_tests test_data_pipeline.py\n"
+                    "import pytest\n"
+                    "from data_pipeline import (...)\n\n"
+                    "def test_<descriptive_name>():\n"
+                    "    ...\n"
+                    "```\n"
+                    if _strict else
+                    "## Output format (ADD-only — IMPORTANT)\n"
+                    "Emit ONE block of NEW test functions only. Existing tests in "
+                    "test_data_pipeline.py are preserved automatically; do not repeat them. "
+                    "If a function name you emit already exists, it will REPLACE the existing "
+                    "one (so re-emit a function to fix it). Do NOT include `print(...)`, "
+                    "top-level `try/except`, or `if __name__ == '__main__'` blocks — only "
+                    "`def test_*(...)` functions and any `pytest` fixtures.\n\n"
+                    "```add_tests test_data_pipeline.py\n"
+                    "import pytest\n"
+                    "from data_pipeline import (load_records, validate_record, normalize_email, "
+                    "clean_records, aggregate_by_domain, pipeline, ValidationError, PipelineError)\n\n"
+                    "def test_<descriptive_name>():\n"
+                    "    # your test body — assert specific values\n"
+                    "    ...\n"
+                    "```\n"
+                )
             )
         else:
             existing_files = sorted(
@@ -886,9 +909,16 @@ class TestGenForExistingScenario(Scenario):
         allowed_call_names = workspace_fns | imported_names | fixture_names | helper_names
 
         # v5.2: workspace signatures for arity validation
+        # pure_r_strict: AST validator + rejection_log fully disabled. Any
+        # hallucinated call name or wrong arity is allowed to land in the
+        # merged file — Gemma's raw output goes through unchanged.
+        _strict = os.environ.get("CZL_FEEDBACK_MODE") == "pure_r_strict"
         workspace_sigs = _workspace_function_signatures(workspace_dir)
         validated_new_tests: Dict[str, str] = {}
         for tname, tsrc in new_tests.items():
+            if _strict:
+                validated_new_tests[tname] = tsrc
+                continue
             violations = _validate_test_calls(tsrc, allowed_call_names, workspace_sigs)
             if violations:
                 self._rejection_log.append({
@@ -910,7 +940,10 @@ class TestGenForExistingScenario(Scenario):
         # passing version preserved. This realises R_{t+1} as a structured
         # vector (passing dimensions are FIXED, only failing dimensions are
         # mutable).
-        passing_test_names: Set[str] = set(
+        # pure_r_strict: passing-test protection fully OFF. Any Gemma
+        # rewrite of a passing test lands directly, even if it breaks
+        # the test. No rejection_log writes.
+        passing_test_names: Set[str] = set() if _strict else set(
             (contract or {}).get("_passing_tests_last_iter") or set()
         )
         merged_tests = dict(existing_tests)

@@ -327,20 +327,24 @@ def run_scenario(
     # crashes (Ollama GGML assert, LiteLLM APIConnectionError, etc.)
     # don't drop the in-flight CZLResult. Partial iter_prompts /
     # iter_responses / iter_snapshots are preserved.
-    # Reactive-feedback mode gate. Tri-state (default = "full"):
-    #   "full"    — all v5.1 sections (default when env var unset)
-    #   "minimal" — strip v4.0 probe / v5.0.1 focus / v5.0.6 signal /
-    #               v5.1 protection / v5.1 rejection from prompt; keep
-    #               v3.4 hint / v3.5 cluster / v3.6 regression / ADD-only
-    #               (founder baseline experiment)
-    #   "pure_r"  — strip ALL coaching; emit only raw VerifierResult
-    #               output. Founder hypothesis test: is the coaching
-    #               layer net-positive or net-negative on Gemma 4B?
-    # Engineering layer (RLE / AST validator / merge protection /
-    # TransitionTracker / rejection_log / dominance) is preserved in all
-    # modes — only the prompt-rendering output end is filtered.
+    # Reactive-feedback mode gate (4 values, default = "full"):
+    #   "full"          — all v5.1 sections (default when env var unset)
+    #   "minimal"       — strip v4.0 probe / v5.0.1 focus / v5.0.6 signal /
+    #                     v5.1 protection / v5.1 rejection from prompt;
+    #                     keep v3.4 hint / v3.5 cluster / v3.6 regression
+    #                     / ADD-only
+    #   "pure_r"        — strip ALL coaching from feedback prompt; engineering
+    #                     layer (AST validator / merge protection / dominance)
+    #                     still active. Output only raw VerifierResult.
+    #   "pure_r_strict" — pure_r PLUS disable engineering layer: no AST
+    #                     reject, no passing-test protection, no dominance
+    #                     rollback, no focus_constraint, no inventory/probe
+    #                     in initial prompt, no rejection_log writes. Truly
+    #                     bare R-loop: Trampoline = verifier + raw feedback.
+    # In all modes, RLE drives the loop; governance contract 8/8 still passes.
     _feedback_mode = os.environ.get("CZL_FEEDBACK_MODE", "full")
-    _minimal_feedback = _feedback_mode in ("minimal", "pure_r")
+    _minimal_feedback = _feedback_mode in ("minimal", "pure_r", "pure_r_strict")
+    _pure_r_strict = _feedback_mode == "pure_r_strict"
 
     step_idx = -1
     try:
@@ -507,7 +511,9 @@ def run_scenario(
         # iter that FIXES a hard test is not erased by a residual=1 iter
         # that lacks the hard fix, because dominance compares actual
         # passing-test SETS, not failing counts.
-        if rollback_enabled:
+        # pure_r_strict: dominance rollback fully OFF — Gemma's state always
+        # kept regardless of regression, per founder bare-R loop design.
+        if rollback_enabled and not _pure_r_strict:
             current_commit = _git_commit_iter(request.workspace_dir, step_idx, scalar_residual)
             # Extract per-test status from this iter's verifiers (pytest).
             from ystar.czl.reflection.transitions import extract_test_status
@@ -589,10 +595,13 @@ def run_scenario(
 
         # Pull next-action's focus_constraint from autonomy engine; the
         # loop respects it on the NEXT iter (plan/apply_action).
-        _next_action = _czl_autonomy.pull_next_action("czl-agent")
-        if _next_action is not None and _next_action.focus_constraint is not None:
-            _active_focus_constraint = _next_action.focus_constraint
-            contract_dict["_focus_constraint"] = _active_focus_constraint.to_dict()
+        # pure_r_strict: skip CZLAutonomyEngine entirely — no focus_constraint
+        # flows into contract or prompt.
+        if not _pure_r_strict:
+            _next_action = _czl_autonomy.pull_next_action("czl-agent")
+            if _next_action is not None and _next_action.focus_constraint is not None:
+                _active_focus_constraint = _next_action.focus_constraint
+                contract_dict["_focus_constraint"] = _active_focus_constraint.to_dict()
 
         # v5.0.2: drain any rejections recorded by scenario.apply_action this iter
         # and surface them in the next-iter feedback. Per founder principle "no
@@ -668,7 +677,10 @@ def run_scenario(
             # Handle parametrised IDs like `test_X[case1]` → bare = `test_X`
             bare = bare.split("[", 1)[0]
             _passing_bare_names.add(bare)
-        contract_dict["_passing_tests_last_iter"] = _passing_bare_names
+        # pure_r_strict: don't expose passing set to scenario — merge will
+        # let any Gemma rewrite of a passing test land.
+        if not _pure_r_strict:
+            contract_dict["_passing_tests_last_iter"] = _passing_bare_names
 
         # 4d. not converged — generate feedback via auto_rewrite-style logic.
         model_tier = contract_dict.get("model_tier", "medium")
@@ -936,7 +948,7 @@ def _format_feedback_for_retry(violations: List[VerifierResult],
     """
     if not violations:
         return ""
-    if os.environ.get("CZL_FEEDBACK_MODE") == "pure_r":
+    if os.environ.get("CZL_FEEDBACK_MODE") in ("pure_r", "pure_r_strict"):
         lines: List[str] = ["### Verifier outputs (raw):"]
         for v in violations[:10]:
             lines.append("")
