@@ -631,9 +631,15 @@ class TestGenForExistingScenario(Scenario):
 
         path = os.path.join(workspace_dir, "data_pipeline.py")
         body = open(path, "r", encoding="utf-8").read() if os.path.isfile(path) else "(missing)"
-        # Existing test functions (so the prompt tells small model what NOT to repeat)
+        # Existing test functions (so the prompt tells small model what NOT to repeat).
+        # ADD-only fix: filter out hallucinated tests (bodies reference
+        # undefined names) from the "DO NOT rewrite" list — those names get
+        # released so Gemma can emit a same-name version to overwrite the
+        # broken one. Reuses v5.0.7 _validate_test_calls + _workspace_function_*.
         existing_test_funcs: List[str] = []
         existing_tests_content = ""
+        _ws_fns = self._workspace_function_names(workspace_dir)
+        _ws_sigs = _workspace_function_signatures(workspace_dir)
         for r, _, fs in os.walk(workspace_dir):
             for f in fs:
                 if f.startswith("test_") and f.endswith(".py"):
@@ -643,7 +649,25 @@ class TestGenForExistingScenario(Scenario):
                     except Exception:
                         continue
                     existing_tests_content += c
-                    existing_test_funcs.extend(_extract_test_functions(c).keys())
+                    _imports, _fixtures, _tests = _split_test_block(c)
+                    _imported_names: set = set()
+                    for line in _imports.splitlines():
+                        s = line.strip()
+                        if not s:
+                            continue
+                        if s.startswith("from ") and " import " in s:
+                            for piece in s.split(" import ", 1)[1].split(","):
+                                piece = piece.strip().split(" as ")[0].rstrip("()")
+                                if piece:
+                                    _imported_names.add(piece)
+                        elif s.startswith("import "):
+                            first = s[7:].strip().split(",")[0].split(" as ")[0].split(".")[0]
+                            if first:
+                                _imported_names.add(first)
+                    _allowed = _ws_fns | _imported_names | set(_fixtures.keys()) | set(_tests.keys())
+                    for _tname, _tsrc in _tests.items():
+                        if not _validate_test_calls(_tsrc, _allowed, _ws_sigs):
+                            existing_test_funcs.append(_tname)
 
         if is_small:
             existing_listing = "\n".join(f"  - {n}" for n in existing_test_funcs) or "  (none yet)"
