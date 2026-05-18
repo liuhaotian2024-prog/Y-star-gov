@@ -784,6 +784,19 @@ class TestGenForExistingScenario(Scenario):
     # an apply-layer reject. The method that used to enforce the gate is
     # also deleted (no dead code that a future refactor could resurrect).
 
+    def _workspace_module_names(self, workspace_dir: str) -> set:
+        """v5.0.4: enumerate `.py` files in workspace as importable module
+        names. Used by _merge_test_functions to filter hallucinated imports.
+        """
+        names = set()
+        try:
+            for f in os.listdir(workspace_dir):
+                if f.endswith(".py") and not f.startswith("__"):
+                    names.add(f[:-3])
+        except OSError:
+            pass
+        return names
+
     def _merge_test_functions(self, workspace_dir: str, rel_path: str, content: str) -> None:
         """v3.4 T1 ADD-only merge.
 
@@ -826,14 +839,36 @@ class TestGenForExistingScenario(Scenario):
         merged_tests = dict(existing_tests)
         merged_tests.update(new_tests)
 
-        # Merge imports (dedupe by line text)
+        # v5.0.4: filter new imports against workspace inventory + stdlib + pytest.
+        # gemma 4B hallucinated `from data_processing import clean_data` (the
+        # actual module is `data_pipeline` with `clean_records`). When such
+        # imports land in the merged file, pytest collection fails → all
+        # tests become 0 passing → dominance rollback → oscillation. Strip
+        # imports that reference modules NOT in workspace; log rejection.
+        workspace_modules = self._workspace_module_names(workspace_dir)
+        stdlib_allowed = _STDLIB_ALLOWLIST  # module-level constant
+
         all_imports_lines: List[str] = []
         seen_imports = set()
         for src in (existing_imports + "\n" + new_imports).splitlines():
             stripped = src.strip()
-            if stripped and stripped not in seen_imports:
-                all_imports_lines.append(src.rstrip())
-                seen_imports.add(stripped)
+            if not stripped or stripped in seen_imports:
+                continue
+            # Validate the import target
+            top_module = _import_top_module(stripped)
+            if top_module is not None and top_module not in workspace_modules and top_module not in stdlib_allowed:
+                # Hallucinated module — log rejection so model sees it in feedback
+                self._rejection_log.append({
+                    "path": rel_path,
+                    "reason": (
+                        f"import `{stripped}` references module `{top_module}` which does NOT exist in workspace. "
+                        f"Workspace modules: {sorted(workspace_modules)}. "
+                        f"Stdlib + pytest allowed automatically. Re-emit using one of those."
+                    ),
+                })
+                continue
+            all_imports_lines.append(src.rstrip())
+            seen_imports.add(stripped)
 
         # Merge fixtures (by name — keep first-seen unless new replaces)
         merged_fixtures = dict(existing_fixtures)
@@ -882,6 +917,35 @@ class TestGenForExistingScenario(Scenario):
         os.makedirs(os.path.dirname(full) or workspace_dir, exist_ok=True)
         with open(full, "w", encoding="utf-8") as f:
             f.write(content)
+
+
+# v5.0.4: stdlib + pytest allowlist for import validation. Hallucinated
+# imports (e.g. gemma's `from data_processing import clean_data` when the
+# real module is data_pipeline) get filtered at merge time → workspace
+# stays collectible. Allowlist is conservative — common imports a test
+# file legitimately uses.
+_STDLIB_ALLOWLIST: set = {
+    "pytest", "json", "os", "sys", "re", "math", "time", "datetime",
+    "pathlib", "tempfile", "io", "collections", "typing", "functools",
+    "itertools", "operator", "string", "copy", "decimal", "fractions",
+    "random", "statistics", "abc", "dataclasses", "enum", "contextlib",
+    "warnings", "unittest", "subprocess", "builtins",
+}
+
+
+def _import_top_module(import_line: str) -> str:
+    """Extract the top-level module from `import X` or `from X.y import Z`.
+    Returns None if the line is not an import statement.
+    """
+    s = import_line.strip()
+    if s.startswith("from "):
+        rest = s[5:].split(" import ")[0].strip()
+        return rest.split(".")[0] if rest else None
+    if s.startswith("import "):
+        rest = s[7:].strip()
+        first = rest.split(",")[0].split(" ")[0].strip()
+        return first.split(".")[0] if first else None
+    return None
 
 
 def _split_test_block(content: str) -> tuple:
