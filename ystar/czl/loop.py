@@ -339,15 +339,23 @@ def run_scenario(
 
         # v3.7 T2: capture the full prompt the model sees this iter.
         # v4.0 T4: prepend prior iter's probe results so the model sees
-        # what it observed last time. Order: probes → task prompt → feedback.
+        # what it observed last time. Order: probes → focus suggestion
+        # (v5.0.1) → task prompt → feedback.
         probe_section = ""
         if step_idx > 0 and (step_idx - 1) < len(result.iter_probes) and result.iter_probes[step_idx - 1]:
             from ystar.czl.probe import render_probe_results_block
             probe_section = render_probe_results_block(
                 step_idx - 1, result.iter_probes[step_idx - 1]
             ) + "\n\n"
+        # v5.0.1 Task B: focus_constraint rendered as SOFT SUGGESTION
+        # (no "must" / "only" / "forbidden" language). The model is free
+        # to ignore it. This replaces v5.0's hard-reject in apply_action.
+        focus_section = _render_focus_suggestion(_active_focus_constraint) if _active_focus_constraint else ""
+        if focus_section:
+            focus_section += "\n\n"
         composed_user_prompt = (
             probe_section
+            + focus_section
             + step.user_prompt
             + ("\n\n" + feedback_block if feedback_block else "")
         )
@@ -663,6 +671,46 @@ def _build_cieu_event(
         "chain_depth": step_idx,
         "created_at": time.time(),
     }
+
+
+def _render_focus_suggestion(focus_constraint: Any) -> str:
+    """v5.0.1 Task B: render focus_constraint as a SOFT SUGGESTION block.
+
+    Language deliberately uses 'suggestion', 'pointer', 'free to choose
+    otherwise' — never 'must', 'only', 'forbidden'. The block conveys
+    RLE's analysis of where the residual signal points; the model is
+    free to ignore it.
+    """
+    if focus_constraint is None:
+        return ""
+    tc = getattr(focus_constraint, "target_cluster", None)
+    af = getattr(focus_constraint, "allowed_files", None)
+    rationale = getattr(focus_constraint, "rationale", "") or ""
+    if not (tc or af or rationale):
+        return ""
+    lines = ["## Focus suggestion (from RLE residual analysis)"]
+    lines.append("")
+    lines.append(
+        "Based on the structured R_{t+1} from the previous iter, the residual "
+        "signal points at the following region. This is a SUGGESTION — you're "
+        "free to choose a different angle if you see a better one."
+    )
+    if tc:
+        lines.append("")
+        lines.append(f"- **Pointer to cluster**: `{tc.get('file', '?')}:{tc.get('lineno', '?')}`"
+                     + (f" ({tc.get('count', '?')} failures share this location)" if tc.get('count') else ""))
+    if af:
+        files_list = sorted(af) if isinstance(af, (list, set, tuple)) else [str(af)]
+        lines.append(f"- **Files most relevant to the current residual**: {', '.join(files_list)}")
+    if rationale:
+        lines.append(f"- **Why this pointer**: {rationale}")
+    lines.append("")
+    lines.append(
+        "Note: the loop will not reject your output if you edit elsewhere — "
+        "the suggestion is informational. The verifier will judge whatever "
+        "you produce."
+    )
+    return "\n".join(lines)
 
 
 def _format_feedback_for_retry(violations: List[VerifierResult],

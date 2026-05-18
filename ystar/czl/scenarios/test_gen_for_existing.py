@@ -735,18 +735,24 @@ class TestGenForExistingScenario(Scenario):
     def apply_action(self, action: Any, workspace_dir: str,
                      contract: Optional[Dict[str, Any]] = None) -> None:
         """v3.4 T1: handle `add_tests_file` + v3.3 `edit_file` / `create_file`.
-        v5.0 Task C: consult contract['_focus_constraint'].allowed_files
-        (RLE-imposed U_{t+1}); reject writes that go out of bounds.
+
+        v5.0.1 design correction:
+          v5.0 Task C added a hard-reject path via _focus_constraint_allows
+          that SILENTLY discarded writes outside focus_constraint.allowed_files.
+          Combined with v3.7 dominance rollback, that locked gemma in place
+          (48 iters at residual=1.5, passing=36, zero improvement). v5.0.1
+          deletes the hard-reject. focus_constraint now flows ONLY through
+          the prompt as a SUGGESTION (see loop.py render_focus_suggestion).
+          The model is free to ignore it.
+
+          INVARIANT (do not regress in future v5.x): apply_action must
+          never silently discard model output. Any rejection MUST be
+          surfaced in next-iter feedback. v5.0.1 chooses the simplest
+          path — no rejection at all at this layer.
         """
         action_type = action.get("type", "") if isinstance(action, dict) else getattr(action, "type", "")
         payload = action.payload if hasattr(action, "payload") else action
         rel_path = payload.get("path", "")
-        contract = contract or {}
-        # v5.0 Task C: hard enforcement
-        if action_type in ("add_tests_file", "edit_file", "create_file"):
-            if not self._focus_constraint_allows(rel_path, contract):
-                # Reject silently — the loop sees the failed verifier next iter
-                return
         if action_type == "add_tests_file":
             self._merge_test_functions(workspace_dir, rel_path, payload.get("content", ""))
             return
