@@ -92,27 +92,30 @@ class IterSnapshot:
 
 
 def dominates(a: "IterSnapshot", b: "IterSnapshot") -> bool:
-    """v3.7 dominance check.
+    """v5.0.3 strict-superset-only dominance.
 
-    a dominates b iff a's passing-test set is a non-strict superset of
-    b's, AND one of:
-      - strictly more passing tests (a.passing_tests > b.passing_tests), OR
-      - same passing set but a is the earlier iter (tie-break — current
-        regressed to a previously-explored state; roll back for clean
-        baseline).
+    a dominates b iff a.passing_tests is a STRICT SUPERSET of b.passing_tests
+    (a passes everything b passes PLUS at least one more). Equal passing
+    sets explicitly do NOT count as dominance.
+
+    Why v3.7's iter_idx tie-break was removed (v5.0.2 sanity post-mortem):
+      gemma 4B's ADD-only protocol with merge-by-name means re-emitting
+      the same N test functions produces the IDENTICAL file blob. The
+      v3.7 tie-break then fired every iter (passing_set unchanged, earlier
+      iter "dominates" → rollback). Gemma made apparent progress (writes
+      land at apply layer, get rejection-logged for any out-of-bounds
+      paths), but T4 rollback erased it because tie-break treated
+      "identical state" as a dominance event. 6 iters = 6 rollbacks. Stuck.
+
+    "Equivalent state" is not "better state". Removed.
 
     Empty passing sets on both sides → False (graceful degradation when
-    pytest verifier didn't produce per_test_status, e.g. infra timeout).
+    pytest verifier didn't produce per_test_status).
     """
     if not a.passing_tests and not b.passing_tests:
         return False
-    if not (a.passing_tests >= b.passing_tests):
-        return False
-    # Strictly more passing tests
-    if a.passing_tests > b.passing_tests:
-        return True
-    # Tie-break: same passing set, earlier iter
-    return a.iter_idx < b.iter_idx
+    # set > set is strict superset in Python — exactly what we want.
+    return a.passing_tests > b.passing_tests
 
 
 @dataclass
@@ -144,6 +147,10 @@ class CZLResult:
     iter_snapshots: List[Dict[str, Any]] = field(default_factory=list)
     # v4.0 T4: per-iter probe executions (List[List[probe_result_dict]])
     iter_probes: List[List[Dict[str, Any]]] = field(default_factory=list)
+    # v5.0.3: raw model response text per iter. Captures backend_response.raw_text
+    # so trial diagnostics can answer "what did gemma actually output" — the
+    # data we needed for v5.0.2 post-mortem and didn't have.
+    iter_responses: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         d = dict(self.__dict__)
@@ -315,8 +322,13 @@ def run_scenario(
     # v5.0: RLE owns halt decisions (convergence / oscillation / escalation).
     # request.max_iterations is INFORMATIONAL only — the actual cap is RLE's
     # max_iterations (set above when constructing _rle).
+    # v5.0.3: wrap the loop body in try/except so external backend
+    # crashes (Ollama GGML assert, LiteLLM APIConnectionError, etc.)
+    # don't drop the in-flight CZLResult. Partial iter_prompts /
+    # iter_responses / iter_snapshots are preserved.
     step_idx = -1
-    while True:
+    try:
+      while True:
         step_idx += 1
         # v3.4 T1: pass contract to plan() so scenarios can branch on
         # model_tier and emit tier-appropriate prompt formats (e.g. ADD-only
@@ -370,6 +382,9 @@ def run_scenario(
             workspace_dir=request.workspace_dir,
             contract=contract_dict,
         )
+        # v5.0.3: capture raw response so diagnostics can answer
+        # "what did the model literally output?" (was missing in v5.0.2)
+        result.iter_responses.append(backend_response.raw_text or "")
         result.total_input_tokens += backend_response.input_tokens
         result.total_output_tokens += backend_response.output_tokens
         result.total_cost_usd += backend_response.cost_usd
@@ -576,12 +591,27 @@ def run_scenario(
         # owned by ResidualLoopEngine above. This block intentionally empty.
         pass
 
+    except Exception as _loop_exc:
+        # v5.0.3: external infrastructure failure (e.g. Ollama GGML crash).
+        # Preserve the partial CZLResult — iter_prompts, iter_responses,
+        # iter_snapshots already populated up to this point. Fall through
+        # to finalize.
+        _log.warning(
+            "CZL v5.0.3: loop exception at iter %d: %s: %s — preserving partial result",
+            step_idx, type(_loop_exc).__name__, str(_loop_exc)[:200],
+        )
+        if not result.failure_reason:
+            result.failure_reason = f"backend_exception: {type(_loop_exc).__name__}: {str(_loop_exc)[:300]}"
+        result.stopping_authority = "backend_exception"
+        result.halted_due_to = "backend_exception"
+
     # --- Step 5: finalize ---------------------------------------------------
     if not result.converged:
         if not result.stopping_authority:
             # v3.8: shouldn't happen — the loop only exits via converged/
             # no_progress/resource_safeguard/scenario_empty (or break in
-            # rollback fail). Defensive fallback string.
+            # rollback fail). v5.0.3: backend_exception is now a normal
+            # exit path (Ollama GGML crashes mid-trial).
             result.stopping_authority = "unknown_exit"
             result.halted_due_to = "unknown_exit"
         result.failure_reason = (

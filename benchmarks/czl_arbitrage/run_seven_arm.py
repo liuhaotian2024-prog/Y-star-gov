@@ -252,6 +252,8 @@ def run_one_trial(
             record["iter_prompts"] = list(getattr(result, "iter_prompts", []))
             # v3.7 T1: per-iter dominance snapshots
             record["iter_snapshots"] = list(getattr(result, "iter_snapshots", []))
+            # v5.0.3: raw model responses per iter (what gemma literally output)
+            record["iter_responses"] = list(getattr(result, "iter_responses", []))
         else:
             plan_steps = scenario.plan(task_description, workspace_dir)
             first_prompt = plan_steps[0].user_prompt if plan_steps else task_description
