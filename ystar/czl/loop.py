@@ -341,9 +341,14 @@ def run_scenario(
     #                     rollback, no focus_constraint, no inventory/probe
     #                     in initial prompt, no rejection_log writes. Truly
     #                     bare R-loop: Trampoline = verifier + raw feedback.
+    #   "v3_8_baseline" — v3.4-v3.8 reactive feedback (META + hint +
+    #                     ADD-only) PLUS strip v4.0 inventory + probe from
+    #                     initial prompt. Engineering layer (RLE / AST /
+    #                     passing protection / dominance) preserved but
+    #                     SILENT — feedback never tells Gemma about it.
     # In all modes, RLE drives the loop; governance contract 8/8 still passes.
     _feedback_mode = os.environ.get("CZL_FEEDBACK_MODE", "full")
-    _minimal_feedback = _feedback_mode in ("minimal", "pure_r", "pure_r_strict")
+    _minimal_feedback = _feedback_mode in ("minimal", "pure_r", "pure_r_strict", "v3_8_baseline")
     _pure_r_strict = _feedback_mode == "pure_r_strict"
 
     step_idx = -1

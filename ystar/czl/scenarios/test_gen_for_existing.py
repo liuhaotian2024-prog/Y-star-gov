@@ -616,8 +616,12 @@ class TestGenForExistingScenario(Scenario):
         # v4.0 T5: environment inventory section at the very top.
         # pure_r_strict: skip inventory + probe rendering entirely — initial
         # prompt has only task / Y* spec / output format per founder design.
-        _strict = os.environ.get("CZL_FEEDBACK_MODE") == "pure_r_strict"
-        if _strict:
+        # v3_8_baseline: skip inventory too (it's v4.0 — post-v3.8) but keep
+        # existing-test listing and ADD-only narrative (v3.4 era convention).
+        _mode = os.environ.get("CZL_FEEDBACK_MODE")
+        _strict = _mode == "pure_r_strict"
+        _skip_inventory = _mode in ("pure_r_strict", "v3_8_baseline")
+        if _skip_inventory:
             inventory_section = ""
         else:
             from ystar.czl.inventory import WorkspaceInventory
