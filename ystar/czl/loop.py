@@ -637,26 +637,34 @@ def run_scenario(
                 break  # one NameError hint per iter is enough
         if _nameerror_hint:
             _response_signals.append(_nameerror_hint)
-        if _response_signals:
-            _signal_block = "\n\n## Output-level signal from last iter\n\n" + "\n\n".join(_response_signals)
-            feedback_block = _signal_block + ("\n\n" + feedback_block if feedback_block else "")
         # update passing tracker for next iter's delta_from_prev
         _curr_status = _extract_status(verifier_results)
         _prev_passing_tests = {n for n, p in _curr_status.items() if p}
 
         # 4d. not converged — generate feedback via auto_rewrite-style logic.
-        # v3.3 D.3: pick message vs message_natural based on backend's
-        # capacity tier — small / tiny models get prose; medium / large
-        # keep structured.
         model_tier = contract_dict.get("model_tier", "medium")
-        # v3.5 T5 + v3.6: record this iter into reflection (incl. transition
-        # tracker), then synthesise META text (regression > cluster > repetition).
         reflection.record(step_idx, verifier_results)
         meta = reflection.analyze(iter_idx=step_idx)
         meta_text = meta.render() if not meta.is_empty() else ""
         feedback_block = _format_feedback_for_retry(
             last_violations, model_tier=model_tier, meta_text=meta_text,
         )
+        # v5.0.6: signal-block PREPENDED AFTER _format_feedback_for_retry so
+        # it's not overwritten. Bug fix: in v5.0.5 the signal block was
+        # appended BEFORE _format_feedback_for_retry call, which then
+        # replaced feedback_block, wiping the signals. Verified by
+        # inspecting iter_prompts (0/51 contained "Output-level signal").
+        if _response_signals:
+            _signal_block = "## Output-level signal from last iter\n\n" + "\n\n".join(_response_signals)
+            feedback_block = _signal_block + ("\n\n" + feedback_block if feedback_block else "")
+        # Also re-append rejections (similar order bug — drained earlier, may have been wiped)
+        if _iter_rejections:
+            _rej_lines = ["## Writes from your last iter that were REJECTED",
+                          "(your edit blocks targeted paths the scenario doesn't allow; "
+                          "the verifier saw the PREVIOUS workspace state)\n"]
+            for rj in _iter_rejections:
+                _rej_lines.append(f"- `{rj['path']}`: {rj['reason']}")
+            feedback_block = ("\n".join(_rej_lines) + "\n\n" + feedback_block) if feedback_block else "\n".join(_rej_lines)
 
         # v5.0: v3.8 dual-dim no_progress + resource_safeguard DELETED.
         # All halt decisions (convergence, oscillation, escalation) are
