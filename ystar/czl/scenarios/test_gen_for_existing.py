@@ -885,18 +885,20 @@ class TestGenForExistingScenario(Scenario):
         helper_names = set(existing_tests.keys())  # existing tests can be referenced
         allowed_call_names = workspace_fns | imported_names | fixture_names | helper_names
 
+        # v5.2: workspace signatures for arity validation
+        workspace_sigs = _workspace_function_signatures(workspace_dir)
         validated_new_tests: Dict[str, str] = {}
         for tname, tsrc in new_tests.items():
-            undefined = _validate_test_calls(tsrc, allowed_call_names)
-            if undefined:
+            violations = _validate_test_calls(tsrc, allowed_call_names, workspace_sigs)
+            if violations:
                 self._rejection_log.append({
                     "path": rel_path,
                     "reason": (
-                        f"test `{tname}` references undefined function name(s) {undefined}. "
+                        f"test `{tname}` has issues: {violations}. "
                         f"Workspace exports: {sorted(workspace_fns)}. "
-                        f"Imported: {sorted(imported_names)}. "
-                        "Re-emit the test using ONLY these callable names (or pytest fixtures). "
-                        "Examples like `clean_data` / `process_data` / `normalize_record` are NOT in this workspace — use `clean_records`, `normalize_email`, etc."
+                        f"Re-emit using ONLY these callables AND respect their signatures: "
+                        + ", ".join(f"{n}({','.join(['_'] * sig[0])})" for n, sig in sorted(workspace_sigs.items())[:6])
+                        + ". Common mistake: `clean_records(records)` is wrong — needs `clean_records(records, schema)`."
                     ),
                 })
                 continue  # drop this test from merge
@@ -1037,7 +1039,41 @@ _PYTEST_API_NAMES: set = {
 }
 
 
-def _validate_test_calls(test_src: str, allowed_call_names: set) -> List[str]:
+def _workspace_function_signatures(workspace_dir: str) -> Dict[str, tuple]:
+    """v5.2: extract (min_arity, max_arity, kw_names) per workspace function/class.
+    Used to validate call arity at merge time so wrong-arity tests don't land.
+    """
+    sigs: Dict[str, tuple] = {}
+    try:
+        for f in os.listdir(workspace_dir):
+            if not f.endswith(".py") or f.startswith("test_") or f.startswith("__"):
+                continue
+            try:
+                tree = ast.parse(open(os.path.join(workspace_dir, f),
+                                      encoding="utf-8").read())
+            except (OSError, SyntaxError):
+                continue
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    pos_args = list(node.args.args)
+                    defaults = node.args.defaults
+                    min_a = max(0, len(pos_args) - len(defaults))
+                    max_a = 10_000 if node.args.vararg is not None else len(pos_args)
+                    kw_names = {a.arg for a in node.args.kwonlyargs}
+                    kw_names |= {a.arg for a in pos_args}
+                    sigs[node.name] = (min_a, max_a, kw_names,
+                                       node.args.kwarg is not None)
+                elif isinstance(node, ast.ClassDef):
+                    # Class is callable (constructor). Default to "0 or 1" — most
+                    # classes accept up to a couple init args; permissive default.
+                    sigs[node.name] = (0, 10_000, set(), True)
+    except OSError:
+        pass
+    return sigs
+
+
+def _validate_test_calls(test_src: str, allowed_call_names: set,
+                          workspace_signatures: Optional[Dict[str, tuple]] = None) -> List[str]:
     """v5.0.7: AST-walk a test function body; return sorted list of bare-Name
     function-call targets that are not defined locally and not in
     `allowed_call_names`. Empty list = OK (no hallucinated calls).
@@ -1101,16 +1137,43 @@ def _validate_test_calls(test_src: str, allowed_call_names: set) -> List[str]:
             locals_seen.add(node.name)
 
     undefined_calls: set = set()
+    arity_violations: List[str] = []
+    sigs = workspace_signatures or {}
     for node in ast.walk(fn_node):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             name = node.func.id
-            if (name in locals_seen
-                    or name in allowed_call_names
-                    or name in builtin_names
-                    or name in _PYTEST_API_NAMES):
+            recognised = (
+                name in locals_seen
+                or name in allowed_call_names
+                or name in builtin_names
+                or name in _PYTEST_API_NAMES
+            )
+            if not recognised:
+                undefined_calls.add(name)
                 continue
-            undefined_calls.add(name)
-    return sorted(undefined_calls)
+            # v5.2: arity check for known workspace functions
+            sig = sigs.get(name)
+            if sig is not None:
+                min_a, max_a, kw_names_accepted, has_var_keyword = sig
+                pos_args = sum(1 for a in node.args if not isinstance(a, ast.Starred))
+                has_star = any(isinstance(a, ast.Starred) for a in node.args)
+                has_double_star = any(kw.arg is None for kw in node.keywords)
+                if not (has_star or has_double_star):
+                    if pos_args < min_a or pos_args > max_a:
+                        arity_violations.append(
+                            f"{name}: passed {pos_args} positional args but signature accepts {min_a}-{max_a}"
+                        )
+                    else:
+                        # Also flag unknown keyword names
+                        if not has_var_keyword:
+                            for kw in node.keywords:
+                                if kw.arg and kw.arg not in kw_names_accepted:
+                                    arity_violations.append(
+                                        f"{name}: keyword `{kw.arg}` not accepted (only {sorted(kw_names_accepted)})"
+                                    )
+    # Surface arity violations alongside undefined_calls so caller treats
+    # them as rejection-worthy.
+    return sorted(undefined_calls) + sorted(set(arity_violations))
 
 
 def _normalise_src(s: str) -> str:
