@@ -20,22 +20,17 @@ from ystar.czl.reflection.cluster import (
     cluster_pytest_failures,
     render_cluster_text,
 )
-from ystar.czl.reflection.repetition import (
-    failure_fingerprint,
-    detect_repetition,
-)
+# v5.0 Task E: repetition + no_progress modules retired.
+#   - v3.5 repetition META → replaced by ResidualLoopEngine._oscillation_detected
+#   - v3.8 no_progress (is_no_progress_v3_8 / adaptive_no_progress_window /
+#     query_safeguard_wall_cap) → replaced by RLE's max_iterations + oscillation
+# These imports are intentionally removed. Files retained on disk for git
+# history; not loaded by the runtime.
 from ystar.czl.reflection.transitions import (
     TransitionTracker,
     extract_test_status,
     parse_pytest_v_outcomes,
     render_regression_meta,
-)
-from ystar.czl.reflection.no_progress import (
-    adaptive_no_progress_window,
-    is_no_progress_v3_8,
-    query_converged_stats,
-    query_safeguard_wall_cap,
-    arm_to_tier,
 )
 from ystar.czl.reflection.analyzer import (
     ReflectionAnalyzer,
@@ -46,17 +41,10 @@ __all__ = [
     "FailureCluster",
     "cluster_pytest_failures",
     "render_cluster_text",
-    "failure_fingerprint",
-    "detect_repetition",
     "TransitionTracker",
     "extract_test_status",
     "parse_pytest_v_outcomes",
     "render_regression_meta",
-    "adaptive_no_progress_window",
-    "is_no_progress_v3_8",
-    "query_converged_stats",
-    "query_safeguard_wall_cap",
-    "arm_to_tier",
     "ReflectionAnalyzer",
     "ReflectionMeta",
 ]

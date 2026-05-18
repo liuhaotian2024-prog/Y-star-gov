@@ -231,13 +231,58 @@ def run_scenario(
     if request.auto_undo_on_failure:
         stash_ref = _git_stash_create(request.workspace_dir, request.run_id)
 
-    # --- Step 4: the CZL loop ----------------------------------------------
-    # NOTE: we wire ResidualLoopEngine here but in MVP we use a simpler
-    # step-by-step driver, because indie tasks have explicit plan structure.
-    # ResidualLoopEngine's autonomy_engine integration is reserved for
-    # multi-agent setups where the next U is computed by another agent.
+    # --- Step 4: the CZL loop (v5.0 — RLE-driven) --------------------------
+    # v5.0: ResidualLoopEngine is the closed-loop control authority. Every
+    # iter constructs a structured ResidualState (the Y_{t+1} of CZL's CIEU
+    # tuple), dispatches it to RLE via on_cieu_event, and reads RLE's
+    # halt-event emission (CONVERGED / OSCILLATION / ESCALATE) to decide
+    # whether to continue. v3.8 dual-dim no_progress / max_iter-removal /
+    # resource-safeguard are DELETED — RLE owns those decisions.
     last_violations: List[VerifierResult] = []
     feedback_block: str = ""
+
+    from ystar.czl.residual import (
+        ResidualState, build_residual_state, czl_distance_function,
+        Y_STAR_ALL_PASS,
+    )
+    from ystar.czl.autonomy import CZLAutonomyEngine, FocusConstraint
+
+    # In-memory halt-aware CIEU sink — captures RLE's emitted events so
+    # the loop can read halt state without polling a real DB.
+    class _HaltAwareSink:
+        def __init__(self) -> None:
+            self.events: List[Dict[str, Any]] = []
+
+        def write_dict(self, ev: Dict[str, Any]) -> bool:
+            self.events.append(ev)
+            return True
+
+        def latest_halt_event_type(self) -> Optional[str]:
+            for ev in reversed(self.events):
+                t = ev.get("event_type", "")
+                if t in (
+                    "RESIDUAL_LOOP_CONVERGED",
+                    "RESIDUAL_LOOP_OSCILLATION",
+                    "RESIDUAL_LOOP_ESCALATE",
+                ):
+                    return t
+            return None
+
+    _czl_autonomy = CZLAutonomyEngine()
+    _czl_sink = _HaltAwareSink()
+    _rle = ResidualLoopEngine(
+        autonomy_engine=_czl_autonomy,
+        cieu_store=_czl_sink,
+        target_provider=lambda ev: ev.get("params", {}).get("target_y_star"),
+        max_iterations=50,           # RLE's own max — generous; oscillation usually fires first
+        convergence_epsilon=0.001,   # czl_distance_function returns 0.0 when no failures
+        damping_gamma=0.95,
+        distance_function=czl_distance_function,
+    )
+    # Track passing tests across iters for delta_from_prev (v3.6 reused)
+    _prev_passing_tests: Optional[Set[str]] = None
+    # Current focus_constraint flowed into next iter's contract
+    _active_focus_constraint: Optional[FocusConstraint] = None
 
     # The loop drives Rt+1 to zero. Plan steps advance one-per-iteration until
     # we run out of distinct steps; further iterations re-attempt the final
@@ -267,33 +312,9 @@ def run_scenario(
         # standalone runs.
         _ensure_git_initialised(request.workspace_dir)
 
-    # v3.8 T2: passing-set trajectory parallel to residual_trajectory for
-    # dual-dim no_progress halt. Built every iter regardless of tier.
-    passing_set_trajectory: List[Set[str]] = []
-
-    # v3.8 T3: self-learning resource safeguard. Query past converged
-    # trials for (scenario, model_tier); if ≥3 samples → p90 wall × 2 is
-    # the cap. Insufficient history → None = no cap (open, trust no_progress).
-    from ystar.czl.reflection.no_progress import (
-        query_safeguard_wall_cap,
-        adaptive_no_progress_window,
-        is_no_progress_v3_8,
-    )
-    from ystar.czl.reflection.transitions import extract_test_status as _extract_status
-    adaptive_wall_cap = query_safeguard_wall_cap(
-        scenario=request.scenario.name,
-        model_tier=contract_dict.get("model_tier", "medium"),
-    )
-    if adaptive_wall_cap:
-        _log.info("CZL v3.8: resource safeguard cap = %.0fs (p90 x2 from history)",
-                  adaptive_wall_cap)
-    else:
-        _log.info("CZL v3.8: no historical safeguard data — open run, "
-                  "trusting v3.8 dual-dim no_progress halt")
-
-    # v3.8 T1: replaced `for step_idx in range(max_iterations)` with while True.
-    # Halt conditions: converged | scenario_empty_plan | no_progress | resource_safeguard.
-    # request.max_iterations is INFORMATIONAL only — no longer a hard cap.
+    # v5.0: RLE owns halt decisions (convergence / oscillation / escalation).
+    # request.max_iterations is INFORMATIONAL only — the actual cap is RLE's
+    # max_iterations (set above when constructing _rle).
     step_idx = -1
     while True:
         step_idx += 1
@@ -377,25 +398,38 @@ def run_scenario(
                 pr = executor.run(cmd)
                 this_iter_probes.append(pr.to_dict())
             else:
-                request.scenario.apply_action(action, request.workspace_dir)
+                # v5.0 Task C: pass contract so scenario.apply_action can
+                # enforce focus_constraint.allowed_files (RLE-imposed U_{t+1}).
+                try:
+                    request.scenario.apply_action(
+                        action, request.workspace_dir, contract=contract_dict
+                    )
+                except TypeError:
+                    # Legacy scenarios with 2-arg apply_action — fallback
+                    request.scenario.apply_action(action, request.workspace_dir)
         # Append this iter's probe results (always — even if empty) so
         # iter index aligns with result.iter_probes[step_idx].
         result.iter_probes.append(this_iter_probes)
 
-        # 4c. run scenario verifiers → compute Rt+1
+        # 4c. run scenario verifiers → build structured Y_{t+1}
         verifier_results = request.scenario.verify(request.workspace_dir, contract_dict)
         last_violations = [v for v in verifier_results if not v.passed]
-        residual = float(len(last_violations))
-        result.final_residual = residual
 
-        # Trajectory tracking — record residual BEFORE deciding to halt.
-        result.residual_trajectory.append(residual)
-
-        # v3.8 T2: track per-iter passing set in parallel to residual.
-        _iter_test_status = _extract_status(verifier_results)
-        passing_set_trajectory.append(
-            {n for n, p in _iter_test_status.items() if p}
+        # v5.0 Task A: build the structured ResidualState (Y_{t+1}).
+        # Previous residual_trajectory captures the scalar Rt+1 only —
+        # we keep it for diagnostics but RLE drives the halt decision
+        # against the typed object.
+        from ystar.czl.reflection.transitions import extract_test_status as _extract_status
+        residual_state = build_residual_state(
+            iteration=step_idx,
+            verifier_results=verifier_results,
+            prev_passing_tests=_prev_passing_tests,
+            residual_history=list(result.residual_trajectory),
         )
+        scalar_residual = czl_distance_function(Y_STAR_ALL_PASS, residual_state)
+        result.final_residual = scalar_residual
+        result.residual_trajectory.append(scalar_residual)
+        _czl_autonomy.observe(residual_state)
 
         # v3.7 T1: dominance-based rollback (small tier only).
         #
@@ -411,21 +445,21 @@ def run_scenario(
         # that lacks the hard fix, because dominance compares actual
         # passing-test SETS, not failing counts.
         if rollback_enabled:
-            current_commit = _git_commit_iter(request.workspace_dir, step_idx, residual)
+            current_commit = _git_commit_iter(request.workspace_dir, step_idx, scalar_residual)
             # Extract per-test status from this iter's verifiers (pytest).
             from ystar.czl.reflection.transitions import extract_test_status
             test_status = extract_test_status(verifier_results)
             passing = {n for n, p in test_status.items() if p}
             failing = {n for n, p in test_status.items() if not p}
             current_snapshot = IterSnapshot(
-                iter_idx=step_idx, residual=residual,
+                iter_idx=step_idx, residual=scalar_residual,
                 commit_sha=(current_commit or ""),
                 passing_tests=passing, failing_tests=failing,
             )
             iter_snapshots_history.append(current_snapshot)
             # Also expose for diagnostics:
             result.iter_snapshots.append({
-                "iter_idx": step_idx, "residual": residual,
+                "iter_idx": step_idx, "residual": scalar_residual,
                 "commit_sha": (current_commit or "")[:12],
                 "passing_count": len(passing), "failing_count": len(failing),
                 "passing_sample": sorted(passing)[:5],
@@ -440,30 +474,65 @@ def run_scenario(
                 # of the model's recent work we erase.
                 target = max(dominating, key=lambda s: s.iter_idx)
                 _log.warning(
-                    "CZL T4 (v3.7): iter %d (residual=%.0f, %d passing) is DOMINATED by "
-                    "iter %d (residual=%.0f, %d passing); rolling back workspace to %s",
-                    step_idx, residual, len(passing),
+                    "CZL T4 (v3.7): iter %d (residual=%.2f, %d passing) is DOMINATED by "
+                    "iter %d (residual=%.2f, %d passing); rolling back workspace to %s",
+                    step_idx, scalar_residual, len(passing),
                     target.iter_idx, target.residual, len(target.passing_tests),
                     (target.commit_sha or "")[:8],
                 )
                 _git_rollback_to(request.workspace_dir, target.commit_sha)
             else:
                 _log.info(
-                    "CZL T4 (v3.7): iter %d (residual=%.0f, %d passing) — no dominator "
+                    "CZL T4 (v3.7): iter %d (residual=%.2f, %d passing) — no dominator "
                     "in history; KEEPING current state (regression META will coach if needed)",
-                    step_idx, residual, len(passing),
+                    step_idx, scalar_residual, len(passing),
                 )
 
-        if residual == 0.0:
-            # converged — ship the current workspace as-is. The break here is
-            # what stops the loop touching a known-good answer; downstream
-            # consumers can rely on stopping_authority=="converged" to know
-            # the post-state files reflect the converged iteration.
+        # v5.0: dispatch to ResidualLoopEngine — the closed-loop authority.
+        # RLE writes RESIDUAL_LOOP_CONVERGED / _OSCILLATION / _ESCALATE
+        # to our in-memory sink; we read sink.latest_halt_event_type to
+        # decide whether to halt. This is the architectural integration
+        # the no_new_wheel_runtime_law contract requires.
+        _rle_event = {
+            "session_id": request.run_id,
+            "agent_id": "czl-iterator",
+            "event_type": "CZL_ITER_RESULT",
+            "decision": "info",
+            "params": {
+                "target_y_star": Y_STAR_ALL_PASS,
+                "y_actual": residual_state,
+                "iteration_idx": step_idx,
+            },
+            "created_at": time.time(),
+        }
+        _rle.on_cieu_event(_rle_event)
+        _halt = _czl_sink.latest_halt_event_type()
+        if _halt == "RESIDUAL_LOOP_CONVERGED":
             result.converged = True
             result.stopping_authority = "converged"
             result.halted_due_to = "converged"
             result.final_verifier_report = _summarize_verifiers(verifier_results)
             break
+        if _halt == "RESIDUAL_LOOP_OSCILLATION":
+            result.stopping_authority = "rle_oscillation"
+            result.halted_due_to = "rle_oscillation"
+            _log.info("CZL v5.0: RLE detected oscillation, halting at iter %d", step_idx)
+            break
+        if _halt == "RESIDUAL_LOOP_ESCALATE":
+            result.stopping_authority = "rle_escalate"
+            result.halted_due_to = "rle_escalate"
+            _log.warning("CZL v5.0: RLE escalated after max_iterations, halting at iter %d", step_idx)
+            break
+
+        # Pull next-action's focus_constraint from autonomy engine; the
+        # loop respects it on the NEXT iter (plan/apply_action).
+        _next_action = _czl_autonomy.pull_next_action("czl-agent")
+        if _next_action is not None and _next_action.focus_constraint is not None:
+            _active_focus_constraint = _next_action.focus_constraint
+            contract_dict["_focus_constraint"] = _active_focus_constraint.to_dict()
+        # update passing tracker for next iter's delta_from_prev
+        _curr_status = _extract_status(verifier_results)
+        _prev_passing_tests = {n for n, p in _curr_status.items() if p}
 
         # 4d. not converged — generate feedback via auto_rewrite-style logic.
         # v3.3 D.3: pick message vs message_natural based on backend's
@@ -479,42 +548,10 @@ def run_scenario(
             last_violations, model_tier=model_tier, meta_text=meta_text,
         )
 
-        # v3.8 T2 + T4: dual-dim adaptive no_progress halt.
-        # window = ceil(log2(history_len)) — no hardcoded constant.
-        # Halt only when BOTH residual not strictly decreasing AND passing
-        # set not strictly growing in the window. If passing is still
-        # growing, model is making real progress even at constant residual.
-        # Caller can still disable by setting CZLRun.no_progress_window=0.
-        if request.no_progress_window:
-            window = adaptive_no_progress_window(len(result.residual_trajectory))
-            if is_no_progress_v3_8(
-                result.residual_trajectory,
-                passing_set_trajectory,
-                window,
-            ):
-                result.stopping_authority = "no_progress"
-                result.halted_due_to = "no_progress"
-                _log.info(
-                    "CZL v3.8 halting (no_progress): window=%d both residual + passing stuck. "
-                    "residual_tail=%s passing_count_tail=%s",
-                    window,
-                    result.residual_trajectory[-(window + 1):],
-                    [len(p) for p in passing_set_trajectory[-(window + 1):]],
-                )
-                break
-
-        # v3.8 T3: self-learning resource safeguard. Fires only when
-        # (a) we have historical data (adaptive_wall_cap is not None) AND
-        # (b) wall time exceeds p90 × 2 from history. First run on a new
-        # (scenario, tier) pair → no cap → trust no_progress to halt.
-        if adaptive_wall_cap and (time.time() - started) > adaptive_wall_cap:
-            result.stopping_authority = "resource_safeguard"
-            result.halted_due_to = "resource_safeguard"
-            _log.warning(
-                "CZL v3.8 halting (resource_safeguard): wall=%.0fs > cap=%.0fs (p90 x2)",
-                time.time() - started, adaptive_wall_cap,
-            )
-            break
+        # v5.0: v3.8 dual-dim no_progress + resource_safeguard DELETED.
+        # All halt decisions (convergence, oscillation, escalation) are
+        # owned by ResidualLoopEngine above. This block intentionally empty.
+        pass
 
     # --- Step 5: finalize ---------------------------------------------------
     if not result.converged:

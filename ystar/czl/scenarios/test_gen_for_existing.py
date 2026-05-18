@@ -732,20 +732,43 @@ class TestGenForExistingScenario(Scenario):
         self._last_verifier_call_order = list(call_order)
         return results
 
-    def apply_action(self, action: Any, workspace_dir: str) -> None:
-        """v3.4 T1: handle `add_tests_file` (merge by function name into existing
-        file) in addition to the v3.3 `edit_file` / `create_file`.
+    def apply_action(self, action: Any, workspace_dir: str,
+                     contract: Optional[Dict[str, Any]] = None) -> None:
+        """v3.4 T1: handle `add_tests_file` + v3.3 `edit_file` / `create_file`.
+        v5.0 Task C: consult contract['_focus_constraint'].allowed_files
+        (RLE-imposed U_{t+1}); reject writes that go out of bounds.
         """
         action_type = action.get("type", "") if isinstance(action, dict) else getattr(action, "type", "")
         payload = action.payload if hasattr(action, "payload") else action
-
+        rel_path = payload.get("path", "")
+        contract = contract or {}
+        # v5.0 Task C: hard enforcement
+        if action_type in ("add_tests_file", "edit_file", "create_file"):
+            if not self._focus_constraint_allows(rel_path, contract):
+                # Reject silently — the loop sees the failed verifier next iter
+                return
         if action_type == "add_tests_file":
-            self._merge_test_functions(workspace_dir,
-                                        payload.get("path", ""),
-                                        payload.get("content", ""))
+            self._merge_test_functions(workspace_dir, rel_path, payload.get("content", ""))
             return
         if action_type in ("edit_file", "create_file"):
-            self._safe_write(workspace_dir, payload.get("path", ""), payload.get("content", ""))
+            self._safe_write(workspace_dir, rel_path, payload.get("content", ""))
+
+    def _focus_constraint_allows(self, rel_path: str, contract: Dict[str, Any]) -> bool:
+        """v5.0 Task C: hard-enforce focus_constraint.allowed_files.
+
+        When the contract carries a `_focus_constraint` with
+        `allowed_files` set, reject any write whose target file isn't in
+        that set. This implements RLE's U_{t+1} as a system-level
+        attention constraint, not a prompt-level suggestion.
+        """
+        fc = (contract or {}).get("_focus_constraint")
+        if not isinstance(fc, dict):
+            return True
+        allowed = fc.get("allowed_files")
+        if not allowed:
+            return True
+        basename = os.path.basename(rel_path)
+        return basename in allowed or rel_path in allowed
 
     def _merge_test_functions(self, workspace_dir: str, rel_path: str, content: str) -> None:
         """v3.4 T1 ADD-only merge.

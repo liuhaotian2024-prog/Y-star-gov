@@ -23,9 +23,7 @@ from typing import Any, List, Optional
 from ystar.czl.reflection.cluster import (
     cluster_pytest_failures, render_cluster_text,
 )
-from ystar.czl.reflection.repetition import (
-    failure_fingerprint, detect_repetition,
-)
+# v5.0 Task E: repetition retired (replaced by RLE oscillation detection)
 from ystar.czl.reflection.transitions import (
     TransitionTracker, render_regression_meta,
 )
@@ -107,13 +105,6 @@ class ReflectionAnalyzer:
             if ctext:
                 meta.cluster_text = ctext
 
-        # v3.5: Repetition — last 2 iters.
-        if len(self.iter_history) >= 2:
-            meta.repetition_text = detect_repetition(self.iter_history, window=2)
-
+        # v5.0: repetition detection delegated to RLE._oscillation_detected.
+        # No repetition_text rendered here — RLE emits RESIDUAL_LOOP_OSCILLATION.
         return meta
-
-    def latest_fingerprint(self) -> str:
-        if not self.iter_history:
-            return ""
-        return failure_fingerprint(self.iter_history[-1])
