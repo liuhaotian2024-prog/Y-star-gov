@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -326,6 +327,13 @@ def run_scenario(
     # crashes (Ollama GGML assert, LiteLLM APIConnectionError, etc.)
     # don't drop the in-flight CZLResult. Partial iter_prompts /
     # iter_responses / iter_snapshots are preserved.
+    # baseline minimal-feedback gate: when CZL_FEEDBACK_MODE=minimal, strip
+    # v4.0 probe / v5.0.1 focus / v5.0.6 signal / v5.1 protection / v5.1
+    # rejection sections from the prompt. Engineering layer (RLE, AST
+    # validator, merge protection, tracker, rejection log capture) is
+    # untouched — only the prompt-rendering output end is filtered.
+    _minimal_feedback = os.environ.get("CZL_FEEDBACK_MODE") == "minimal"
+
     step_idx = -1
     try:
       while True:
@@ -354,7 +362,7 @@ def run_scenario(
         # what it observed last time. Order: probes → focus suggestion
         # (v5.0.1) → task prompt → feedback.
         probe_section = ""
-        if step_idx > 0 and (step_idx - 1) < len(result.iter_probes) and result.iter_probes[step_idx - 1]:
+        if (not _minimal_feedback) and step_idx > 0 and (step_idx - 1) < len(result.iter_probes) and result.iter_probes[step_idx - 1]:
             from ystar.czl.probe import render_probe_results_block
             probe_section = render_probe_results_block(
                 step_idx - 1, result.iter_probes[step_idx - 1]
@@ -362,7 +370,9 @@ def run_scenario(
         # v5.0.1 Task B: focus_constraint rendered as SOFT SUGGESTION
         # (no "must" / "only" / "forbidden" language). The model is free
         # to ignore it. This replaces v5.0's hard-reject in apply_action.
-        focus_section = _render_focus_suggestion(_active_focus_constraint) if _active_focus_constraint else ""
+        focus_section = "" if _minimal_feedback else (
+            _render_focus_suggestion(_active_focus_constraint) if _active_focus_constraint else ""
+        )
         if focus_section:
             focus_section += "\n\n"
         composed_user_prompt = (
@@ -703,14 +713,14 @@ def run_scenario(
             _protection_section = "\n".join(lines)
 
         # v5.0.6 signal block (response-level nudges)
-        if _response_signals:
+        if _response_signals and not _minimal_feedback:
             _signal_block = "## Output-level signal from last iter\n\n" + "\n\n".join(_response_signals)
             feedback_block = _signal_block + ("\n\n" + feedback_block if feedback_block else "")
 
         # v5.1 Task C: rejection log PROMINENT at the very top of feedback.
         # Drained earlier into _iter_rejections — render with explicit emoji
         # + reasons so the model can't miss them.
-        if _iter_rejections:
+        if _iter_rejections and not _minimal_feedback:
             _rej_lines = ["## 🚫 Last iter rejections (these edits were DROPPED)",
                           "Trampoline refused these changes because they would have broken "
                           "passing tests or referenced undefined names. Read carefully — do "
@@ -723,7 +733,7 @@ def run_scenario(
 
         # Protection / fix-zone goes at the VERY TOP — most prominent. Per
         # founder principle: passing protection drives gemma's edits.
-        if _protection_section:
+        if _protection_section and not _minimal_feedback:
             feedback_block = _protection_section + ("\n\n" + feedback_block if feedback_block else "")
 
         # v5.0: v3.8 dual-dim no_progress + resource_safeguard DELETED.
