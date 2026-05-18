@@ -637,9 +637,20 @@ def run_scenario(
                 break  # one NameError hint per iter is enough
         if _nameerror_hint:
             _response_signals.append(_nameerror_hint)
-        # update passing tracker for next iter's delta_from_prev
+        # update passing tracker for next iter's delta_from_prev + protection
         _curr_status = _extract_status(verifier_results)
         _prev_passing_tests = {n for n, p in _curr_status.items() if p}
+        _curr_failing_tests = {n for n, p in _curr_status.items() if not p}
+        # v5.1 Task B: extract BARE function names (strip "file.py::") and
+        # plumb to contract so scenario.apply_action's merge can enforce
+        # passing-test protection.
+        _passing_bare_names = set()
+        for full_id in _prev_passing_tests:
+            bare = full_id.split("::", 1)[1] if "::" in full_id else full_id
+            # Handle parametrised IDs like `test_X[case1]` → bare = `test_X`
+            bare = bare.split("[", 1)[0]
+            _passing_bare_names.add(bare)
+        contract_dict["_passing_tests_last_iter"] = _passing_bare_names
 
         # 4d. not converged — generate feedback via auto_rewrite-style logic.
         model_tier = contract_dict.get("model_tier", "medium")
@@ -649,22 +660,71 @@ def run_scenario(
         feedback_block = _format_feedback_for_retry(
             last_violations, model_tier=model_tier, meta_text=meta_text,
         )
-        # v5.0.6: signal-block PREPENDED AFTER _format_feedback_for_retry so
-        # it's not overwritten. Bug fix: in v5.0.5 the signal block was
-        # appended BEFORE _format_feedback_for_retry call, which then
-        # replaced feedback_block, wiping the signals. Verified by
-        # inspecting iter_prompts (0/51 contained "Output-level signal").
+
+        # v5.1 Task A: PASSING TESTS + FAILING TESTS double-list at top of
+        # feedback. The protection zone (passing names) tells the model
+        # what NOT to touch; failing names tell it what to fix. Realises
+        # R_{t+1} as a structured vector (passing dimensions vs failing
+        # dimensions), not a scalar.
+        _protection_section = ""
+        if _passing_bare_names or _curr_failing_tests:
+            lines = []
+            if _passing_bare_names:
+                lines.append("## ✅ Passing tests (PROTECTION ZONE — DO NOT MODIFY)")
+                lines.append(
+                    f"These {len(_passing_bare_names)} tests are PASSING. If you re-emit "
+                    "any of them with DIFFERENT content, your new version will be REJECTED "
+                    "and the passing version preserved. To make progress, edit ONLY the "
+                    "failing tests below."
+                )
+                lines.append("")
+                for n in sorted(_passing_bare_names)[:50]:
+                    lines.append(f"  - {n}")
+                if len(_passing_bare_names) > 50:
+                    lines.append(f"  (+{len(_passing_bare_names) - 50} more)")
+                lines.append("")
+            if _curr_failing_tests:
+                lines.append("## ⚠️ Failing tests (FIX ZONE — R_{t+1} > 0 here)")
+                lines.append(
+                    "Re-emit ONLY these test functions with corrected bodies. The protection "
+                    "above means you don't need to touch any passing test."
+                )
+                lines.append("")
+                failing_bare = set()
+                for full in _curr_failing_tests:
+                    bare = full.split("::", 1)[1] if "::" in full else full
+                    bare = bare.split("[", 1)[0]
+                    failing_bare.add(bare)
+                for n in sorted(failing_bare)[:50]:
+                    lines.append(f"  - {n}")
+                if len(failing_bare) > 50:
+                    lines.append(f"  (+{len(failing_bare) - 50} more)")
+                lines.append("")
+            _protection_section = "\n".join(lines)
+
+        # v5.0.6 signal block (response-level nudges)
         if _response_signals:
             _signal_block = "## Output-level signal from last iter\n\n" + "\n\n".join(_response_signals)
             feedback_block = _signal_block + ("\n\n" + feedback_block if feedback_block else "")
-        # Also re-append rejections (similar order bug — drained earlier, may have been wiped)
+
+        # v5.1 Task C: rejection log PROMINENT at the very top of feedback.
+        # Drained earlier into _iter_rejections — render with explicit emoji
+        # + reasons so the model can't miss them.
         if _iter_rejections:
-            _rej_lines = ["## Writes from your last iter that were REJECTED",
-                          "(your edit blocks targeted paths the scenario doesn't allow; "
-                          "the verifier saw the PREVIOUS workspace state)\n"]
+            _rej_lines = ["## 🚫 Last iter rejections (these edits were DROPPED)",
+                          "Trampoline refused these changes because they would have broken "
+                          "passing tests or referenced undefined names. Read carefully — do "
+                          "NOT retry the same edit.",
+                          ""]
             for rj in _iter_rejections:
-                _rej_lines.append(f"- `{rj['path']}`: {rj['reason']}")
-            feedback_block = ("\n".join(_rej_lines) + "\n\n" + feedback_block) if feedback_block else "\n".join(_rej_lines)
+                _rej_lines.append(f"  - `{rj['path']}`: {rj['reason']}")
+            _rej_block = "\n".join(_rej_lines)
+            feedback_block = _rej_block + ("\n\n" + feedback_block if feedback_block else "")
+
+        # Protection / fix-zone goes at the VERY TOP — most prominent. Per
+        # founder principle: passing protection drives gemma's edits.
+        if _protection_section:
+            feedback_block = _protection_section + ("\n\n" + feedback_block if feedback_block else "")
 
         # v5.0: v3.8 dual-dim no_progress + resource_safeguard DELETED.
         # All halt decisions (convergence, oscillation, escalation) are

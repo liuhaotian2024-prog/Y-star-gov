@@ -765,15 +765,14 @@ class TestGenForExistingScenario(Scenario):
         payload = action.payload if hasattr(action, "payload") else action
         rel_path = payload.get("path", "")
         if action_type == "add_tests_file":
-            self._merge_test_functions(workspace_dir, rel_path, payload.get("content", ""))
+            self._merge_test_functions(workspace_dir, rel_path,
+                                        payload.get("content", ""), contract=contract)
             return
         # v5.0.4: bare ```python blocks land here as "python_block" — route to
-        # the scenario's default test file. This rescues gemma 4B's natural
-        # markdown style without forcing the model to remember the
-        # ```add_tests test_data_pipeline.py syntax.
+        # the scenario's default test file.
         if action_type == "python_block":
             self._merge_test_functions(workspace_dir, "test_data_pipeline.py",
-                                        payload.get("content", ""))
+                                        payload.get("content", ""), contract=contract)
             return
         if action_type in ("edit_file", "create_file"):
             self._safe_write(workspace_dir, rel_path, payload.get("content", ""))
@@ -820,7 +819,8 @@ class TestGenForExistingScenario(Scenario):
             pass
         return names
 
-    def _merge_test_functions(self, workspace_dir: str, rel_path: str, content: str) -> None:
+    def _merge_test_functions(self, workspace_dir: str, rel_path: str, content: str,
+                                contract: Optional[Dict[str, Any]] = None) -> None:
         """v3.4 T1 ADD-only merge.
 
         Read existing file (or create blank), parse existing test functions,
@@ -902,9 +902,34 @@ class TestGenForExistingScenario(Scenario):
                 continue  # drop this test from merge
             validated_new_tests[tname] = tsrc
 
-        # Merge by function name: validated new takes precedence
+        # v5.1 Task B: protect passing tests. If gemma re-emits a test that
+        # was passing in the prior iter, only accept the new version if
+        # content is byte-equivalent. Different content → reject + log;
+        # passing version preserved. This realises R_{t+1} as a structured
+        # vector (passing dimensions are FIXED, only failing dimensions are
+        # mutable).
+        passing_test_names: Set[str] = set(
+            (contract or {}).get("_passing_tests_last_iter") or set()
+        )
         merged_tests = dict(existing_tests)
-        merged_tests.update(validated_new_tests)
+        for tname, new_src in validated_new_tests.items():
+            if tname in passing_test_names:
+                existing_src = existing_tests.get(tname, "")
+                # Normalise whitespace before equality check — minor cosmetic
+                # diffs (trailing newline, indent) shouldn't count as "changed"
+                if _normalise_src(new_src) != _normalise_src(existing_src):
+                    self._rejection_log.append({
+                        "path": rel_path,
+                        "reason": (
+                            f"test `{tname}` was PASSING in the previous iter — "
+                            f"your re-emitted version differs from the passing version, "
+                            f"so the passing version was PRESERVED and your edit dropped. "
+                            f"Focus edits on tests in the failing list, not on tests "
+                            f"in the protected/passing set."
+                        ),
+                    })
+                    continue  # keep existing (passing) version, drop new
+            merged_tests[tname] = new_src
 
         # v5.0.4: filter new imports against workspace inventory + stdlib + pytest.
         # gemma 4B hallucinated `from data_processing import clean_data` (the
@@ -1086,6 +1111,22 @@ def _validate_test_calls(test_src: str, allowed_call_names: set) -> List[str]:
                 continue
             undefined_calls.add(name)
     return sorted(undefined_calls)
+
+
+def _normalise_src(s: str) -> str:
+    """v5.1: whitespace-normalised source for content-equality check.
+    Strips trailing whitespace per line + leading/trailing blank lines.
+    Cosmetic diffs (extra blank line, trailing space) don't count as
+    "changed" when comparing a passing test's prior vs new version.
+    """
+    if not s:
+        return ""
+    lines = [ln.rstrip() for ln in s.splitlines()]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines)
 
 
 def _import_top_module(import_line: str) -> str:
