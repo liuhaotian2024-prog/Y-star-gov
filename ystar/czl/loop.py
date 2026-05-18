@@ -538,6 +538,21 @@ def run_scenario(
         if _next_action is not None and _next_action.focus_constraint is not None:
             _active_focus_constraint = _next_action.focus_constraint
             contract_dict["_focus_constraint"] = _active_focus_constraint.to_dict()
+
+        # v5.0.2: drain any rejections recorded by scenario.apply_action this iter
+        # and surface them in the next-iter feedback. Per founder principle "no
+        # silent reject" — any write the scenario refused must be visible to the model.
+        try:
+            _iter_rejections = request.scenario.consume_rejections()
+        except AttributeError:
+            _iter_rejections = []
+        if _iter_rejections:
+            _rej_lines = ["\n\n## Writes from your last iter that were REJECTED",
+                          "(your edit blocks targeted paths the scenario doesn't allow; "
+                          "the verifier saw the PREVIOUS workspace state)\n"]
+            for rj in _iter_rejections:
+                _rej_lines.append(f"- `{rj['path']}`: {rj['reason']}")
+            feedback_block = ("\n".join(_rej_lines) + "\n\n" + feedback_block) if feedback_block else "\n".join(_rej_lines)
         # update passing tracker for next iter's delta_from_prev
         _curr_status = _extract_status(verifier_results)
         _prev_passing_tests = {n for n, p in _curr_status.items() if p}

@@ -550,7 +550,18 @@ class TestGenForExistingScenario(Scenario):
 
     _last_verifier_call_order: List[str] = []
 
+    def consume_rejections(self) -> List[Dict[str, str]]:
+        """Return + clear the rejection log. Called by loop.py per iter."""
+        out = list(self._rejection_log)
+        self._rejection_log = []
+        return out
+
     def __init__(self) -> None:
+        # v5.0.2: per-instance rejection log (NOT class-level — avoid
+        # mutable-default sharing). Any silent return from _safe_write
+        # or _merge_test_functions appends here. The loop drains it
+        # per iter and surfaces entries in the next-iter feedback.
+        self._rejection_log: List[Dict[str, str]] = []
         self._cached_pytest = PytestPassVerifier()
         self._cached_coverage80 = Coverage80Verifier(target=0.80)
         self._cached_has_exc = HasExceptionTestsVerifier()
@@ -736,19 +747,19 @@ class TestGenForExistingScenario(Scenario):
                      contract: Optional[Dict[str, Any]] = None) -> None:
         """v3.4 T1: handle `add_tests_file` + v3.3 `edit_file` / `create_file`.
 
-        v5.0.1 design correction:
-          v5.0 Task C added a hard-reject path via _focus_constraint_allows
-          that SILENTLY discarded writes outside focus_constraint.allowed_files.
-          Combined with v3.7 dominance rollback, that locked gemma in place
-          (48 iters at residual=1.5, passing=36, zero improvement). v5.0.1
-          deletes the hard-reject. focus_constraint now flows ONLY through
-          the prompt as a SUGGESTION (see loop.py render_focus_suggestion).
+        v5.0.1+ design correction:
+          v5.0 added a hard-reject path that SILENTLY discarded writes
+          outside focus_constraint.allowed_files. Combined with v3.7
+          dominance rollback, that locked gemma in place (48 iters at
+          residual=1.5, passing=36, zero improvement). v5.0.1 / v5.0.2
+          delete the hard-reject. focus_constraint now flows ONLY through
+          the prompt as a SUGGESTION (see loop.py _render_focus_suggestion).
           The model is free to ignore it.
 
           INVARIANT (do not regress in future v5.x): apply_action must
           never silently discard model output. Any rejection MUST be
-          surfaced in next-iter feedback. v5.0.1 chooses the simplest
-          path — no rejection at all at this layer.
+          logged to self._rejection_log so loop.py can surface it in
+          next-iter feedback. This block enforces that contract.
         """
         action_type = action.get("type", "") if isinstance(action, dict) else getattr(action, "type", "")
         payload = action.payload if hasattr(action, "payload") else action
@@ -759,22 +770,11 @@ class TestGenForExistingScenario(Scenario):
         if action_type in ("edit_file", "create_file"):
             self._safe_write(workspace_dir, rel_path, payload.get("content", ""))
 
-    def _focus_constraint_allows(self, rel_path: str, contract: Dict[str, Any]) -> bool:
-        """v5.0 Task C: hard-enforce focus_constraint.allowed_files.
-
-        When the contract carries a `_focus_constraint` with
-        `allowed_files` set, reject any write whose target file isn't in
-        that set. This implements RLE's U_{t+1} as a system-level
-        attention constraint, not a prompt-level suggestion.
-        """
-        fc = (contract or {}).get("_focus_constraint")
-        if not isinstance(fc, dict):
-            return True
-        allowed = fc.get("allowed_files")
-        if not allowed:
-            return True
-        basename = os.path.basename(rel_path)
-        return basename in allowed or rel_path in allowed
+    # v5.0.1 / v5.0.2: focus_constraint hard-reject gate fully removed.
+    # focus_constraint now flows ONLY through loop.py's
+    # _render_focus_suggestion as a soft prompt-level pointer — never as
+    # an apply-layer reject. The method that used to enforce the gate is
+    # also deleted (no dead code that a future refactor could resurrect).
 
     def _merge_test_functions(self, workspace_dir: str, rel_path: str, content: str) -> None:
         """v3.4 T1 ADD-only merge.
@@ -791,10 +791,19 @@ class TestGenForExistingScenario(Scenario):
         full = os.path.abspath(os.path.join(workspace_dir, rel_path))
         ws_abs = os.path.abspath(workspace_dir)
         if not full.startswith(ws_abs + os.sep) and full != ws_abs:
-            raise ValueError(f"Refusing to write outside workspace: {rel_path}")
+            self._rejection_log.append({
+                "path": rel_path,
+                "reason": "path escapes workspace_dir",
+            })
+            return
         basename = os.path.basename(full)
         if not (basename.startswith("test_") and basename.endswith(".py")):
-            return  # ADD-only only applies to test files
+            # v5.0.2: log rejection so model sees feedback instead of silent drop.
+            self._rejection_log.append({
+                "path": rel_path,
+                "reason": f"ADD-only protocol applies only to test_*.py files. `{basename}` is not a test file — use ```add_tests test_data_pipeline.py block to add tests there.",
+            })
+            return
 
         existing = ""
         if os.path.isfile(full):
@@ -838,14 +847,29 @@ class TestGenForExistingScenario(Scenario):
             f.write("\n".join(out_pieces) + "\n")
 
     def _safe_write(self, workspace_dir: str, rel_path: str, content: str) -> None:
+        """v5.0.2: any rejection is logged to self._rejection_log so loop.py
+        can surface it in next-iter feedback. NO silent returns.
+        """
         full = os.path.abspath(os.path.join(workspace_dir, rel_path))
         ws_abs = os.path.abspath(workspace_dir)
         if not full.startswith(ws_abs + os.sep) and full != ws_abs:
-            raise ValueError(f"Refusing to write outside workspace: {rel_path}")
+            self._rejection_log.append({
+                "path": rel_path,
+                "reason": "path escapes workspace_dir",
+            })
+            return
         basename = os.path.basename(full)
         if not ((basename.startswith("test_") and basename.endswith(".py")) or basename == "conftest.py"):
+            self._rejection_log.append({
+                "path": rel_path,
+                "reason": f"test_generation_for_existing_code scenario invariant: source files are READ-ONLY. Only test_*.py and conftest.py files are writable. `{basename}` is a source file — to fix behaviour change your TESTS, not the source.",
+            })
             return
         if any(d in full for d in (".env", ".git", "secrets")):
+            self._rejection_log.append({
+                "path": rel_path,
+                "reason": "writes to .env / .git / secrets paths are forbidden",
+            })
             return
         os.makedirs(os.path.dirname(full) or workspace_dir, exist_ok=True)
         with open(full, "w", encoding="utf-8") as f:
