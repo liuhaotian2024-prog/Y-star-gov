@@ -592,15 +592,51 @@ def run_scenario(
             feedback_block = ("\n".join(_rej_lines) + "\n\n" + feedback_block) if feedback_block else "\n".join(_rej_lines)
 
         # v5.0.4: surface response-level signals before per-verifier feedback.
-        # These nudges are response-level (gemma's literal output pattern),
-        # not verifier-level (verifier_results). They don't replace any META
-        # block — they ADD to feedback when an iter's RAW RESPONSE was empty
-        # or duplicate.
         _response_signals: List[str] = []
         if _no_actions_warning:
             _response_signals.append(_no_actions_warning)
         if _identical_warning:
             _response_signals.append(_identical_warning)
+        # v5.0.5: when NameError dominates pytest failures, gemma is hallucinating
+        # function names. Surface the ACTUAL workspace function names from the
+        # inventory in a prominent feedback section so gemma stops inventing.
+        # Signal-triggered: only fires when NameError is the dominant error type.
+        _nameerror_hint = ""
+        for v in last_violations:
+            if v.verifier_name != "pytest":
+                continue
+            failures_meta = (v.details or {}).get("failures") or []
+            if not failures_meta:
+                continue
+            n_nameerror = sum(1 for f in failures_meta if (f.get("error_type") or "").lower() == "nameerror")
+            if n_nameerror >= max(3, len(failures_meta) // 2):
+                # Inventory comes from scenario's last scan — re-scan here cheaply.
+                try:
+                    from ystar.czl.inventory import WorkspaceInventory
+                    inv = WorkspaceInventory.scan(request.workspace_dir)
+                    src = inv.get("source_interfaces") or {}
+                    available_fns = []
+                    for fname, info in src.items():
+                        if isinstance(info, dict) and not info.get("error"):
+                            for fn in (info.get("functions") or []):
+                                available_fns.append(f"{fn.get('name')}{fn.get('signature','(?)')}")
+                            for cls in (info.get("classes") or []):
+                                available_fns.append(f"class {cls.get('name')}")
+                    if available_fns:
+                        _nameerror_hint = (
+                            f"**{n_nameerror} of {len(failures_meta)} pytest failures are NameError.** "
+                            "You are referencing names that DO NOT EXIST in the workspace. "
+                            "The ONLY callables available from data_pipeline.py are:\n\n"
+                            + "\n".join(f"  • {fn}" for fn in available_fns)
+                            + "\n\nIf you used `process_data` / `clean_data` / `normalize_record` / `data_processing` — these do NOT exist. "
+                            "Re-emit failing tests with the correct names from the list above (or delete them by re-emitting "
+                            "the SAME function name with an empty body that doesn't reference invented names)."
+                        )
+                except Exception:
+                    pass
+                break  # one NameError hint per iter is enough
+        if _nameerror_hint:
+            _response_signals.append(_nameerror_hint)
         if _response_signals:
             _signal_block = "\n\n## Output-level signal from last iter\n\n" + "\n\n".join(_response_signals)
             feedback_block = _signal_block + ("\n\n" + feedback_block if feedback_block else "")
