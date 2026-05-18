@@ -797,6 +797,29 @@ class TestGenForExistingScenario(Scenario):
             pass
         return names
 
+    def _workspace_function_names(self, workspace_dir: str) -> set:
+        """v5.0.7: enumerate top-level FUNCTION + CLASS names from non-test
+        workspace modules. Used by _merge_test_functions to reject tests
+        whose bodies call undefined names (gemma hallucinations like
+        `process_data`, `clean_data`, `normalize_record`).
+        """
+        names = set()
+        try:
+            for f in os.listdir(workspace_dir):
+                if not f.endswith(".py") or f.startswith("test_") or f.startswith("__"):
+                    continue
+                try:
+                    tree = ast.parse(open(os.path.join(workspace_dir, f),
+                                          encoding="utf-8").read())
+                except (OSError, SyntaxError):
+                    continue
+                for node in tree.body:
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        names.add(node.name)
+        except OSError:
+            pass
+        return names
+
     def _merge_test_functions(self, workspace_dir: str, rel_path: str, content: str) -> None:
         """v3.4 T1 ADD-only merge.
 
@@ -835,9 +858,53 @@ class TestGenForExistingScenario(Scenario):
         new_imports, new_fixtures, new_tests = _split_test_block(content)
         existing_imports, existing_fixtures, existing_tests = _split_test_block(existing)
 
-        # Merge by function name: new takes precedence
+        # v5.0.7: validate new tests' bodies against workspace functions +
+        # imports + builtins + pytest fixtures. Reject tests calling
+        # undefined names (gemma's hallucinated `process_data` etc.).
+        workspace_fns = self._workspace_function_names(workspace_dir)
+        # Names imported in this iter's new content + existing imports
+        imported_names = set()
+        for line in (existing_imports + "\n" + new_imports).splitlines():
+            s = line.strip()
+            if not s:
+                continue
+            if s.startswith("from ") and " import " in s:
+                imps = s.split(" import ", 1)[1]
+                for piece in imps.split(","):
+                    piece = piece.strip().split(" as ")[0].strip().rstrip("()")
+                    if piece:
+                        imported_names.add(piece)
+            elif s.startswith("import "):
+                rest = s[7:].strip()
+                first = rest.split(",")[0].strip().split(" as ")[0].strip().split(".")[0]
+                if first:
+                    imported_names.add(first)
+        # Pytest fixtures defined locally + existing test names (some
+        # tests legitimately call helper test fns).
+        fixture_names = set(existing_fixtures.keys()) | set(new_fixtures.keys())
+        helper_names = set(existing_tests.keys())  # existing tests can be referenced
+        allowed_call_names = workspace_fns | imported_names | fixture_names | helper_names
+
+        validated_new_tests: Dict[str, str] = {}
+        for tname, tsrc in new_tests.items():
+            undefined = _validate_test_calls(tsrc, allowed_call_names)
+            if undefined:
+                self._rejection_log.append({
+                    "path": rel_path,
+                    "reason": (
+                        f"test `{tname}` references undefined function name(s) {undefined}. "
+                        f"Workspace exports: {sorted(workspace_fns)}. "
+                        f"Imported: {sorted(imported_names)}. "
+                        "Re-emit the test using ONLY these callable names (or pytest fixtures). "
+                        "Examples like `clean_data` / `process_data` / `normalize_record` are NOT in this workspace — use `clean_records`, `normalize_email`, etc."
+                    ),
+                })
+                continue  # drop this test from merge
+            validated_new_tests[tname] = tsrc
+
+        # Merge by function name: validated new takes precedence
         merged_tests = dict(existing_tests)
-        merged_tests.update(new_tests)
+        merged_tests.update(validated_new_tests)
 
         # v5.0.4: filter new imports against workspace inventory + stdlib + pytest.
         # gemma 4B hallucinated `from data_processing import clean_data` (the
@@ -931,6 +998,94 @@ _STDLIB_ALLOWLIST: set = {
     "random", "statistics", "abc", "dataclasses", "enum", "contextlib",
     "warnings", "unittest", "subprocess", "builtins",
 }
+
+
+# v5.0.7: pytest API names + commonly-imported stdlib callables that tests
+# legitimately invoke. Combined with workspace function names + builtins +
+# local variables, this forms the allowlist for _validate_test_calls.
+_PYTEST_API_NAMES: set = {
+    "pytest", "raises", "fixture", "mark", "approx", "param", "skip",
+    "xfail", "warns", "deprecated_call",
+    # Common test fixtures provided by pytest:
+    "tmp_path", "tmpdir", "monkeypatch", "capsys", "capfd", "caplog",
+    "request", "recwarn",
+}
+
+
+def _validate_test_calls(test_src: str, allowed_call_names: set) -> List[str]:
+    """v5.0.7: AST-walk a test function body; return sorted list of bare-Name
+    function-call targets that are not defined locally and not in
+    `allowed_call_names`. Empty list = OK (no hallucinated calls).
+
+    Catches gemma 4B's `clean_data(...)` / `process_data(...)` etc. when
+    those functions don't exist in workspace. Lets through legitimate
+    calls to workspace functions, pytest fixtures, builtins, local vars.
+
+    Only flags ast.Call nodes whose target is a bare Name (not
+    attribute access — `foo.bar()` isn't flagged because we can't
+    statically resolve foo).
+    """
+    import builtins as _builtins
+    builtin_names = set(dir(_builtins))
+    try:
+        tree = ast.parse(test_src)
+        fn_node = tree.body[0]
+    except (SyntaxError, IndexError):
+        return ["<unparseable>"]
+    if not isinstance(fn_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return []
+
+    # Build local scope: function args + assignments + for/with/comp targets
+    locals_seen: set = {a.arg for a in fn_node.args.args}
+    if fn_node.args.vararg:
+        locals_seen.add(fn_node.args.vararg.arg)
+    if fn_node.args.kwarg:
+        locals_seen.add(fn_node.args.kwarg.arg)
+    for a in fn_node.args.kwonlyargs:
+        locals_seen.add(a.arg)
+    # Walk for further bindings
+    for node in ast.walk(fn_node):
+        if isinstance(node, ast.Assign):
+            for tgt in node.targets:
+                for sub in ast.walk(tgt):
+                    if isinstance(sub, ast.Name):
+                        locals_seen.add(sub.id)
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+            if isinstance(node.target, ast.Name):
+                locals_seen.add(node.target.id)
+        elif isinstance(node, ast.For):
+            for sub in ast.walk(node.target):
+                if isinstance(sub, ast.Name):
+                    locals_seen.add(sub.id)
+        elif isinstance(node, ast.With):
+            for item in node.items:
+                if item.optional_vars:
+                    for sub in ast.walk(item.optional_vars):
+                        if isinstance(sub, ast.Name):
+                            locals_seen.add(sub.id)
+        elif isinstance(node, ast.Lambda):
+            for a in node.args.args:
+                locals_seen.add(a.arg)
+        elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            for gen in node.generators:
+                for sub in ast.walk(gen.target):
+                    if isinstance(sub, ast.Name):
+                        locals_seen.add(sub.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node is not fn_node:
+            # Nested def — its name is local
+            locals_seen.add(node.name)
+
+    undefined_calls: set = set()
+    for node in ast.walk(fn_node):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            name = node.func.id
+            if (name in locals_seen
+                    or name in allowed_call_names
+                    or name in builtin_names
+                    or name in _PYTEST_API_NAMES):
+                continue
+            undefined_calls.add(name)
+    return sorted(undefined_calls)
 
 
 def _import_top_module(import_line: str) -> str:
