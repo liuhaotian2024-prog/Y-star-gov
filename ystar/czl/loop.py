@@ -327,12 +327,20 @@ def run_scenario(
     # crashes (Ollama GGML assert, LiteLLM APIConnectionError, etc.)
     # don't drop the in-flight CZLResult. Partial iter_prompts /
     # iter_responses / iter_snapshots are preserved.
-    # baseline minimal-feedback gate: when CZL_FEEDBACK_MODE=minimal, strip
-    # v4.0 probe / v5.0.1 focus / v5.0.6 signal / v5.1 protection / v5.1
-    # rejection sections from the prompt. Engineering layer (RLE, AST
-    # validator, merge protection, tracker, rejection log capture) is
-    # untouched — only the prompt-rendering output end is filtered.
-    _minimal_feedback = os.environ.get("CZL_FEEDBACK_MODE") == "minimal"
+    # Reactive-feedback mode gate. Tri-state (default = "full"):
+    #   "full"    — all v5.1 sections (default when env var unset)
+    #   "minimal" — strip v4.0 probe / v5.0.1 focus / v5.0.6 signal /
+    #               v5.1 protection / v5.1 rejection from prompt; keep
+    #               v3.4 hint / v3.5 cluster / v3.6 regression / ADD-only
+    #               (founder baseline experiment)
+    #   "pure_r"  — strip ALL coaching; emit only raw VerifierResult
+    #               output. Founder hypothesis test: is the coaching
+    #               layer net-positive or net-negative on Gemma 4B?
+    # Engineering layer (RLE / AST validator / merge protection /
+    # TransitionTracker / rejection_log / dominance) is preserved in all
+    # modes — only the prompt-rendering output end is filtered.
+    _feedback_mode = os.environ.get("CZL_FEEDBACK_MODE", "full")
+    _minimal_feedback = _feedback_mode in ("minimal", "pure_r")
 
     step_idx = -1
     try:
@@ -920,9 +928,25 @@ def _format_feedback_for_retry(violations: List[VerifierResult],
          message_natural is None); medium/large reads structured message
          + raw stdout tail.
       3. retry instructions (tier-conditioned: ADD-only for small).
+
+    pure_r mode override: when CZL_FEEDBACK_MODE=pure_r, emit ONLY the
+    raw VerifierResult output (`.message` + `.details["stdout"]`). No
+    META, no hint synthesis, no ADD-only instruction, no natural-language
+    coaching. Founder hypothesis test.
     """
     if not violations:
         return ""
+    if os.environ.get("CZL_FEEDBACK_MODE") == "pure_r":
+        lines: List[str] = ["### Verifier outputs (raw):"]
+        for v in violations[:10]:
+            lines.append("")
+            lines.append(f"[{v.verifier_name}] {v.message}")
+            stdout = (v.details or {}).get("stdout") or ""
+            if stdout.strip():
+                lines.append("```")
+                lines.append(stdout.strip()[-2000:])
+                lines.append("```")
+        return "\n".join(lines)
     use_natural = model_tier in ("small", "tiny", "local")
     lines: List[str] = []
     # v3.5 T5: META block first (cluster + repetition cross-iter signals).
