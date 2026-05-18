@@ -767,6 +767,14 @@ class TestGenForExistingScenario(Scenario):
         if action_type == "add_tests_file":
             self._merge_test_functions(workspace_dir, rel_path, payload.get("content", ""))
             return
+        # v5.0.4: bare ```python blocks land here as "python_block" — route to
+        # the scenario's default test file. This rescues gemma 4B's natural
+        # markdown style without forcing the model to remember the
+        # ```add_tests test_data_pipeline.py syntax.
+        if action_type == "python_block":
+            self._merge_test_functions(workspace_dir, "test_data_pipeline.py",
+                                        payload.get("content", ""))
+            return
         if action_type in ("edit_file", "create_file"):
             self._safe_write(workspace_dir, rel_path, payload.get("content", ""))
 

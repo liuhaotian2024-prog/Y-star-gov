@@ -313,6 +313,14 @@ _RUN_BLOCK_RE = re.compile(r"```run\n(?P<body>.*?)```", re.DOTALL)
 # semantically requests a READ-ONLY observation that does NOT modify
 # workspace state (loop captures stdout/stderr and feeds to next iter).
 _PROBE_BLOCK_RE = re.compile(r"```probe\n(?P<body>.*?)```", re.DOTALL)
+# v5.0.4: gemma 4B's natural markdown style is ```python (no path) for test
+# code, not ```add_tests test_data_pipeline.py. v5.0.3 sanity showed gemma
+# derailed at iter 2 by switching to ```python format and emitting 0 actions
+# for 50 iters. Accept ```python as a SOFT-TYPED add_tests action — emits
+# action type "python_block" with NO path; the scenario decides its default
+# target test file. Containing scenario-specific knowledge in the scenario,
+# not the parser.
+_PYTHON_BLOCK_RE = re.compile(r"```python\s*\n(?P<body>.*?)```", re.DOTALL)
 
 
 def _parse_actions_from_text(text: str) -> List[BackendAction]:
@@ -347,5 +355,20 @@ def _parse_actions_from_text(text: str) -> List[BackendAction]:
             type="probe_command",
             payload={"command": m.group("body").strip()},
         ))
+
+    # v5.0.4: bare ```python blocks → "python_block" action (scenario decides target).
+    # Only emit when no ```add_tests / ```edit block with python content was
+    # already extracted from the same text (avoid double-applying the same
+    # body that's nested inside an add_tests wrapper).
+    if not any(a.type in ("add_tests_file", "edit_file") for a in actions):
+        for m in _PYTHON_BLOCK_RE.finditer(text):
+            body = m.group("body")
+            # Only treat as test code if body contains `def test_` — else it's
+            # probably a description / docstring snippet.
+            if "def test_" in body:
+                actions.append(BackendAction(
+                    type="python_block",
+                    payload={"content": body},
+                ))
 
     return actions

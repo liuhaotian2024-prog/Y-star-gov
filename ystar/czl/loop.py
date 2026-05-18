@@ -385,6 +385,28 @@ def run_scenario(
         # v5.0.3: capture raw response so diagnostics can answer
         # "what did the model literally output?" (was missing in v5.0.2)
         result.iter_responses.append(backend_response.raw_text or "")
+        # v5.0.4: detect two stuck-state patterns at response level so the
+        # NEXT iter's feedback can nudge the model out:
+        #   (a) no recognised action blocks (model output didn't parse)
+        #   (b) byte-identical response to the previous iter (stuck loop)
+        # These are signal-driven hints, not hard constraints.
+        _no_actions_warning = ""
+        _identical_warning = ""
+        if not backend_response.actions:
+            _no_actions_warning = (
+                "**Your last output produced no recognised action blocks.** "
+                "Wrap test functions in a code block with one of these openers:\n"
+                "  - ```add_tests test_data_pipeline.py   (preferred — merges by function name)\n"
+                "  - ```python                            (also accepted; targets the default test file)\n"
+                "Bare prose / explanation outside a code block is invisible to the verifier."
+            )
+        if len(result.iter_responses) >= 2 and result.iter_responses[-1] == result.iter_responses[-2]:
+            _identical_warning = (
+                "**Your last 2 responses are byte-identical.** That guarantees the same "
+                "verifier outcome. Try a DIFFERENT angle — e.g. if 1 test is failing, "
+                "RE-EMIT that specific test function (same name) with corrected expected values, "
+                "rather than adding more new tests."
+            )
         result.total_input_tokens += backend_response.input_tokens
         result.total_output_tokens += backend_response.output_tokens
         result.total_cost_usd += backend_response.cost_usd
@@ -568,6 +590,20 @@ def run_scenario(
             for rj in _iter_rejections:
                 _rej_lines.append(f"- `{rj['path']}`: {rj['reason']}")
             feedback_block = ("\n".join(_rej_lines) + "\n\n" + feedback_block) if feedback_block else "\n".join(_rej_lines)
+
+        # v5.0.4: surface response-level signals before per-verifier feedback.
+        # These nudges are response-level (gemma's literal output pattern),
+        # not verifier-level (verifier_results). They don't replace any META
+        # block — they ADD to feedback when an iter's RAW RESPONSE was empty
+        # or duplicate.
+        _response_signals: List[str] = []
+        if _no_actions_warning:
+            _response_signals.append(_no_actions_warning)
+        if _identical_warning:
+            _response_signals.append(_identical_warning)
+        if _response_signals:
+            _signal_block = "\n\n## Output-level signal from last iter\n\n" + "\n\n".join(_response_signals)
+            feedback_block = _signal_block + ("\n\n" + feedback_block if feedback_block else "")
         # update passing tracker for next iter's delta_from_prev
         _curr_status = _extract_status(verifier_results)
         _prev_passing_tests = {n for n, p in _curr_status.items() if p}
