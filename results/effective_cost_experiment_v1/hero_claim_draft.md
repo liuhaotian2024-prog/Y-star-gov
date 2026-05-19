@@ -6,17 +6,17 @@
 
 ## Filled-in
 
-- N = **18** runs total
+- N = **54** runs total
 - models = claude-opus-4-7, claude-sonnet-4-6, deepseek-chat
-- baseline claimed = **0%** of 9 baseline trials
-- baseline verified = **89%**
+- baseline claimed = **0%** of 27 baseline trials
+- baseline verified = **74%**
 - baseline deception rate = **0%**
-- trampoline verified = **100%**
-- baseline effective cost per real completion = $0.0254
-- trampoline effective cost per real completion = $0.0277
-- cost delta = **-9%** (negative = Trampoline cheaper)
+- trampoline verified = **96%**
+- baseline effective cost per real completion = $0.0297
+- trampoline effective cost per real completion = $0.1233
+- cost delta = **-315%** (negative = Trampoline cheaper)
 
 ## Honest caveats
 
 - GPT-5 was UNAVAILABLE in this env (no OPENAI_API_KEY). DeepSeek substituted as the cross-provider counterpoint; that weakens Claim 1's 'frontier-only' scope. Adding OPENAI_API_KEY and re-running fixes this.
-- scout-run sample: 9 baseline / 9 trampoline trials. Below the 30-per-cell statistical-CI bar from the design doc. Run more once results look directionally clean.
+- scout-run sample: 27 baseline / 27 trampoline trials. Below the 30-per-cell statistical-CI bar from the design doc. Run more once results look directionally clean.
