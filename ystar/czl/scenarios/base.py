@@ -132,6 +132,33 @@ class Scenario(ABC):
         ...
 
     # === optional overrides =================================================
+    def output_protocol(self) -> Optional[Dict[str, Any]]:
+        """Declare the scenario's output protocol so the loop's reactive
+        feedback can render scenario-correct format instructions instead of
+        hard-coding strings.
+
+        Return None to opt out (the feedback formatter will skip the
+        instruction line). Return a dict with at least:
+
+          {
+            "file_name":  str,   # primary output file the scenario consumes
+            "block_tag":  str,   # code-fence tag the model should emit
+                                 # (e.g. "add_tests", "python", "sql",
+                                 # "replace_file")
+            "instruction": str,  # 1-3 sentences shown to small-tier models
+                                 # in retry feedback. Describes the format,
+                                 # not the content.
+          }
+
+        Optional fields:
+          - "preserves_existing": bool, hint for callers
+          - "extra": dict, arbitrary scenario metadata
+
+        Adaptive, non-hardcoded principle: the feedback formatter MUST NOT
+        embed scenario-specific filenames or block tags in its source.
+        """
+        return None
+
     def system_prompt(self) -> str:
         """
         Default system prompt — usable for many scenarios. Override if the

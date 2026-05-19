@@ -587,6 +587,22 @@ class TestGenForExistingScenario(Scenario):
                 v.reset_for_trial()
             self._last_trial_id = tid
 
+    def output_protocol(self) -> Dict[str, Any]:
+        return {
+            "file_name": "test_data_pipeline.py",
+            "block_tag": "add_tests",
+            "instruction": (
+                "Output format: emit ONLY new or replacement test functions "
+                "inside an ```add_tests test_data_pipeline.py``` block. "
+                "Existing passing tests are preserved automatically. Do not "
+                "include `print(...)`, top-level `try/except`, or "
+                "`if __name__ == '__main__'` blocks. If a test you previously "
+                "wrote needs fixing, emit a function with the SAME NAME and it "
+                "will replace the old one."
+            ),
+            "preserves_existing": True,
+        }
+
     def y_star_invariants(self) -> Dict[str, Any]:
         return {
             "invariant": [

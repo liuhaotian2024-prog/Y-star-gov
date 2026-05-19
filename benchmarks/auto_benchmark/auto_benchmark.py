@@ -138,6 +138,27 @@ class GenericShellScenario(Scenario):
     def __init__(self, task: Dict):
         self._task = task
 
+    def output_protocol(self) -> Dict[str, Any]:
+        """Scenario-correct format declaration. Read from the task fixture
+        so each task tells the feedback layer exactly which file to write
+        and which code-fence tag to use. No hardcoded strings."""
+        block_tag = self._task["output_block_type"]
+        file_name = self._task["output_file"]
+        # Dynamic instruction templated from declared values.
+        instruction = (
+            f"Output format: emit your solution as a single ```{block_tag}``` "
+            f"fenced code block. The content of that block will be written "
+            f"verbatim to `{file_name}` and graded by the external verifier. "
+            f"Do not include any other code fences or top-level commentary "
+            f"outside the block."
+        )
+        return {
+            "file_name": file_name,
+            "block_tag": block_tag,
+            "instruction": instruction,
+            "preserves_existing": False,
+        }
+
     def y_star_invariants(self) -> Dict[str, Any]:
         return {"invariant": [f"{self._task['verifier_cmd']} exits 0"]}
 
@@ -168,16 +189,22 @@ class GenericShellScenario(Scenario):
         )]
 
     def apply_action(self, action, workspace_dir, contract=None):
+        # Pull declared protocol once — read block_tag + file_name from here
+        # so apply_action stays in sync with what the feedback formatter
+        # tells the model.
+        proto = self.output_protocol()
+        block_tag = proto["block_tag"]
+        file_name = proto["file_name"]
+
         a = action if isinstance(action, dict) else getattr(action, "payload", {})
-        atype = a.get("type") if isinstance(a, dict) else getattr(action, "type", "")
-        # All actions normalised to: write self._task['output_file'] with extracted code
-        content = ""
-        if isinstance(a, dict):
-            content = a.get("content", "")
-        out_file = Path(workspace_dir) / self._task["output_file"]
+        content = a.get("content", "") if isinstance(a, dict) else ""
+        # raw_text fallback: some backends emit `raw_text` only when parsing
+        # didn't extract a structured action.
+        if not content:
+            content = getattr(action, "raw_text", "") or ""
+        out_file = Path(workspace_dir) / file_name
         out_file.parent.mkdir(parents=True, exist_ok=True)
-        # Try to extract a code block; if action already gave clean code, use it
-        clean = extract_code_block(content, self._task["output_block_type"])
+        clean = extract_code_block(content, block_tag)
         out_file.write_text(clean)
 
 

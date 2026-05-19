@@ -692,8 +692,16 @@ def run_scenario(
         reflection.record(step_idx, verifier_results)
         meta = reflection.analyze(iter_idx=step_idx)
         meta_text = meta.render() if not meta.is_empty() else ""
+        # Pull scenario-declared output protocol — replaces v3.4 hardcoded
+        # "add_tests test_data_pipeline.py" instruction with a scenario-
+        # specific format hint. None = scenario opts out, no instruction.
+        try:
+            _scenario_protocol = request.scenario.output_protocol()
+        except Exception:
+            _scenario_protocol = None
         feedback_block = _format_feedback_for_retry(
             last_violations, model_tier=model_tier, meta_text=meta_text,
+            output_protocol=_scenario_protocol,
         )
 
         # v5.1 Task A: PASSING TESTS + FAILING TESTS double-list at top of
@@ -935,7 +943,8 @@ def _render_focus_suggestion(focus_constraint: Any) -> str:
 
 def _format_feedback_for_retry(violations: List[VerifierResult],
                                 model_tier: str = "medium",
-                                meta_text: str = "") -> str:
+                                meta_text: str = "",
+                                output_protocol: Optional[Dict[str, Any]] = None) -> str:
     """Compose the retry-feedback text block fed back to the LLM next iteration.
 
     v3.5 composition order:
@@ -944,12 +953,13 @@ def _format_feedback_for_retry(violations: List[VerifierResult],
          from the 4 Hook fields reason/instruction/reference/example if
          message_natural is None); medium/large reads structured message
          + raw stdout tail.
-      3. retry instructions (tier-conditioned: ADD-only for small).
+      3. retry instructions read from scenario.output_protocol() — NEVER
+         hardcoded. If output_protocol is None, no format instruction is
+         emitted (scenario opts out).
 
     pure_r mode override: when CZL_FEEDBACK_MODE=pure_r, emit ONLY the
     raw VerifierResult output (`.message` + `.details["stdout"]`). No
-    META, no hint synthesis, no ADD-only instruction, no natural-language
-    coaching. Founder hypothesis test.
+    META, no hint synthesis, no instruction, no natural-language coaching.
     """
     if not violations:
         return ""
@@ -988,24 +998,22 @@ def _format_feedback_for_retry(violations: List[VerifierResult],
                         lines.append(f"  {line}")
                     lines.append("  ```")
     lines.append("")
-    if use_natural:
-        # v3.4 T1: small tier is on ADD-only protocol — instruction is
-        # "add or replace ONLY the test functions that need fixing".
-        lines.append(
-            "Output format: emit ONLY new or replacement test functions "
-            "inside an ```add_tests test_data_pipeline.py block. Existing "
-            "passing tests are preserved automatically. Do not include "
-            "top-level print(), try/except, or `if __name__ == '__main__'` "
-            "blocks. If a test you previously wrote needs fixing, emit a "
-            "function with the SAME NAME and it will replace the old one."
-        )
-    else:
+    # Scenario-declared output protocol drives the format instruction. No
+    # hardcoded filenames or block tags here — read from scenario.
+    if output_protocol and output_protocol.get("instruction"):
+        lines.append(output_protocol["instruction"])
+    elif not use_natural:
+        # Medium/large tier with no scenario-declared protocol: fall back to
+        # the generic "re-emit the full corrected content" hint. Still
+        # scenario-agnostic (no filename references).
         lines.append(
             "Re-emit the full corrected content of any file that still has issues. "
-            "Do not restart from scratch. If a pytest failure shows the test "
-            "expects a specific type/value, your fix must produce that — the test "
-            "is the spec, not the type annotation."
+            "Do not restart from scratch. If a verifier failure shows the test "
+            "expects a specific type/value, your fix must produce that — the "
+            "verifier is the spec."
         )
+    # else: small tier + no protocol declared → no instruction line; scenario
+    # opted out of structured format hints.
     return "\n".join(lines)
 
 
