@@ -646,16 +646,35 @@ def run_scenario(
         }
         _rle.on_cieu_event(_rle_event)
         _halt = _czl_sink.latest_halt_event_type()
-        if _halt == "RESIDUAL_LOOP_CONVERGED":
-            # Before claiming converged: drain omission scan + run
-            # gate_check(DECLARE_DONE). If the intervention engine says
-            # DENY (open critical obligation against this actor), refuse to
-            # set converged=True and exit with a completion-blocked reason.
-            _scan_result = _omission_engine.scan()
+
+        # v5.0.1 fix: intervention machinery must fire on STUCK halts
+        # (oscillation / escalate) — that's when an agent has failed and
+        # the obligation rules in coding_agent_pack become diagnostic
+        # evidence of WHY it stuck. Original v5.0 fired scan() only on
+        # convergence, which is exactly backwards: a converged agent did
+        # well and doesn't need stuck-loop intervention; the stuck agent
+        # is the one we want to surface violations on.
+        def _drain_violations_at_halt(authority_label: str) -> List[Any]:
             try:
+                _scan_result = _omission_engine.scan()
                 _intervention_engine.process_violations(_scan_result.violations)
+                if _scan_result.violations:
+                    _log.warning(
+                        "CZL v5.0.1: at %s, omission scan surfaced %d violation(s): %s",
+                        authority_label, len(_scan_result.violations),
+                        [getattr(v, "omission_type", "?") for v in _scan_result.violations[:5]],
+                    )
+                return list(_scan_result.violations)
             except Exception as _exc:
-                _log.debug("intervention process_violations failed: %s", _exc)
+                _log.debug("scan/process_violations at %s failed: %s",
+                            authority_label, _exc)
+                return []
+
+        if _halt == "RESIDUAL_LOOP_CONVERGED":
+            # Defensive: drain any pending violations before validating the
+            # declare_done. A truly successful run will have none and the
+            # gate passes; if any are pending, the gate DENY catches them.
+            _drain_violations_at_halt("converged_pre_gate")
             _gate = _intervention_engine.gate_check(
                 actor_id=_coding_actor_id,
                 action_type=CodingAgentEventType.DECLARE_DONE,
@@ -686,14 +705,41 @@ def run_scenario(
             result.final_verifier_report = _summarize_verifiers(verifier_results)
             break
         if _halt == "RESIDUAL_LOOP_OSCILLATION":
+            _stuck_violations = _drain_violations_at_halt("rle_oscillation")
             result.stopping_authority = "rle_oscillation"
             result.halted_due_to = "rle_oscillation"
-            _log.info("CZL v5.0: RLE detected oscillation, halting at iter %d", step_idx)
+            if _stuck_violations:
+                # Surface violation diagnostics so callers can see WHY the
+                # agent got stuck, not just that it did.
+                _vtypes = sorted({getattr(v, "omission_type", "?")
+                                   for v in _stuck_violations})
+                result.failure_reason = (
+                    f"rle_oscillation at iter {step_idx} with "
+                    f"{len(_stuck_violations)} obligation violation(s): "
+                    f"{','.join(_vtypes)}"
+                )
+            _log.info(
+                "CZL v5.0: RLE detected oscillation at iter %d (%d violation(s) surfaced)",
+                step_idx, len(_stuck_violations),
+            )
             break
         if _halt == "RESIDUAL_LOOP_ESCALATE":
+            _stuck_violations = _drain_violations_at_halt("rle_escalate")
             result.stopping_authority = "rle_escalate"
             result.halted_due_to = "rle_escalate"
-            _log.warning("CZL v5.0: RLE escalated after max_iterations, halting at iter %d", step_idx)
+            if _stuck_violations:
+                _vtypes = sorted({getattr(v, "omission_type", "?")
+                                   for v in _stuck_violations})
+                result.failure_reason = (
+                    f"rle_escalate at iter {step_idx} with "
+                    f"{len(_stuck_violations)} obligation violation(s): "
+                    f"{','.join(_vtypes)}"
+                )
+            _log.warning(
+                "CZL v5.0: RLE escalated after max_iterations at iter %d "
+                "(%d violation(s) surfaced)",
+                step_idx, len(_stuck_violations),
+            )
             break
 
         # Pull next-action's focus_constraint from autonomy engine; the
