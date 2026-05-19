@@ -280,6 +280,74 @@ def run_scenario(
         damping_gamma=0.95,
         distance_function=czl_distance_function,
     )
+
+    # v5.0 Part B: wire OmissionEngine + InterventionEngine. Both use the
+    # InMemoryOmissionStore + an explicit NullCIEUStore so this loop creates
+    # ZERO SQLite side effects — `ls *.db` after a run must be empty.
+    # NOTE the asymmetry between the two engines:
+    #   - OmissionEngine treats `cieu_store=None` as the "no persistence"
+    #     signal (its default sentinel is _DEFAULT_CIEU_STORE).
+    #   - InterventionEngine, however, treats `cieu_store=None` as "fall back
+    #     to a real SQLite CIEUStore at .ystar_cieu_intervention.db". To
+    #     keep this loop side-effect-free we MUST pass an explicit
+    #     NullCIEUStore() to InterventionEngine.
+    from ystar.governance.omission_engine import OmissionEngine
+    from ystar.governance.omission_store import InMemoryOmissionStore
+    from ystar.governance.omission_models import GovernanceEvent, GEventType
+    from ystar.governance.intervention_engine import InterventionEngine
+    from ystar.governance.intervention_models import GateDecision
+    from ystar.governance.cieu_store import NullCIEUStore
+    from ystar.czl.coding_agent_pack import (
+        CodingAgentEventType,
+        TRAMPOLINE_GATING_POLICY,
+        register_coding_agent_rules,
+        register_post_declare_done_obligation,
+    )
+
+    _omission_store = InMemoryOmissionStore()
+    _omission_engine = OmissionEngine(
+        store=_omission_store,
+        cieu_store=None,             # NullCIEUStore — no .ystar_cieu_omission.db
+    )
+    register_coding_agent_rules(_omission_engine.registry)
+    _intervention_engine = InterventionEngine(
+        omission_store=_omission_store,
+        cieu_store=NullCIEUStore(),  # explicit no-op — no .ystar_cieu_intervention.db
+        gating_policy=TRAMPOLINE_GATING_POLICY,
+    )
+
+    # actor_id has to be specific (not "agent" / "any") — the intervention
+    # engine's constitutional rule rejects generic ids. Use the backend name
+    # so the gating is bound to which model the loop is currently driving.
+    _coding_actor_id = f"coding_agent.{getattr(request.backend, 'name', 'unknown')}"
+    _coding_entity_id = f"coding_agent.{request.run_id}"
+
+    # Open the post-declare-done obligation. It must be fulfilled by either a
+    # VERIFIER_PASSED or a generic COMPLETION_EVENT before we accept any
+    # declare_done from the loop.
+    register_post_declare_done_obligation(
+        _omission_engine,
+        session_id=request.run_id,
+        actor_id=_coding_actor_id,
+        entity_id=_coding_entity_id,
+        due_within_secs=max(60.0, float(request.max_iterations) * 30.0),
+    )
+
+    def _emit_governance(event_type: str, payload: Optional[Dict[str, Any]] = None) -> None:
+        """Emit one GovernanceEvent into the omission engine for this run."""
+        try:
+            _omission_engine.ingest_event(GovernanceEvent(
+                event_type=event_type,
+                entity_id=_coding_entity_id,
+                actor_id=_coding_actor_id,
+                payload=payload or {},
+                source="czl.loop",
+            ))
+        except Exception as _exc:
+            _log.debug("governance emit %s failed: %s", event_type, _exc)
+
+    # Seed dispatch event so the stuck-after-dispatch rule has a trigger.
+    _emit_governance(GEventType.TASK_DISPATCHED, {"task": request.task_description[:200]})
     # Track passing tests across iters for delta_from_prev (v3.6 reused)
     _prev_passing_tests: Optional[Set[str]] = None
     # Current focus_constraint flowed into next iter's contract
@@ -448,6 +516,11 @@ def run_scenario(
                 except TypeError:
                     # Legacy scenarios with 2-arg apply_action — fallback
                     request.scenario.apply_action(action, request.workspace_dir)
+                # Tell the omission engine the agent did productive work.
+                _emit_governance(CodingAgentEventType.TOOL_USE, {
+                    "action_type": getattr(action, "type", "unknown"),
+                    "iteration": step_idx,
+                })
         # Append this iter's probe results (always — even if empty) so
         # iter index aligns with result.iter_probes[step_idx].
         result.iter_probes.append(this_iter_probes)
@@ -455,6 +528,18 @@ def run_scenario(
         # 4c. run scenario verifiers → build structured Y_{t+1}
         verifier_results = request.scenario.verify(request.workspace_dir, contract_dict)
         last_violations = [v for v in verifier_results if not v.passed]
+
+        # Surface verifier outcome to the omission engine.
+        if verifier_results and not last_violations:
+            _emit_governance(CodingAgentEventType.VERIFIER_PASSED, {
+                "iteration": step_idx,
+                "verifier_count": len(verifier_results),
+            })
+        else:
+            _emit_governance(CodingAgentEventType.VERIFIER_FAILED, {
+                "iteration": step_idx,
+                "violation_count": len(last_violations),
+            })
 
         # v5.0 Task A: build the structured ResidualState (Y_{t+1}).
         # Previous residual_trajectory captures the scalar Rt+1 only —
@@ -468,6 +553,19 @@ def run_scenario(
             residual_history=list(result.residual_trajectory),
         )
         scalar_residual = czl_distance_function(Y_STAR_ALL_PASS, residual_state)
+        # Emit residual + reduce-residual to the omission engine before we
+        # mutate result.final_residual so we can compare against the prior
+        # trajectory value cleanly.
+        _emit_governance(CodingAgentEventType.RESIDUAL_REPORT, {
+            "iteration": step_idx,
+            "scalar_residual": scalar_residual,
+        })
+        if result.residual_trajectory and scalar_residual < result.residual_trajectory[-1] - 1e-9:
+            _emit_governance(CodingAgentEventType.REDUCE_RESIDUAL, {
+                "iteration": step_idx,
+                "from": result.residual_trajectory[-1],
+                "to": scalar_residual,
+            })
         result.final_residual = scalar_residual
         result.residual_trajectory.append(scalar_residual)
         _czl_autonomy.observe(residual_state)
@@ -549,6 +647,39 @@ def run_scenario(
         _rle.on_cieu_event(_rle_event)
         _halt = _czl_sink.latest_halt_event_type()
         if _halt == "RESIDUAL_LOOP_CONVERGED":
+            # Before claiming converged: drain omission scan + run
+            # gate_check(DECLARE_DONE). If the intervention engine says
+            # DENY (open critical obligation against this actor), refuse to
+            # set converged=True and exit with a completion-blocked reason.
+            _scan_result = _omission_engine.scan()
+            try:
+                _intervention_engine.process_violations(_scan_result.violations)
+            except Exception as _exc:
+                _log.debug("intervention process_violations failed: %s", _exc)
+            _gate = _intervention_engine.gate_check(
+                actor_id=_coding_actor_id,
+                action_type=CodingAgentEventType.DECLARE_DONE,
+                entity_id=_coding_entity_id,
+            )
+            if _gate.decision == GateDecision.DENY:
+                result.stopping_authority = "completion_gate_denied"
+                result.halted_due_to = "completion_gate_denied"
+                result.failure_reason = (
+                    f"declare_done gated by open obligation "
+                    f"{_gate.blocking_omission_type} (obligation_id="
+                    f"{_gate.blocking_obligation_id})"
+                )
+                _log.warning(
+                    "CZL v5.0: RLE reported convergence but completion gate "
+                    "DENIED declare_done (blocking_omission=%s); refusing to mark converged.",
+                    _gate.blocking_omission_type,
+                )
+                break
+            # Emit DECLARE_DONE so audit shows the gate-passed completion.
+            _emit_governance(CodingAgentEventType.DECLARE_DONE, {
+                "iteration": step_idx,
+                "scalar_residual": scalar_residual,
+            })
             result.converged = True
             result.stopping_authority = "converged"
             result.halted_due_to = "converged"
