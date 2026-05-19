@@ -588,17 +588,22 @@ class TestGenForExistingScenario(Scenario):
             self._last_trial_id = tid
 
     def output_protocol(self) -> Dict[str, Any]:
+        # IMPORTANT: instruction text must be BYTE-IDENTICAL to the v3.4
+        # hardcoded narrative previously embedded in
+        # ystar/czl/loop.py:_format_feedback_for_retry, so the protocol-fix
+        # change is byte-equivalent to pre-fix behaviour for test_gen +
+        # small tier. Any cosmetic edits to wording or punctuation must
+        # be coordinated with the substrate non-regression contract.
         return {
             "file_name": "test_data_pipeline.py",
             "block_tag": "add_tests",
             "instruction": (
                 "Output format: emit ONLY new or replacement test functions "
-                "inside an ```add_tests test_data_pipeline.py``` block. "
-                "Existing passing tests are preserved automatically. Do not "
-                "include `print(...)`, top-level `try/except`, or "
-                "`if __name__ == '__main__'` blocks. If a test you previously "
-                "wrote needs fixing, emit a function with the SAME NAME and it "
-                "will replace the old one."
+                "inside an ```add_tests test_data_pipeline.py block. Existing "
+                "passing tests are preserved automatically. Do not include "
+                "top-level print(), try/except, or `if __name__ == '__main__'` "
+                "blocks. If a test you previously wrote needs fixing, emit a "
+                "function with the SAME NAME and it will replace the old one."
             ),
             "preserves_existing": True,
         }
