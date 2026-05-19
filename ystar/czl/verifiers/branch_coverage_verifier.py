@@ -23,7 +23,6 @@ class BranchCoverageVerifier(AdaptiveThresholdVerifier):
     is_final_gate = True
     # E.2 metadata
     applies_to_tasks = ["test_generation_for_existing_code"]
-    min_model_capacity = "small"
     feedback_complexity = "low"
     known_limitations = [
         "no branches in target → falls back to line coverage as the signal",

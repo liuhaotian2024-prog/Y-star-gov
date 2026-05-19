@@ -33,6 +33,20 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+import warnings
+
+
+def _y_star_internal_warn(name: str) -> None:
+    """Emit a DeprecationWarning for Y*-internal omission methods that will
+    be removed when trampoline-core is physically split from Y* governance.
+    Callers in this repo's Y* runtime continue to use them; new trampoline
+    integrations must use the obligation primitives instead."""
+    warnings.warn(
+        f"{name}() is a Y*-internal helper; do not use from trampoline-core. "
+        f"It will be removed when trampoline-core is physically split out.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
@@ -1539,6 +1553,7 @@ class OmissionEngine:
         Returns:
             The created ObligationRecord
         """
+        _y_star_internal_warn("register_redirect_obligation")
         now = self._now()
         # TTL expressed in actions, but OmissionEngine uses time-based deadlines.
         # We use ttl_actions * 10s as a reasonable per-action budget.
@@ -1633,6 +1648,7 @@ class OmissionEngine:
         Returns:
             The created ObligationRecord
         """
+        _y_star_internal_warn("register_action_promise_obligation")
         now = self._now()
         # TTL expressed in replies; use ttl_replies * 30s as reasonable budget
         deadline_secs = ttl_replies * 30.0
@@ -1829,6 +1845,7 @@ class OmissionEngine:
         Intended to be called from CEO Stop hook reply scan to inject
         warning into reply when phases remain incomplete after a ship event.
         """
+        _y_star_internal_warn("enumerate_open_completeness_obligations")
         import re
         result = []
         all_obs = self.store.list_obligations()
@@ -1896,6 +1913,7 @@ def _extract_phase_number(text: str) -> Optional[int]:
 
 def _check_activation_log_nonzero() -> bool:
     """Phase 1 marker: activation_log table has > 0 rows."""
+    _y_star_internal_warn("_check_activation_log_nonzero")
     try:
         import sqlite3
         from pathlib import Path
@@ -1917,6 +1935,7 @@ def _check_cieu_brain_bridge_tests_pass() -> bool:
     """Phase 1 marker: cieu_brain_bridge tests exist and last run passed.
     Heuristic: if the test file exists, we trust CI. In production this
     would query a test-result store."""
+    _y_star_internal_warn("_check_cieu_brain_bridge_tests_pass")
     from pathlib import Path
     test_file = (
         Path(__file__).parent.parent.parent
@@ -1927,6 +1946,7 @@ def _check_cieu_brain_bridge_tests_pass() -> bool:
 
 def _check_continuous_daemon_running() -> bool:
     """Phase 2 marker: cieu_brain daemon process exists OR last ingest within 300s."""
+    _y_star_internal_warn("_check_continuous_daemon_running")
     import time
     try:
         import sqlite3
@@ -1949,6 +1969,7 @@ def _check_continuous_daemon_running() -> bool:
 
 def _check_hebbian_edges_nonzero() -> bool:
     """Phase 2 marker: hebbian edges table has > 0 rows."""
+    _y_star_internal_warn("_check_hebbian_edges_nonzero")
     try:
         import sqlite3
         from pathlib import Path
@@ -1966,6 +1987,7 @@ def _check_hebbian_edges_nonzero() -> bool:
 
 def _check_dim_drift_applied() -> bool:
     """Phase 3 marker: nodes.dim_y has been updated (non-null) in the brain DB."""
+    _y_star_internal_warn("_check_dim_drift_applied")
     try:
         import sqlite3
         from pathlib import Path
@@ -1985,6 +2007,7 @@ def _check_dim_drift_applied() -> bool:
 
 def _check_event_type_coords_populated() -> bool:
     """Phase 3 marker: event_type_coords table exists with > 0 rows."""
+    _y_star_internal_warn("_check_event_type_coords_populated")
     try:
         import sqlite3
         from pathlib import Path
@@ -2019,6 +2042,7 @@ _SHIP_MARKER_REGISTRY: Dict[str, Any] = {
 
 def _check_ship_marker(marker_name: str) -> bool:
     """Dispatch to the appropriate marker checker. Unknown markers return False."""
+    _y_star_internal_warn("_check_ship_marker")
     checker = _SHIP_MARKER_REGISTRY.get(marker_name)
     if checker is None:
         _log.warning("Unknown ship marker: %s", marker_name)
@@ -2032,6 +2056,7 @@ def _check_ship_marker(marker_name: str) -> bool:
 
 def register_ship_marker(name: str, checker_fn: Any) -> None:
     """Register a custom ship marker checker (for extensibility)."""
+    _y_star_internal_warn("register_ship_marker")
     _SHIP_MARKER_REGISTRY[name] = checker_fn
 
 
@@ -2046,6 +2071,7 @@ def enumerate_open_completeness_obligations() -> List[str]:
         from ystar.governance.omission_engine import enumerate_open_completeness_obligations
         print(enumerate_open_completeness_obligations())
     """
+    _y_star_internal_warn("enumerate_open_completeness_obligations")
     engine = OmissionEngine()
     return engine.enumerate_open_completeness_obligations()
 
@@ -2084,6 +2110,7 @@ def audit_manifest_completeness(
           - "cieu_failure_types": list of str (all failure types from CIEU)
           - "meta_events_emitted": int
     """
+    _y_star_internal_warn("audit_manifest_completeness")
     import sqlite3
     from pathlib import Path
 
@@ -2245,6 +2272,7 @@ def derive_new_obligations_from_ship(
           - "k9_causal_obligations": list (extra obligations from K9 traversal)
           - "meta_events_emitted": int
     """
+    _y_star_internal_warn("derive_new_obligations_from_ship")
     from pathlib import Path
 
     result: Dict[str, Any] = {
@@ -2485,6 +2513,7 @@ def _load_knowledge_action_registry(
     registry_path: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Load the knowledge-action registry YAML. Returns list of rule dicts."""
+    _y_star_internal_warn("_load_knowledge_action_registry")
     from pathlib import Path
 
     path = Path(registry_path or _DEFAULT_REGISTRY_PATH)
@@ -2530,6 +2559,7 @@ def detect_knowledge_action_gaps(
           - "total_gaps": int
           - "obligations_registered": int
     """
+    _y_star_internal_warn("detect_knowledge_action_gaps")
     import sqlite3
     from pathlib import Path
 
@@ -2662,6 +2692,7 @@ def enumerate_open_knowledge_action_gaps(
 
     Suitable for use in Stop hook reply scans, CEO pre-output checks, etc.
     """
+    _y_star_internal_warn("enumerate_open_knowledge_action_gaps")
     result = detect_knowledge_action_gaps(
         cieu_db_path=cieu_db_path,
         registry_path=registry_path,

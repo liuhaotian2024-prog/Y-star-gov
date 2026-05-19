@@ -10,9 +10,9 @@ adapter):
   - **D.1**: `VerifierResult.message_natural` — prose-style feedback for
     small models that struggle with structured jargon-style errors.
   - **E.1**: `Verifier` class metadata fields — `applies_to_tasks`,
-    `min_model_capacity`, `feedback_complexity`, `known_limitations`. Used
-    by `VerifierRegistry.assemble_chain` to filter the verifier chain
-    per scenario × model tier.
+    `feedback_complexity`, `known_limitations`. Used by
+    `VerifierRegistry.assemble_chain` to filter the verifier chain
+    per scenario.
   - **B.1**: `AdaptiveThresholdVerifier` mixin — first call records the
     baseline score, subsequent calls compare against `min(target,
     baseline + 0.10)`, never below `floor = target - 0.3`. Per-trial
@@ -77,16 +77,6 @@ class VerifierResult:
 
 # === E.1: Verifier base class with metadata =================================
 
-# Capacity tier ordering (used by AdaptiveThresholdVerifier and registry):
-_TIER_ORDER: Dict[str, int] = {"tiny": 0, "small": 1, "medium": 2, "large": 3}
-
-
-def tier_compatible(min_capacity: str, available_tier: str) -> bool:
-    """True when an `available_tier` model meets/exceeds `min_capacity` need."""
-    a = _TIER_ORDER.get(available_tier, 2)
-    m = _TIER_ORDER.get(min_capacity, 0)
-    return a >= m
-
 
 class Verifier(ABC):
     """Wraps one external tool. Idempotent (per workspace state) and
@@ -97,7 +87,6 @@ class Verifier(ABC):
     name: str = ""                                   # must override; matches the tool
     # v3.3 metadata for VerifierRegistry chain assembly:
     applies_to_tasks: List[str] = ["all"]            # ["all"] = applies everywhere
-    min_model_capacity: str = "small"                # "tiny"|"small"|"medium"|"large"
     feedback_complexity: str = "medium"              # "low"|"medium"|"high"
     known_limitations: List[str] = []
     # is_final_gate is a per-instance flag set by subclasses; used by scenarios
@@ -193,7 +182,7 @@ class AdaptiveThresholdVerifier(Verifier):
 
 class VerifierRegistry:
     """Global registry of (verifier_factory, metadata). Used by scenarios
-    to assemble per-trial verifier chains filtered by task + model_tier.
+    to assemble per-trial verifier chains filtered by task.
 
     Note: stores FACTORIES (callables returning a Verifier instance), not
     pre-instantiated verifiers, so AdaptiveThresholdVerifier subclasses
@@ -207,13 +196,12 @@ class VerifierRegistry:
         nm = name or getattr(factory, "name", None) or factory.__class__.__name__
         self._entries.append((nm, factory))
 
-    def assemble_chain(self, *, task: str, model_tier: str = "medium",
+    def assemble_chain(self, *, task: str,
                        include_final_gates: bool = True) -> List[Verifier]:
-        """Build the ordered verifier chain for one (task, tier) combo.
+        """Build the ordered verifier chain for one task.
 
         Filter rules:
           - skip if verifier.applies_to_tasks not in (task, "all")
-          - skip if not tier_compatible(verifier.min_model_capacity, tier)
           - skip final-gate verifiers if `include_final_gates=False`
 
         Order is registration order.
@@ -223,8 +211,6 @@ class VerifierRegistry:
             v = factory() if callable(factory) and not isinstance(factory, Verifier) else factory
             applies = v.applies_to_tasks or ["all"]
             if not (task in applies or "all" in applies):
-                continue
-            if not tier_compatible(v.min_model_capacity, model_tier):
                 continue
             if v.is_final_gate and not include_final_gates:
                 continue

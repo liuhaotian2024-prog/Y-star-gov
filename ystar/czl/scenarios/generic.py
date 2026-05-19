@@ -17,7 +17,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from ystar.czl.scenarios.base import Scenario, PlanStep, ScenarioRegistry
-from ystar.czl.verifiers.base import Verifier, VerifierResult, tier_compatible
+from ystar.czl.verifiers.base import Verifier, VerifierResult
 from ystar.czl.verifiers.contract_verifier import ContractConsistencyVerifier
 
 
@@ -26,7 +26,6 @@ class GenericPytestPassVerifier(Verifier):
     (generic task doesn't necessarily come with tests)."""
     name = "pytest"
     applies_to_tasks = ["all"]
-    min_model_capacity = "small"
     feedback_complexity = "low"
 
     def is_applicable(self, workspace_dir: str, contract: Optional[Dict[str, Any]] = None) -> bool:
@@ -114,9 +113,7 @@ class GenericScenario(Scenario):
 
     def verify(self, workspace_dir: str, contract: Dict[str, Any]) -> List[VerifierResult]:
         contract = contract or {}
-        model_tier = contract.get("model_tier", "medium")
         verifiers = [self._pytest, self._contract]
-        verifiers = [v for v in verifiers if tier_compatible(v.min_model_capacity, model_tier)]
         results: List[VerifierResult] = []
         for v in verifiers:
             try:

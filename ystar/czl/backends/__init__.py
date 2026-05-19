@@ -4,10 +4,9 @@ ystar.czl.backends — concrete LLM provider registrations
 Each provider here is a one-paragraph subclass of LiteLLMBackend. Prices
 sourced from each provider's pricing page as of 2026-05.
 
-ARM ROLES:
-  - frontier (arm A baseline):  anthropic, openai
-  - cheap (arm C primary):      deepseek, minimax, qwen, kimi
-  - local (arm B):              ollama
+ARM ROLES (v5.0):
+  - frontier (Phase 1 target — completion enforcement):  anthropic, openai
+  - cheap    (Phase 2 target — cost arbitrage):           deepseek, minimax, qwen, kimi
 """
 from __future__ import annotations
 
@@ -109,35 +108,8 @@ class KimiBackend(LiteLLMBackend):
         return bool(os.environ.get(self.env_var_for_key))
 
 
-# === ARM B: local (zero-cost path) ==========================================
-
-class OllamaBackend(LiteLLMBackend):
-    """Local Ollama daemon. Probes for a coder model on the box."""
-    name = "ollama"
-    tier = "local"
-    # v3.3: gemma4:e4b is an 8B model → "small" capacity. The registry filter
-    # routes high-complexity verifiers (e.g. mutation_score) out of its chain.
-    model_capacity = "small"
-    default_model = "gemma4:e4b"      # user's confirmed local model
-    env_var_for_key = ""              # local — no key
-    input_price_per_M = 0.0
-    output_price_per_M = 0.0
-    litellm_model_prefix = "ollama/"
-
-    def is_available(self) -> bool:
-        # Quick TCP probe to Ollama default port
-        import socket
-        host = os.environ.get("OLLAMA_HOST", "localhost").replace("http://", "").replace("https://", "")
-        if ":" in host:
-            host, port_s = host.rsplit(":", 1)
-            port = int(port_s)
-        else:
-            port = 11434
-        try:
-            with socket.create_connection((host, port), timeout=1):
-                return True
-        except Exception:
-            return False
+# v5.0: local-daemon backend deleted. Trampoline now targets frontier
+# and cheap cloud APIs only.
 
 
 # === register all on import ==================================================
@@ -145,6 +117,5 @@ class OllamaBackend(LiteLLMBackend):
 for cls in (
     AnthropicBackend, OpenAIBackend,
     DeepSeekBackend, MiniMaxBackend, QwenBackend, KimiBackend,
-    OllamaBackend,
 ):
     BackendRegistry.register(cls())

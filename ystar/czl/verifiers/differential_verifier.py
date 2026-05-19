@@ -290,7 +290,6 @@ class DifferentialVerifier(Verifier):
     name = "differential"
     # v3.3 E.2 metadata
     applies_to_tasks = ["test_generation_for_existing_code", "bug_fix_with_implicit_dependency", "all"]
-    min_model_capacity = "small"
     feedback_complexity = "medium"
     known_limitations = [
         "no synthetic input generator (Hypothesis cut from Phase 2)",

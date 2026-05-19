@@ -20,12 +20,8 @@ from ystar.czl.reflection.cluster import (
     cluster_pytest_failures,
     render_cluster_text,
 )
-# v5.0 Task E: repetition + no_progress modules retired.
-#   - v3.5 repetition META → replaced by ResidualLoopEngine._oscillation_detected
-#   - v3.8 no_progress (is_no_progress_v3_8 / adaptive_no_progress_window /
-#     query_safeguard_wall_cap) → replaced by RLE's max_iterations + oscillation
-# These imports are intentionally removed. Files retained on disk for git
-# history; not loaded by the runtime.
+# v5.0 Task E: repetition module retired (replaced by RLE oscillation
+# detection in ResidualLoopEngine).
 from ystar.czl.reflection.transitions import (
     TransitionTracker,
     extract_test_status,

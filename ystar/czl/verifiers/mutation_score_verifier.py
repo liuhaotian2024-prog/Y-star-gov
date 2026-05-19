@@ -23,8 +23,8 @@ Six hard constraints from the Phase-4 spec, all implemented here:
      - is_final_gate=True; scenario.verify() invokes it only after inner pass
      - a failure here is meant to drive ONE extra CZL iteration with the
        surviving-mutants diff as feedback (loop will naturally retry until
-       it converges OR no_progress fires; this verifier sits passively in
-       the chain and reports actionable diffs)
+       it converges or RLE halts; this verifier sits passively in the
+       chain and reports actionable diffs)
 
   C. Selective mutation
      - by default, only mutate lines the model changed since baseline
@@ -326,7 +326,6 @@ class MutationScoreVerifier(AdaptiveThresholdVerifier):
     is_final_gate = True  # scenario.verify() runs this only after inner pass
     # E.2 metadata
     applies_to_tasks = ["test_generation_for_existing_code"]
-    min_model_capacity = "medium"   # gemma 4B (small) is exempt — registry filter routes around
     feedback_complexity = "high"
     known_limitations = [
         "cosmic-ray timeout / memory bound on large modules",

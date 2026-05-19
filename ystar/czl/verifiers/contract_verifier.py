@@ -23,7 +23,7 @@ v3.3 changes (from v3.2):
     `message` (structured-for-large-model) and `message_natural`
     (prose-for-small-model).
   - **D.2**: VerifierResult.message_natural set.
-  - **E.2**: class metadata set (applies_to_tasks, min_model_capacity, ...).
+  - **E.2**: class metadata set (applies_to_tasks, feedback_complexity, ...).
 
 ZERO process-based logic — we do NOT inspect which files were edited.
 """
@@ -430,7 +430,6 @@ class ContractConsistencyVerifier(Verifier):
     name = "contract_consistency"
     # E.2 metadata
     applies_to_tasks: List[str] = ["all"]
-    min_model_capacity: str = "small"
     feedback_complexity: str = "medium"
     known_limitations: List[str] = [
         "intra-workspace only (no stdlib/3rd-party type-check)",

@@ -92,8 +92,8 @@ class Scenario(ABC):
         Generate the ordered list of steps to attempt for this task.
 
         v3.4: `contract` kwarg is now passed by loop.py so scenarios can
-        branch on `contract["model_tier"]` and emit tier-appropriate prompt
-        formats. Existing scenarios that ignore the kwarg keep working.
+        read trial-scoped fields. Existing scenarios that ignore the kwarg
+        keep working.
 
         A simple scenario might be a single step ("write the fix and prove it").
         A complex one might be several ("read the failing test, then propose fix,

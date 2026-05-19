@@ -65,10 +65,8 @@ class CZLRun:
     # explicit value rather than rely on this default in production. Trial
     # harnesses must accept it as a config/CLI param.
     max_iterations: int = 50
-    # Trajectory-based early stop. If the residual fails to strictly
-    # decrease for `no_progress_window` consecutive iterations, the loop
-    # halts with stopping_authority="no_progress". Set to 0 to disable.
-    no_progress_window: int = 3
+    # v5.0: trajectory-based early stop removed — oscillation halt is now
+    # owned by ResidualLoopEngine.
     strict: bool = False                 # if True, force human review on any ambiguity
     auto_undo_on_failure: bool = True    # stash diff before run, restorable
     run_id: str = field(default_factory=lambda: generate_event_id())
@@ -99,14 +97,13 @@ def dominates(a: "IterSnapshot", b: "IterSnapshot") -> bool:
     (a passes everything b passes PLUS at least one more). Equal passing
     sets explicitly do NOT count as dominance.
 
-    Why v3.7's iter_idx tie-break was removed (v5.0.2 sanity post-mortem):
-      gemma 4B's ADD-only protocol with merge-by-name means re-emitting
-      the same N test functions produces the IDENTICAL file blob. The
-      v3.7 tie-break then fired every iter (passing_set unchanged, earlier
-      iter "dominates" → rollback). Gemma made apparent progress (writes
-      land at apply layer, get rejection-logged for any out-of-bounds
-      paths), but T4 rollback erased it because tie-break treated
-      "identical state" as a dominance event. 6 iters = 6 rollbacks. Stuck.
+    Why v3.7's iter_idx tie-break was removed:
+      a re-emit-by-name protocol with merge-by-name means re-emitting the
+      same N functions produces an IDENTICAL file blob. The v3.7 tie-break
+      then fired every iter (passing_set unchanged, earlier iter
+      "dominates" → rollback). The model made apparent progress (writes
+      landed at apply layer), but rollback erased it because tie-break
+      treated "identical state" as a dominance event.
 
     "Equivalent state" is not "better state". Removed.
 
@@ -205,12 +202,9 @@ def run_scenario(
     # Augment contract with scenario-specific invariants (the Y* core)
     contract_dict = _merge_contract(contract_dict, request.scenario.y_star_invariants())
 
-    # v3.3 D.4: inject backend's capability tier so verifiers + chain
-    # assembly can filter verifier complexity per model size. Backend.tier
-    # is the commercial role (frontier/cheap/local); model_capacity is the
-    # v3.3 capacity tier (large/medium/small/tiny). Fallback "medium" for
-    # backends that don't declare.
-    contract_dict["model_tier"] = getattr(request.backend, "model_capacity", "medium")
+    # v5.0: capability-tier injection removed — Trampoline targets only
+    # frontier and cheap cloud APIs (both at or above "medium" capacity);
+    # tier-conditioned coaching paths have been deleted.
     # v3.3 B.3: trial_id so scenarios know when to reset adaptive-threshold
     # verifiers' calibration state across trials. CZLRun.run_id is unique
     # per run, so re-use it as the trial_id.
@@ -244,8 +238,7 @@ def run_scenario(
     # iter constructs a structured ResidualState (the Y_{t+1} of CZL's CIEU
     # tuple), dispatches it to RLE via on_cieu_event, and reads RLE's
     # halt-event emission (CONVERGED / OSCILLATION / ESCALATE) to decide
-    # whether to continue. v3.8 dual-dim no_progress / max_iter-removal /
-    # resource-safeguard are DELETED — RLE owns those decisions.
+    # whether to continue. RLE owns those decisions.
     last_violations: List[VerifierResult] = []
     feedback_block: str = ""
 
@@ -309,56 +302,32 @@ def run_scenario(
     from ystar.czl.reflection import ReflectionAnalyzer
     reflection = ReflectionAnalyzer()
 
-    # v3.7 T1: dominance-based rollback state. Per-test passing sets per iter.
-    # Old v3.4 best-residual logic is REPLACED — see below.
+    # v5.0: dominance-based rollback enabled for ALL backends. v3.7 logic
+    # originally gated it to small-tier only, but the cheap-API arbitrage
+    # path (Phase 2 / DeepSeek / MiniMax) also needs rollback to catch the
+    # "patch one place, break another" failure mode dominance detects.
     iter_snapshots_history: List[IterSnapshot] = []
-    rollback_enabled = contract_dict.get("model_tier", "medium") in ("small", "tiny", "local")
-    if rollback_enabled:
-        # Ensure workspace is a git repo with an initial commit so we can
-        # snapshot / rollback. Trial workspaces from run_seven_arm.py
-        # already are git-initialized; this is the defensive path for
-        # standalone runs.
-        _ensure_git_initialised(request.workspace_dir)
+    rollback_enabled = True
+    # Ensure workspace is a git repo with an initial commit so we can
+    # snapshot / rollback. Trial workspaces from run_seven_arm.py
+    # already are git-initialized; this is the defensive path for
+    # standalone runs.
+    _ensure_git_initialised(request.workspace_dir)
 
     # v5.0: RLE owns halt decisions (convergence / oscillation / escalation).
     # request.max_iterations is INFORMATIONAL only — the actual cap is RLE's
     # max_iterations (set above when constructing _rle).
-    # v5.0.3: wrap the loop body in try/except so external backend
-    # crashes (Ollama GGML assert, LiteLLM APIConnectionError, etc.)
-    # don't drop the in-flight CZLResult. Partial iter_prompts /
-    # iter_responses / iter_snapshots are preserved.
-    # Reactive-feedback mode gate (4 values, default = "full"):
-    #   "full"          — all v5.1 sections (default when env var unset)
-    #   "minimal"       — strip v4.0 probe / v5.0.1 focus / v5.0.6 signal /
-    #                     v5.1 protection / v5.1 rejection from prompt;
-    #                     keep v3.4 hint / v3.5 cluster / v3.6 regression
-    #                     / ADD-only
-    #   "pure_r"        — strip ALL coaching from feedback prompt; engineering
-    #                     layer (AST validator / merge protection / dominance)
-    #                     still active. Output only raw VerifierResult.
-    #   "pure_r_strict" — pure_r PLUS disable engineering layer: no AST
-    #                     reject, no passing-test protection, no dominance
-    #                     rollback, no focus_constraint, no inventory/probe
-    #                     in initial prompt, no rejection_log writes. Truly
-    #                     bare R-loop: Trampoline = verifier + raw feedback.
-    #   "v3_8_baseline" — v3.4-v3.8 reactive feedback (META + hint +
-    #                     ADD-only) PLUS strip v4.0 inventory + probe from
-    #                     initial prompt. Engineering layer (RLE / AST /
-    #                     passing protection / dominance) preserved but
-    #                     SILENT — feedback never tells Gemma about it.
-    # In all modes, RLE drives the loop; governance contract 8/8 still passes.
-    _feedback_mode = os.environ.get("CZL_FEEDBACK_MODE", "full")
-    _minimal_feedback = _feedback_mode in ("minimal", "pure_r", "pure_r_strict", "v3_8_baseline")
-    _pure_r_strict = _feedback_mode == "pure_r_strict"
+    # The loop body is wrapped in try/except so external backend crashes
+    # (LiteLLM APIConnectionError, etc.) don't drop the in-flight CZLResult.
+    # Partial iter_prompts / iter_responses / iter_snapshots are preserved.
 
     step_idx = -1
     try:
       while True:
         step_idx += 1
-        # v3.4 T1: pass contract to plan() so scenarios can branch on
-        # model_tier and emit tier-appropriate prompt formats (e.g. ADD-only
-        # for small tier). Use try/except for backwards compat with scenarios
-        # whose plan() signature pre-dates the contract kwarg.
+        # Pass contract to plan() so scenarios can read trial_id etc. Use
+        # try/except for backwards compat with scenarios whose plan()
+        # signature pre-dates the contract kwarg.
         try:
             plan_steps = request.scenario.plan(
                 request.task_description, request.workspace_dir,
@@ -379,15 +348,15 @@ def run_scenario(
         # what it observed last time. Order: probes → focus suggestion
         # (v5.0.1) → task prompt → feedback.
         probe_section = ""
-        if (not _minimal_feedback) and step_idx > 0 and (step_idx - 1) < len(result.iter_probes) and result.iter_probes[step_idx - 1]:
+        if step_idx > 0 and (step_idx - 1) < len(result.iter_probes) and result.iter_probes[step_idx - 1]:
             from ystar.czl.probe import render_probe_results_block
             probe_section = render_probe_results_block(
                 step_idx - 1, result.iter_probes[step_idx - 1]
             ) + "\n\n"
         # v5.0.1 Task B: focus_constraint rendered as SOFT SUGGESTION
         # (no "must" / "only" / "forbidden" language). The model is free
-        # to ignore it. This replaces v5.0's hard-reject in apply_action.
-        focus_section = "" if _minimal_feedback else (
+        # to ignore it.
+        focus_section = (
             _render_focus_suggestion(_active_focus_constraint) if _active_focus_constraint else ""
         )
         if focus_section:
@@ -516,9 +485,7 @@ def run_scenario(
         # iter that FIXES a hard test is not erased by a residual=1 iter
         # that lacks the hard fix, because dominance compares actual
         # passing-test SETS, not failing counts.
-        # pure_r_strict: dominance rollback fully OFF — Gemma's state always
-        # kept regardless of regression, per founder bare-R loop design.
-        if rollback_enabled and not _pure_r_strict:
+        if rollback_enabled:
             current_commit = _git_commit_iter(request.workspace_dir, step_idx, scalar_residual)
             # Extract per-test status from this iter's verifiers (pytest).
             from ystar.czl.reflection.transitions import extract_test_status
@@ -600,13 +567,10 @@ def run_scenario(
 
         # Pull next-action's focus_constraint from autonomy engine; the
         # loop respects it on the NEXT iter (plan/apply_action).
-        # pure_r_strict: skip CZLAutonomyEngine entirely — no focus_constraint
-        # flows into contract or prompt.
-        if not _pure_r_strict:
-            _next_action = _czl_autonomy.pull_next_action("czl-agent")
-            if _next_action is not None and _next_action.focus_constraint is not None:
-                _active_focus_constraint = _next_action.focus_constraint
-                contract_dict["_focus_constraint"] = _active_focus_constraint.to_dict()
+        _next_action = _czl_autonomy.pull_next_action("czl-agent")
+        if _next_action is not None and _next_action.focus_constraint is not None:
+            _active_focus_constraint = _next_action.focus_constraint
+            contract_dict["_focus_constraint"] = _active_focus_constraint.to_dict()
 
         # v5.0.2: drain any rejections recorded by scenario.apply_action this iter
         # and surface them in the next-iter feedback. Per founder principle "no
@@ -682,13 +646,9 @@ def run_scenario(
             # Handle parametrised IDs like `test_X[case1]` → bare = `test_X`
             bare = bare.split("[", 1)[0]
             _passing_bare_names.add(bare)
-        # pure_r_strict: don't expose passing set to scenario — merge will
-        # let any Gemma rewrite of a passing test land.
-        if not _pure_r_strict:
-            contract_dict["_passing_tests_last_iter"] = _passing_bare_names
+        contract_dict["_passing_tests_last_iter"] = _passing_bare_names
 
         # 4d. not converged — generate feedback via auto_rewrite-style logic.
-        model_tier = contract_dict.get("model_tier", "medium")
         reflection.record(step_idx, verifier_results)
         meta = reflection.analyze(iter_idx=step_idx)
         meta_text = meta.render() if not meta.is_empty() else ""
@@ -700,7 +660,7 @@ def run_scenario(
         except Exception:
             _scenario_protocol = None
         feedback_block = _format_feedback_for_retry(
-            last_violations, model_tier=model_tier, meta_text=meta_text,
+            last_violations, meta_text=meta_text,
             output_protocol=_scenario_protocol,
         )
 
@@ -746,14 +706,14 @@ def run_scenario(
             _protection_section = "\n".join(lines)
 
         # v5.0.6 signal block (response-level nudges)
-        if _response_signals and not _minimal_feedback:
+        if _response_signals:
             _signal_block = "## Output-level signal from last iter\n\n" + "\n\n".join(_response_signals)
             feedback_block = _signal_block + ("\n\n" + feedback_block if feedback_block else "")
 
         # v5.1 Task C: rejection log PROMINENT at the very top of feedback.
         # Drained earlier into _iter_rejections — render with explicit emoji
         # + reasons so the model can't miss them.
-        if _iter_rejections and not _minimal_feedback:
+        if _iter_rejections:
             _rej_lines = ["## 🚫 Last iter rejections (these edits were DROPPED)",
                           "Trampoline refused these changes because they would have broken "
                           "passing tests or referenced undefined names. Read carefully — do "
@@ -764,14 +724,13 @@ def run_scenario(
             _rej_block = "\n".join(_rej_lines)
             feedback_block = _rej_block + ("\n\n" + feedback_block if feedback_block else "")
 
-        # Protection / fix-zone goes at the VERY TOP — most prominent. Per
-        # founder principle: passing protection drives gemma's edits.
-        if _protection_section and not _minimal_feedback:
+        # Protection / fix-zone goes at the VERY TOP — most prominent.
+        # Passing protection drives the model's edits.
+        if _protection_section:
             feedback_block = _protection_section + ("\n\n" + feedback_block if feedback_block else "")
 
-        # v5.0: v3.8 dual-dim no_progress + resource_safeguard DELETED.
-        # All halt decisions (convergence, oscillation, escalation) are
-        # owned by ResidualLoopEngine above. This block intentionally empty.
+        # All halt decisions (convergence, oscillation, escalation) are owned
+        # by ResidualLoopEngine above. This block intentionally empty.
         pass
 
     except Exception as _loop_exc:
@@ -791,10 +750,9 @@ def run_scenario(
     # --- Step 5: finalize ---------------------------------------------------
     if not result.converged:
         if not result.stopping_authority:
-            # v3.8: shouldn't happen — the loop only exits via converged/
-            # no_progress/resource_safeguard/scenario_empty (or break in
-            # rollback fail). v5.0.3: backend_exception is now a normal
-            # exit path (Ollama GGML crashes mid-trial).
+            # Should be unreachable — the loop exits via RLE halt events
+            # (converged / oscillation / escalate), scenario_empty, or
+            # backend_exception. Defensive fallback.
             result.stopping_authority = "unknown_exit"
             result.halted_due_to = "unknown_exit"
         result.failure_reason = (
@@ -942,78 +900,49 @@ def _render_focus_suggestion(focus_constraint: Any) -> str:
 
 
 def _format_feedback_for_retry(violations: List[VerifierResult],
-                                model_tier: str = "medium",
                                 meta_text: str = "",
                                 output_protocol: Optional[Dict[str, Any]] = None) -> str:
     """Compose the retry-feedback text block fed back to the LLM next iteration.
 
-    v3.5 composition order:
-      1. META block (cluster + repetition from ReflectionAnalyzer)
-      2. per-verifier: small tier reads message_natural (auto-synthesised
-         from the 4 Hook fields reason/instruction/reference/example if
-         message_natural is None); medium/large reads structured message
-         + raw stdout tail.
-      3. retry instructions read from scenario.output_protocol() — NEVER
-         hardcoded. If output_protocol is None, no format instruction is
-         emitted (scenario opts out).
+    Composition order:
+      1. META block (cluster + regression cross-iter signals from
+         ReflectionAnalyzer)
+      2. Per-verifier: structured message + raw stdout tail.
+      3. Retry instructions read from scenario.output_protocol() — NEVER
+         hardcoded. If output_protocol is None, a generic fallback hint
+         is emitted.
 
-    pure_r mode override: when CZL_FEEDBACK_MODE=pure_r, emit ONLY the
-    raw VerifierResult output (`.message` + `.details["stdout"]`). No
-    META, no hint synthesis, no instruction, no natural-language coaching.
+    v5.0: small-tier hint-synthesis path retired with the local-model route.
     """
     if not violations:
         return ""
-    if os.environ.get("CZL_FEEDBACK_MODE") in ("pure_r", "pure_r_strict"):
-        lines: List[str] = ["### Verifier outputs (raw):"]
-        for v in violations[:10]:
-            lines.append("")
-            lines.append(f"[{v.verifier_name}] {v.message}")
-            stdout = (v.details or {}).get("stdout") or ""
-            if stdout.strip():
-                lines.append("```")
-                lines.append(stdout.strip()[-2000:])
-                lines.append("```")
-        return "\n".join(lines)
-    use_natural = model_tier in ("small", "tiny", "local")
     lines: List[str] = []
-    # v3.5 T5: META block first (cluster + repetition cross-iter signals).
     if meta_text:
         lines.append(meta_text)
         lines.append("")
     lines.append("### Previous attempt did NOT converge. Address each issue:")
     for v in violations[:10]:
-        if use_natural:
-            # v3.5: synthesise from 4 Hook fields if message_natural was not set.
-            text = v.message_natural if getattr(v, "message_natural", None) else v.synthesise_natural()
-            lines.append(f"\n[{v.verifier_name}]\n{text}")
-        else:
-            # Large / medium tier: structured message + raw stdout tail (no hint)
-            lines.append(f"- [{v.verifier_name}] {v.message}")
-            if v.details:
-                stdout_tail = (v.details.get("stdout") or "")[-1000:]
-                if stdout_tail.strip():
-                    lines.append("  verifier output:")
-                    lines.append("  ```")
-                    for line in stdout_tail.strip().splitlines()[-25:]:
-                        lines.append(f"  {line}")
-                    lines.append("  ```")
+        lines.append(f"- [{v.verifier_name}] {v.message}")
+        if v.details:
+            stdout_tail = (v.details.get("stdout") or "")[-1000:]
+            if stdout_tail.strip():
+                lines.append("  verifier output:")
+                lines.append("  ```")
+                for line in stdout_tail.strip().splitlines()[-25:]:
+                    lines.append(f"  {line}")
+                lines.append("  ```")
     lines.append("")
     # Scenario-declared output protocol drives the format instruction. No
     # hardcoded filenames or block tags here — read from scenario.
     if output_protocol and output_protocol.get("instruction"):
         lines.append(output_protocol["instruction"])
-    elif not use_natural:
-        # Medium/large tier with no scenario-declared protocol: fall back to
-        # the generic "re-emit the full corrected content" hint. Still
-        # scenario-agnostic (no filename references).
+    else:
         lines.append(
             "Re-emit the full corrected content of any file that still has issues. "
             "Do not restart from scratch. If a verifier failure shows the test "
             "expects a specific type/value, your fix must produce that — the "
             "verifier is the spec."
         )
-    # else: small tier + no protocol declared → no instruction line; scenario
-    # opted out of structured format hints.
     return "\n".join(lines)
 
 
