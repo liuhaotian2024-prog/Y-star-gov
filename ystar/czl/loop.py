@@ -159,6 +159,10 @@ class CZLResult:
     gate_soft_notes_count: int = 0
     gate_per_field_denials: Dict[str, int] = field(default_factory=dict)
     gate_denied_paths: List[str] = field(default_factory=list)  # diagnostic
+    # v5.3: full per-trial governance event chain (GovernanceEvent.to_dict()
+    # + halt events + gate decisions). Harness writes this to a per-trial
+    # JSONL file for post-hoc audit. Replaces the global .ystar_cieu_*.db.
+    governance_events: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         d = dict(self.__dict__)
@@ -359,6 +363,13 @@ def run_scenario(
         payload = action.payload if hasattr(action, "payload") else (
             action if isinstance(action, dict) else {})
         action_path = (payload or {}).get("path", "") or ""
+        action_type = getattr(action, "type", None) or (
+            payload.get("type") if isinstance(payload, dict) else None) or ""
+        # v5.3 sub-file: AST-parse action.payload['content'] to know which
+        # functions / test_cases the agent's edit actually declares.
+        _action_subfile = _extract_action_targets(
+            (payload or {}).get("content", "") or ""
+        )
 
         for field_name, level in fc.enforcement.items():
             if level == "off":
@@ -388,6 +399,22 @@ def run_scenario(
                         f"{(field_value or {}).get('count', '?')} failures); "
                         f"action targeted {action_path!r}"
                     )
+            elif field_name == "target_functions":
+                _af = _action_subfile.get("functions", set())
+                if _af and not (_af & set(field_value)):
+                    violation_reason = f"agent fns {sorted(_af)} miss target {sorted(field_value)}"
+            elif field_name == "target_test_cases":
+                _at = _action_subfile.get("test_cases", set())
+                _tb = {t.split("::", 1)[-1] for t in field_value}
+                if _at and not (_at & _tb):
+                    violation_reason = f"agent tests {sorted(_at)} miss target {sorted(_tb)}"
+            elif field_name == "forbidden_operations":
+                for entry in field_value:
+                    _ft = entry[0] if isinstance(entry, (list, tuple)) and len(entry) >= 1 else str(entry)
+                    _tp = entry[1] if isinstance(entry, (list, tuple)) and len(entry) >= 2 else ""
+                    if action_type == _ft and (not _tp or _tp in action_path):
+                        violation_reason = f"forbidden_operations match ({_ft!r},{_tp!r})"
+                        break
             # Future fields land here. The gate stays field-name-iterable.
 
             if violation_reason is None:
@@ -417,17 +444,13 @@ def run_scenario(
     )
 
     def _emit_governance(event_type: str, payload: Optional[Dict[str, Any]] = None) -> None:
-        """Emit one GovernanceEvent into the omission engine for this run."""
-        try:
-            _omission_engine.ingest_event(GovernanceEvent(
-                event_type=event_type,
-                entity_id=_coding_entity_id,
-                actor_id=_coding_actor_id,
-                payload=payload or {},
-                source="czl.loop",
-            ))
-        except Exception as _exc:
-            _log.debug("governance emit %s failed: %s", event_type, _exc)
+        """v5.3: emit to omission engine + mirror to result.governance_events."""
+        _ev = GovernanceEvent(event_type=event_type, entity_id=_coding_entity_id,
+                              actor_id=_coding_actor_id, payload=payload or {}, source="czl.loop")
+        try: _omission_engine.ingest_event(_ev)
+        except Exception as _exc: _log.debug("governance emit %s failed: %s", event_type, _exc)
+        try: result.governance_events.append(_ev.to_dict())
+        except Exception: pass
 
     # Seed dispatch event so the stuck-after-dispatch rule has a trigger.
     _emit_governance(GEventType.TASK_DISPATCHED, {"task": request.task_description[:200]})
@@ -609,6 +632,13 @@ def run_scenario(
                         "focus_constraint": _active_focus_constraint.to_dict()
                                               if _active_focus_constraint else None,
                     })
+                    # v5.3: mirror gate decision into per-trial governance log.
+                    result.governance_events.append({
+                        "event_type": "focus_gate_deny",
+                        "ts": time.time(), "iteration": step_idx,
+                        "path": _denied_path, "field_violated": _gate_field,
+                        "reason": _gate_reason,
+                    })
                     # v5.2 telemetry: surface gate decisions to CZLResult so
                     # callers can analyse over-restriction empirically.
                     result.gate_denied_count += 1
@@ -643,6 +673,15 @@ def run_scenario(
         # iter index aligns with result.iter_probes[step_idx].
         result.iter_probes.append(this_iter_probes)
 
+        # v5.3 mid-loop intervention: scan after apply, before verify.
+        try:
+            _midscan = _omission_engine.scan()
+            if _midscan.violations:
+                _intervention_engine.process_violations(_midscan.violations)
+                _log.info("CZL v5.3 mid-loop scan: %d violation(s) iter %d", len(_midscan.violations), step_idx)
+        except Exception as _exc:
+            _log.debug("mid-loop scan failed at iter %d: %s", step_idx, _exc)
+
         # 4c. run scenario verifiers → build structured Y_{t+1}
         verifier_results = request.scenario.verify(request.workspace_dir, contract_dict)
         last_violations = [v for v in verifier_results if not v.passed]
@@ -671,6 +710,13 @@ def run_scenario(
             residual_history=list(result.residual_trajectory),
         )
         scalar_residual = czl_distance_function(Y_STAR_ALL_PASS, residual_state)
+        # v5.3: per-iter residual snapshot for per-trial audit log.
+        result.governance_events.append({
+            "event_type": "iter_residual", "ts": time.time(),
+            "iteration": step_idx, "scalar_residual": scalar_residual,
+            "passing_count": residual_state.passing_test_count,
+            "failing_count": residual_state.failing_test_count,
+        })
         # Emit residual + reduce-residual to the omission engine before we
         # mutate result.final_residual so we can compare against the prior
         # trajectory value cleanly.
@@ -764,6 +810,11 @@ def run_scenario(
         }
         _rle.on_cieu_event(_rle_event)
         _halt = _czl_sink.latest_halt_event_type()
+        if _halt:
+            result.governance_events.append({
+                "event_type": _halt, "ts": time.time(),
+                "iteration": step_idx, "scalar_residual": scalar_residual,
+            })
 
         # v5.0.1 fix: intervention machinery must fire on STUCK halts
         # (oscillation / escalate) — that's when an agent has failed and
@@ -865,27 +916,15 @@ def run_scenario(
         _next_action = _czl_autonomy.pull_next_action("czl-agent")
         if _next_action is not None and _next_action.focus_constraint is not None:
             _active_focus_constraint = _next_action.focus_constraint
-            # v5.2/v5.3: merge scenario override. Accepts two shapes:
-            #   v5.2 flat: {field: level}
-            #   v5.3 nested: {"enforcement": {field: level}, "forbidden_operations": {...}}
-            try:
-                _scen_override = request.scenario.focus_constraint_enforcement_override()
-            except AttributeError:
-                _scen_override = None
+            # v5.2/v5.3: merge scenario override. Accepts flat (v5.2) or nested (v5.3) shape.
+            try: _scen_override = request.scenario.focus_constraint_enforcement_override()
+            except AttributeError: _scen_override = None
             if _scen_override:
-                _enf_part = _scen_override.get("enforcement") if (
-                    isinstance(_scen_override, dict) and "enforcement" in _scen_override
-                ) else _scen_override   # v5.2 flat fallback
-                if _enf_part:
-                    _active_focus_constraint.enforcement = {
-                        **_active_focus_constraint.enforcement, **_enf_part,
-                    }
-                # v5.3 scenario-domain fields:
+                _enf = _scen_override.get("enforcement") if (isinstance(_scen_override, dict) and "enforcement" in _scen_override) else _scen_override
+                if _enf: _active_focus_constraint.enforcement = {**_active_focus_constraint.enforcement, **_enf}
                 if isinstance(_scen_override, dict) and _scen_override.get("forbidden_operations"):
                     _active_focus_constraint.forbidden_operations = set(
-                        tuple(t) if isinstance(t, list) else t
-                        for t in _scen_override["forbidden_operations"]
-                    )
+                        tuple(t) if isinstance(t, list) else t for t in _scen_override["forbidden_operations"])
             contract_dict["_focus_constraint"] = _active_focus_constraint.to_dict()
 
         # v5.0.2: drain any rejections recorded by scenario.apply_action this iter
@@ -1163,6 +1202,26 @@ def _format_toast_text(contract: Dict[str, Any], conf: float, method: str, diag:
         f"(via {method}, confidence {conf:.0%}). "
         f"Press ↓ for details, Enter to accept, or wait {TOAST_TIMEOUT_SECONDS:.0f}s for auto-accept."
     )
+
+
+def _extract_action_targets(content: str) -> Dict[str, Any]:
+    """v5.3: AST-extract sub-file targets from an action's payload content.
+    Returns {"functions": set, "test_cases": set}. Pure stdlib, no LLM.
+    test_cases = function names starting with 'test_'."""
+    import ast as _ast
+    out: Dict[str, Any] = {"functions": set(), "test_cases": set()}
+    if not content or not content.strip():
+        return out
+    try:
+        tree = _ast.parse(content)
+    except (SyntaxError, ValueError):
+        return out
+    for node in _ast.walk(tree):
+        if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+            out["functions"].add(node.name)
+            if node.name.startswith("test_"):
+                out["test_cases"].add(node.name)
+    return out
 
 
 def _enforce_boundary(action: Dict[str, Any], contract: Dict[str, Any]) -> bool:

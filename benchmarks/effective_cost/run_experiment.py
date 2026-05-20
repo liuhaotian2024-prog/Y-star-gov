@@ -288,7 +288,8 @@ def run_baseline_arm(scen, ws: Path, backend: Backend, task_desc: str) -> TrialR
     )
 
 
-def run_trampoline_arm(scen, ws: Path, backend: Backend, task_desc: str) -> TrialRecord:
+def run_trampoline_arm(scen, ws: Path, backend: Backend, task_desc: str,
+                        cieu_log_path: Optional[Path] = None) -> TrialRecord:
     started = time.time()
     request = CZLRun(
         task_description=task_desc,
@@ -306,6 +307,14 @@ def run_trampoline_arm(scen, ws: Path, backend: Backend, task_desc: str) -> Tria
         gate_denied = result.stopping_authority == "completion_gate_denied"
         per_field = getattr(result, "gate_per_field_denials", {}) or {}
         denied_paths = getattr(result, "gate_denied_paths", []) or []
+        # v5.3: write per-trial CIEU log (trampoline arm only — baseline
+        # has no run_scenario path, no events to write).
+        _events = getattr(result, "governance_events", []) or []
+        if cieu_log_path and _events:
+            cieu_log_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(cieu_log_path, "w", encoding="utf-8") as _f:
+                for _ev in _events:
+                    _f.write(json.dumps(_ev, default=str) + "\n")
         return TrialRecord(
             trial_idx=-1, arm="trampoline",
             model_id=backend.model, backend_label=backend.name,
@@ -375,8 +384,17 @@ def run_experiment(trials_per_cell: int = TRIALS_PER_CELL,
                         # byte-identical fixture for both arms (must materialize fresh)
                         _materialize(scen_spec["cls"], ws)
                         task_desc = _task_for(scen_spec["cls"], ws)
-                        runner = run_baseline_arm if arm == "baseline" else run_trampoline_arm
-                        rec = runner(scen, ws, backend, task_desc)
+                        if arm == "baseline":
+                            rec = run_baseline_arm(scen, ws, backend, task_desc)
+                        else:
+                            _log_path = RESULTS_DIR / "cieu_logs" / (
+                                f"trial_{trial_idx:03d}_{model_spec['id']}_"
+                                f"{scen_spec['id']}_trampoline.jsonl"
+                            )
+                            rec = run_trampoline_arm(
+                                scen, ws, backend, task_desc,
+                                cieu_log_path=_log_path,
+                            )
                         rec.trial_idx = trial_idx
                         rec.model_id = model_spec["id"]
                         rec.backend_label = model_spec["tier_label"]
