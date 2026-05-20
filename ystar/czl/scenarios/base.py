@@ -132,6 +132,27 @@ class Scenario(ABC):
         ...
 
     # === optional overrides =================================================
+    def focus_constraint_enforcement_override(self) -> Optional[Dict[str, str]]:
+        """v5.2: per-scenario override for FocusConstraint.enforcement.
+
+        Return a dict of {field_name: "hard"|"soft"|"off"} that the loop
+        merges into the autonomy-engine-computed FocusConstraint's
+        `enforcement` dict before per-action gate checks.
+
+        Use case: scenarios where the autonomy engine's generic
+        cluster-based `allowed_files` derivation may include files the
+        scenario semantically forbids the agent from writing to (e.g.
+        test_gen_for_existing's "source under test is read-only; agent
+        must write to test_*.py" rule). Default cluster-derivation can
+        put the SOURCE file into allowed_files because failures point at
+        it. Hard-enforcing that would block the agent from doing its
+        legitimate job. The scenario softens `allowed_files` to recover.
+
+        Return None to use the FocusConstraint defaults verbatim
+        (allowed_files=hard, target_cluster=soft, guidance_keys=off).
+        """
+        return None
+
     def output_protocol(self) -> Optional[Dict[str, Any]]:
         """Declare the scenario's output protocol so the loop's reactive
         feedback can render scenario-correct format instructions instead of

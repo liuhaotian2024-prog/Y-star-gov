@@ -47,6 +47,9 @@ class OpenAIBackend(LiteLLMBackend):
     input_price_per_M = 5.00       # placeholder; check current pricing
     output_price_per_M = 15.00
     litellm_model_prefix = "openai/"
+    # GPT-5 family deprecates temperature=0 (only temperature=1 is
+    # accepted, see LiteLLM gpt_5_transformation). Omit temperature.
+    supports_temperature = False
 
 
 # === ARM C: cheap (the commercial focus) =====================================

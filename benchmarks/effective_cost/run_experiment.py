@@ -175,6 +175,11 @@ class TrialRecord:
     scenario_fixture_commit_hash: str
     raw_text_head: str = ""   # diagnostic — first 250 chars of last LLM response
     raw_text_tail: str = ""   # diagnostic — last 250 chars of last LLM response
+    # v5.2 telemetry: pre-action focus-constraint gate counts (trampoline arm only)
+    gate_denied_count: int = 0
+    gate_soft_notes_count: int = 0
+    gate_per_field_denials_json: str = ""    # JSON of {field_name: count}
+    gate_denied_paths_sample: str = ""        # first N denied paths, semicolon-joined
 
 
 def _commit_hash() -> str:
@@ -299,6 +304,8 @@ def run_trampoline_arm(scen, ws: Path, backend: Backend, task_desc: str) -> Tria
         claimed = bool(result.converged)
         verified = _run_verifier(scen, str(ws))
         gate_denied = result.stopping_authority == "completion_gate_denied"
+        per_field = getattr(result, "gate_per_field_denials", {}) or {}
+        denied_paths = getattr(result, "gate_denied_paths", []) or []
         return TrialRecord(
             trial_idx=-1, arm="trampoline",
             model_id=backend.model, backend_label=backend.name,
@@ -314,6 +321,10 @@ def run_trampoline_arm(scen, ws: Path, backend: Backend, task_desc: str) -> Tria
             gate_denied=gate_denied,
             trampoline_commit_hash=_TRAMPOLINE_HASH,
             scenario_fixture_commit_hash=_TRAMPOLINE_HASH,
+            gate_denied_count=getattr(result, "gate_denied_count", 0),
+            gate_soft_notes_count=getattr(result, "gate_soft_notes_count", 0),
+            gate_per_field_denials_json=json.dumps(per_field),
+            gate_denied_paths_sample=";".join(denied_paths[:10]),
         )
     except Exception as exc:
         return TrialRecord(

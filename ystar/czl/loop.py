@@ -149,6 +149,16 @@ class CZLResult:
     # so trial diagnostics can answer "what did gemma actually output" — the
     # data we needed for v5.0.2 post-mortem and didn't have.
     iter_responses: List[str] = field(default_factory=list)
+    # v5.2 telemetry: pre-action focus-constraint gate counts. Cumulative
+    # across the whole run. `gate_denied_count` is the number of actions
+    # that were hard-denied by the gate; `gate_soft_notes_count` is the
+    # number that were allowed-with-advisory. `gate_per_field_denials`
+    # tracks which FocusConstraint field name drove each denial so we can
+    # see if any field is over-restrictive in practice.
+    gate_denied_count: int = 0
+    gate_soft_notes_count: int = 0
+    gate_per_field_denials: Dict[str, int] = field(default_factory=dict)
+    gate_denied_paths: List[str] = field(default_factory=list)  # diagnostic
 
     def to_dict(self) -> Dict[str, Any]:
         d = dict(self.__dict__)
@@ -391,6 +401,7 @@ def run_scenario(
                 "reason": violation_reason,
                 "rationale": fc.rationale,
             })
+            result.gate_soft_notes_count += 1
 
         return ("allow", "", None)
 
@@ -589,14 +600,24 @@ def run_scenario(
                     action, _active_focus_constraint
                 )
                 if _gate_decision == "deny":
+                    _denied_path = (action.payload.get("path", "") if hasattr(action, "payload")
+                                     else (action.get("path", "") if isinstance(action, dict) else "")) or ""
                     _gate_rejections.append({
-                        "path": (action.payload.get("path", "") if hasattr(action, "payload")
-                                  else (action.get("path", "") if isinstance(action, dict) else "")) or "",
+                        "path": _denied_path,
                         "field_violated": _gate_field,
                         "reason": _gate_reason,
                         "focus_constraint": _active_focus_constraint.to_dict()
                                               if _active_focus_constraint else None,
                     })
+                    # v5.2 telemetry: surface gate decisions to CZLResult so
+                    # callers can analyse over-restriction empirically.
+                    result.gate_denied_count += 1
+                    if _gate_field:
+                        result.gate_per_field_denials[_gate_field] = (
+                            result.gate_per_field_denials.get(_gate_field, 0) + 1
+                        )
+                    if _denied_path:
+                        result.gate_denied_paths.append(_denied_path)
                     _log.info(
                         "CZL v5.2: focus-constraint gate DENIED action (field=%s): %s",
                         _gate_field, _gate_reason,
@@ -844,6 +865,18 @@ def run_scenario(
         _next_action = _czl_autonomy.pull_next_action("czl-agent")
         if _next_action is not None and _next_action.focus_constraint is not None:
             _active_focus_constraint = _next_action.focus_constraint
+            # v5.2: merge scenario's per-field enforcement override so
+            # scenario-specific knowledge (e.g. "source file is read-only
+            # for test_gen") softens cluster-derived allowed_files.
+            try:
+                _scen_override = request.scenario.focus_constraint_enforcement_override()
+            except AttributeError:
+                _scen_override = None
+            if _scen_override:
+                _active_focus_constraint.enforcement = {
+                    **_active_focus_constraint.enforcement,
+                    **_scen_override,
+                }
             contract_dict["_focus_constraint"] = _active_focus_constraint.to_dict()
 
         # v5.0.2: drain any rejections recorded by scenario.apply_action this iter
