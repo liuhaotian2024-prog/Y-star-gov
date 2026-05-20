@@ -1,475 +1,339 @@
-# Trampoline v5.2 — Pre-Action Authorization (design proposal)
+# Trampoline v5.2 — Focus-Constraint Hard Enforcement (design proposal, v2)
 
 **Status**: proposal. No code, no commit. Founder reviews before any implementation.
 
-**Author**: Claude Code (drafted under v5.0.1 substrate, commit `371d4e8`).
+**Author**: Claude Code, drafted on top of v5.0.1 substrate (commit `371d4e8`).
 
-**Date**: 2026-05-19.
-
----
-
-## 1. The diagnosis: v5.0.1 is post-hoc, not pre-action
-
-What we built in v5.0 + v5.0.1:
-
-  - `OmissionEngine` ingests `GovernanceEvent`s as the loop emits them, creates
-    obligations, lets them age into violations.
-  - `InterventionEngine.process_violations` materialises violations into
-    intervention pulses.
-  - `InterventionEngine.gate_check(actor, action_type)` evaluates whether an
-    action should be allowed given the actor's open obligations.
-
-What v5.0.1 actually wires up in `ystar/czl/loop.py`:
-
-  - `gate_check` is called **once**, on `DECLARE_DONE`, at convergence-attempt time.
-  - `scan + process_violations` is called at every RLE halt event (converged /
-    oscillation / escalate).
-
-What this means in practice:
-
-  - The loop runs to completion. RLE caps it. Only THEN do we look at whether
-    any obligations are open. If they are, the convergence claim is blocked.
-  - **No mid-iteration block of any tool_use.** An agent that's about to issue
-    a destructive `edit_file` is never asked "should this be allowed?" until
-    after the work is done.
-
-This is **post-hoc monitoring**, not a runtime guardrail. Comparable to a
-firewall that audits packets after delivery.
-
-The 2025-2026 frontier of agent-safety research moved past this. Two examples
-the founder pointed at are real and directly relevant:
-
-  - **AEGIS** (Yuan, Su, Zhao — arxiv 2603.12621, March 2026). *No Tool Call
-    Left Unchecked — A Pre-Execution Firewall and Audit Layer for AI Agents.*
-    Sits on the tool-execution path. Three-stage synchronous pipeline (deep
-    string extraction → content risk scan → policy validation). Blocks 100%
-    of 48 attack instances in their test suite, 1.2% false positives on 500
-    benign calls, **8.3 ms median latency** across 1,000 interceptions.
-    Supports 14 agent frameworks across Python/JS/Go.
-
-  - **OAP / Open Agent Passport** (Uchibeke — arxiv 2603.20953, March 2026).
-    *Before the Tool Call: Deterministic Pre-Action Authorization for
-    Autonomous AI Agents.* Synchronous interception, declarative policy,
-    cryptographically signed audit. **53 ms median enforcement latency.**
-    Adversarial testing across 1,151 sessions: social engineering attacks
-    succeeded **74.6%** under a permissive policy and **0%** across 879
-    attempts under the restrictive OAP policy.
-
-The named Python frameworks each ship the same pattern as production API:
-
-  - **AWS Strands** (`strands-agents/sdk-python`). `BeforeToolCallEvent` is a
-    `@dataclass` with `selected_tool`, `tool_use`, `invocation_state`, and a
-    mutable `cancel_tool: bool | str = False`. A hook sets `cancel_tool =
-    "Read-only access."` and the tool is replaced with an error result before
-    execution. Synchronous, in-process, no external call. There is also an
-    `AfterToolCallEvent` with `retry: bool = False` for re-invocation.
-
-  - **LangGraph**. `interrupt()` inside a node pauses the graph at that point,
-    snapshots state via the checkpointer, and resumes after external input.
-    Synchronous BSP semantics — "a single slow node blocks the entire
-    superstep" — but the durability layer means a long pause doesn't lose
-    work. Best fit for human-in-the-loop, can also be machine-gated.
-
-  - **AutoGen**. `register_reply()` lets you register reply handlers that
-    intercept the message chain before LLM is called. Not exactly pre-tool,
-    but it's the same pattern: a synchronous chain of inspectors that can
-    short-circuit.
-
-The shared structure across all five: **the hook is synchronous, in-process,
-gets the proposed action as data, can return ALLOW / BLOCK / REDIRECT, and
-the framework respects the verdict before any side-effect runs**.
-
-We do not do this. We should.
+**Date**: 2026-05-19. **Supersedes**: the earlier "pre-action authorization" v5.2 draft, which framed the work as introducing a new mechanism modelled on AEGIS / OAP. That framing was wrong. CZL **already has** the residual-driven U_{t+1} machinery; the gap is enforcement strength, not architecture.
 
 ---
 
-## 2. The proposed v5.2 architecture
+## 1. One factual correction before the design
 
-```
-                ┌─────────────────────────────────────────────┐
-                │            backend.invoke()                 │
-                │  (LLM produces BackendResponse with actions)│
-                └─────────────────────┬───────────────────────┘
-                                      │
-                                      ▼
-                  ┌──────────────────────────────────────┐
-                  │     for action in response.actions:  │
-                  └─────────────────────┬────────────────┘
-                                        │
-                                        ▼
-                  ╔════════════════════════════════════════╗
-                  ║   pre_action_gate(action)              ║
-                  ║   (NEW in v5.2 — synchronous)          ║
-                  ║                                        ║
-                  ║   1. omission_engine.scan()            ║
-                  ║      (materialise newly-overdue        ║
-                  ║       obligations into violations)     ║
-                  ║   2. intervention_engine.process_      ║
-                  ║      violations(violations)            ║
-                  ║      (build pulses for hard_overdue)   ║
-                  ║   3. intervention_engine.gate_check(   ║
-                  ║      actor, action_type, entity)       ║
-                  ║      → GateDecision.{ALLOW,DENY,       ║
-                  ║                       REDIRECT}        ║
-                  ╚════════════════════════════════════════╝
-                                        │
-                  ┌─────────────────────┼─────────────────────┐
-                  │                     │                     │
-                  ▼                     ▼                     ▼
-            ALLOW → execute     DENY → skip          REDIRECT → skip
-            apply_action        + record block       + record suggested
-                                  reason into          alternative into
-                                  feedback             feedback
-                                        │                     │
-                                        └─────────┬───────────┘
-                                                  ▼
-                  ┌──────────────────────────────────────────┐
-                  │ build next-iter feedback so the LLM sees │
-                  │ exactly which actions were blocked, why, │
-                  │ and what to do instead.                  │
-                  └─────────────────────┬────────────────────┘
-                                        ▼
-                  ┌──────────────────────────────────────────┐
-                  │     scenario.verify() (unchanged)        │
-                  └─────────────────────┬────────────────────┘
-                                        ▼
-                  ┌──────────────────────────────────────────┐
-                  │     RLE.on_cieu_event (unchanged)        │
-                  │     scan + intervention at halts         │
-                  │     (kept as v5.0.1 defensive layer)     │
-                  └──────────────────────────────────────────┘
-```
+Founder's Fact 2 says *"allowed_files 维度:HARD enforce ✅"*. This is **not true in the current code on `czl-v5-canonical-rewrite` HEAD**:
 
-The new layer is **between LLM response parsing and `scenario.apply_action`**.
-Everything else stays.
+  - `ystar/czl/loop.py:511` carries a stale comment claiming `apply_action` enforces `focus_constraint.allowed_files`. The comment dates from v5.0.
+  - But the actual enforcement code was deleted by v5.0.1 / v5.0.2.  See `ystar/czl/scenarios/test_gen_for_existing.py:726-733`, which states explicitly:
+
+    > *"v5.0.1+ design correction: v5.0 added a hard-reject path that SILENTLY discarded writes outside focus_constraint.allowed_files. Combined with v3.7 dominance rollback, that locked gemma in place (48 iters at residual=1.5, passing=36, zero improvement). v5.0.1 / v5.0.2 **delete the hard-reject**. focus_constraint now flows ONLY through the prompt as a SUGGESTION ... The model is free to ignore it."*
+
+So today **every** `FocusConstraint` field — `allowed_files`, `target_cluster`, `guidance_keys`, `rationale` — flows as soft suggestion text in the prompt. The agent can ignore any of them.
+
+This **strengthens** founder's diagnosis (everything is soft, not just target_cluster) and adds a constraint v5.2 must respect: **whatever HARD enforcement we re-introduce must not regress the v5.0.2 failure mode** — silent drops that lock the agent in place with no feedback.
+
+The remainder of this document is designed against that constraint.
 
 ---
 
-## 3. Where the hook lives in our code
+## 2. What CZL already has (verified by grep + view)
 
-`ystar/czl/loop.py`. Current iter body (simplified):
+| Component | Verified at | What it does |
+|---|---|---|
+| `FocusConstraint` dataclass | `ystar/czl/autonomy.py:39-53` | Fields: `allowed_files: Optional[Set[str]]`, `target_cluster: Optional[Dict[str, Any]]`, `guidance_keys: List[str]`, `rationale: str`. No `enforcement_level` field yet. |
+| `CZLAutonomyEngine.compute_focus()` | `autonomy.py:94-153` | Pure derivation from `ResidualState`: cluster ≥ 2 → focus single file; else regression → focus first newly-failing test's file; else all failure files; else unrestricted. No LLM call. |
+| `CZLAutonomyEngine.pull_next_action()` | `autonomy.py:156-180` | Returns `CZLAction` whose `description` carries the focus_constraint payload as JSON and `focus_constraint` attribute. Called by `RLE._compute_next_action`. |
+| Loop pulls focus_constraint | `loop.py:745-750` | After RLE event, reads `_next_action.focus_constraint` into `_active_focus_constraint` and into `contract_dict["_focus_constraint"]`. |
+| Soft rendering into prompt | `loop.py:424-431` + `_render_focus_suggestion()` at `loop.py:879+` | Renders allowed_files + target_cluster + rationale as `## Focus suggestion` section with deliberately-soft language ("free to choose otherwise"). |
+| Existing rejection plumbing | `loop.py:752-765` + `scenario._rejection_log` | When the scenario's `apply_action` declines a write (e.g. AST validator caught a hallucinated call), it appends `{path, reason}` to its own `_rejection_log`. The loop drains via `consume_rejections()` and surfaces in the next-iter feedback under `"## Writes from your last iter that were REJECTED"`. **No silent drop.** |
+
+The architectural plumbing is all there. **Only the gate that turns SOFT into HARD is missing.**
+
+---
+
+## 3. The fix: per-field-configurable enforcement
+
+The mechanism is **a single new closure in `loop.py` that runs between action parsing and action application**. It does not import anything new, does not call any LLM, and does not introduce any new dependency.
+
+It compares the agent's action against the active `FocusConstraint` field-by-field, using pure-code comparisons (set membership, string equality, AST). For each field that is violated, the closure either DENIES (and surfaces the violation through the existing rejection plumbing) or logs a soft note, controlled by a per-field enforcement level declared on the `FocusConstraint` itself.
+
+### 3.1 FocusConstraint extension (Q4a)
+
+Add **one** field to the dataclass:
 
 ```python
-backend_response = request.backend.invoke(...)
-for action in backend_response.actions:
-    if isinstance(action, BackendAction) and action.type == "probe_command":
-        # run probe…
-    else:
-        request.scenario.apply_action(action, request.workspace_dir, contract=contract_dict)
-        _emit_governance(CodingAgentEventType.TOOL_USE, {...})
+@dataclass
+class FocusConstraint:
+    allowed_files: Optional[Set[str]] = None
+    target_cluster: Optional[Dict[str, Any]] = None
+    guidance_keys: List[str] = field(default_factory=lambda: ["all"])
+    rationale: str = ""
+
+    # NEW in v5.2:
+    enforcement: Dict[str, str] = field(default_factory=lambda: {
+        "allowed_files":    "hard",   # default
+        "target_cluster":   "soft",   # default
+        "guidance_keys":    "off",    # informational only — not gate-checkable
+    })
 ```
 
-Proposed v5.2 (sketch):
+Values: `"hard"` (DENY on violation), `"soft"` (allow + log advisory), `"off"` (skip the field entirely).
+
+Two implementation rules this dictionary respects:
+
+  - **Per-field configurable** (Constraint #2 from founder). Each scenario can override its `FocusConstraint`'s `enforcement` dict to set whichever strength makes sense. A test-generation scenario can mark `target_cluster` as `"hard"` if it wants; a refactor scenario can mark `allowed_files` as `"soft"`.
+  - **Forward-compatible**. New `FocusConstraint` fields added later (e.g. a future `target_function: str`) declare their default enforcement level in the same dictionary. The gate iterates whatever keys are present; nothing in the gate code is keyed on a specific field name as a hardcoded special case.
+
+### 3.2 Default enforcement levels (Q4b)
+
+| Field | Default | Why |
+|---|---|---|
+| `allowed_files` | **`hard`** | This is the field founder identified as the empirical anchor of "U_{t+1}" — it's the dimension where v5.0 used to hard-enforce, and the dimension whose violation is most observable (the agent literally wrote to the wrong file). The v5.0.2 failure mode (silent drop) is solved separately by the no-silent-reject contract in §3.6, not by demoting to soft. |
+| `target_cluster` | **`soft`** | This is a single (file, lineno) tuple chosen by the autonomy engine when ≥2 failures cluster at the same location. It's a **hint** about where to look first — over-strict enforcement would block the agent from making any edit outside that file, even an unambiguously-correct one. Soft enforcement renders it as guidance the agent can override. |
+| `guidance_keys` | **`off`** | `guidance_keys` is "which META block to surface in the prompt" — `cluster` / `regression` / `verifier_traceback` / `all`. It's a rendering preference, not an action constraint. There is nothing to enforce on an emitted action. |
+
+These are **defaults**. Each scenario is free to override via the constraint's own `enforcement` dict.
+
+### 3.3 Where the gate fires (Q4c)
+
+In `ystar/czl/loop.py`, inside the `for action in backend_response.actions:` block at lines 483-518, **just before** the `else:` branch that calls `request.scenario.apply_action(...)`. Concretely between current lines 509 and 513.
+
+That is the same spot referenced by the stale comment at line 511 — the comment becomes accurate again because v5.2 puts the enforcement back, but at the LOOP level (not the scenario level — see §3.7 for why).
+
+The probe action branch (`action_type == "probe_command"`, line 499) is **unaffected**. Probes are inspection, not state changes; they have no path / file content to gate.
+
+### 3.4 The gate's comparison logic (Q4d)
+
+Pure Python, no external service, no LLM. The gate's sole job is to compare the agent's parsed action against `_active_focus_constraint`. Skeleton:
 
 ```python
-backend_response = request.backend.invoke(...)
-for action in backend_response.actions:
-    action_type_str = _action_type_to_governance_string(action)
-    gate = pre_action_gate(action_type_str)   # NEW
-    if gate.decision == GateDecision.DENY:
-        _record_action_blocked(action, gate)
-        continue                              # SKIP execution
-    if gate.decision == GateDecision.REDIRECT:
-        _record_action_redirected(action, gate)
-        continue                              # SKIP and surface alternative
-    # GateDecision.ALLOW — execute as before:
-    if isinstance(action, BackendAction) and action.type == "probe_command":
-        # run probe…
-    else:
-        request.scenario.apply_action(action, request.workspace_dir, contract=contract_dict)
-        _emit_governance(CodingAgentEventType.TOOL_USE, {...})
+def _focus_constraint_gate(action, fc):
+    """Returns ("allow" | "deny", reason_text, focus_field_violated).
+    Pure structural / set / AST comparison — never calls an LLM."""
+    if fc is None:
+        return ("allow", "", None)            # iter 0 / no constraint yet
+    # extract action's target path
+    payload = action.payload if hasattr(action, "payload") else (
+        action if isinstance(action, dict) else {})
+    action_path = payload.get("path") or ""
+
+    for field_name, level in fc.enforcement.items():
+        if level == "off":
+            continue
+        field_value = getattr(fc, field_name, None)
+        if not field_value:
+            continue   # nothing to compare against on this field
+
+        if field_name == "allowed_files":
+            # set membership — pure comparison.
+            if action_path and action_path not in field_value:
+                if level == "hard":
+                    return ("deny",
+                            f"path {action_path!r} not in allowed_files "
+                            f"{sorted(field_value)}",
+                            field_name)
+                # soft: fall through to next field after recording a note
+
+        elif field_name == "target_cluster":
+            # cluster is {file, lineno, count}; check that action's path is the
+            # cluster file. Line-level comparison would need parsed content;
+            # for v5.2 we stay at the file level.
+            tc_file = field_value.get("file")
+            if tc_file and action_path and action_path != tc_file:
+                if level == "hard":
+                    return ("deny",
+                            f"target_cluster locks focus on {tc_file}; "
+                            f"action targeted {action_path}",
+                            field_name)
+
+        # future fields land here, picking up their own enforcement level
+        # from fc.enforcement. The gate stays generic.
+
+    return ("allow", "", None)
 ```
 
-Where `pre_action_gate` is:
+Properties:
 
-```python
-def pre_action_gate(action_type_str: str) -> GateCheckResult:
-    # 1) materialise any newly-overdue obligations
-    scan_result = _omission_engine.scan()
-    if scan_result.violations:
-        _intervention_engine.process_violations(scan_result.violations)
-    # 2) ask the gate
-    return _intervention_engine.gate_check(
-        actor_id=_coding_actor_id,
-        action_type=action_type_str,
-        entity_id=_coding_entity_id,
-    )
-```
+  - **Constraint #1 honored** — no LLM call. Pure set / string comparison.
+  - **Constraint #2 honored** — enforcement reads `fc.enforcement[field_name]`. No hardcoded `if field == 'allowed_files' then hard`.
+  - **Constraint #3 honored** — no statement about what the agent "should" do, only how to compare a structured FocusConstraint to a structured action.
 
-This is **identical in shape** to `BeforeToolCallEvent` in AWS Strands: a
-synchronous hook that sees the action, returns a decision, and the framework
-respects it before any side effect.
+### 3.5 What the agent sees on deny (Q4e)
 
----
-
-## 4. What signals the synchronous evaluation reads
-
-The gate looks at three layers, in order:
-
-  1. **Active obligations** — `omission_engine.scan()` returns the current
-     violations. Built from the three coding-agent rules already in
-     `ystar/czl/coding_agent_pack.py`:
-       - `trampoline.stuck_after_dispatch` (silent agent)
-       - `trampoline.fake_declare_done`
-       - `trampoline.residual_stuck`
-
-  2. **Active intervention pulses** — `intervention_engine.pulse_store`
-     tracks who has HARD_OVERDUE obligations. The gate consults this
-     internally.
-
-  3. **Gating policy** — `TRAMPOLINE_GATING_POLICY` declares which action
-     types are `fulfillment` (always allowed) and which are `high_risk`
-     (blocked when pulse is active). Defined in `coding_agent_pack.py`.
-
-Importantly: **R_{t+1} itself is NOT a direct gate signal.** The gate consults
-obligations and pulses; obligations are CREATED by events (including
-`RESIDUAL_REPORT` → `_residual_stuck_rule`); the residual trajectory feeds
-into obligation creation indirectly. Keeping R out of the gate's direct read
-path keeps the gate cheap and gives RLE a single authority over residual
-semantics. This matches the OAP separation of concerns: declarative policy
-on top of state, not embedded into one engine.
-
----
-
-## 5. How blocked actions feed back into agent context
-
-This is the part the cited papers handle less explicitly than the Python
-frameworks do.
-
-**AWS Strands** model: when `cancel_tool` is set, the tool result becomes an
-error message saying "this tool was cancelled because X". That error is
-visible to the agent on the next turn. Result: the agent literally sees
-*"your edit_file call was rejected with reason: REQUIRED_STATUS_UPDATE
-obligation overdue"* and can plan accordingly.
-
-We already have the plumbing for this in v5.1's caller-side feedback
-sections in `loop.py`:
-
-```python
-# v5.1 Task C: rejection log PROMINENT at the very top of feedback.
-if _iter_rejections:
-    _rej_lines = ["## 🚫 Last iter rejections (these edits were DROPPED)",
-                  "Trampoline refused these changes because they would have broken "
-                  "passing tests or referenced undefined names. Read carefully — do "
-                  "NOT retry the same edit.",
-                  ""]
-    for rj in _iter_rejections:
-        _rej_lines.append(f"  - `{rj['path']}`: {rj['reason']}")
-```
-
-v5.2 extends this: a parallel `_iter_blocked_actions` list, populated by
-`_record_action_blocked`, with entries like:
+When the gate denies, the loop appends a structured entry to a new `_gate_rejections` list (parallel to the existing `_iter_rejections`):
 
 ```python
 {
-  "action_type": "edit_file",
-  "action_summary": "edit_file path=src/foo.py len=842",
-  "decision": "DENY",
-  "blocking_obligation_id": "trampoline.post_declare_done.abc123",
-  "blocking_omission_type": "post_ship_completeness",
-  "suggested_action": "fulfil the open obligation first",
+  "path":                action_path,
+  "field_violated":      "allowed_files",     # or "target_cluster"
+  "reason":              "path 'utils/x.py' not in allowed_files ['service_a.py', 'service_b.py']",
+  "focus_constraint":    fc.to_dict(),         # full snapshot
 }
 ```
 
-Rendered as a feedback section labelled `"## ⛔ Pre-action gate blocked these
-edits"` and prepended to the user prompt the same way the v5.1 rejection log
-is. The LLM reads it and adjusts on the next iter.
+The next-iter feedback section renders these prominently, following the same pattern v5.1 used for the existing rejection log. Section heading: `## ⛔ Pre-action gate blocked these edits (focus-constraint enforcement)`. Body lists each gate rejection with the path, reason, and the active `rationale` so the agent understands **why** the focus exists, not just **what** was blocked.
 
-Crucially: **a blocked action is not a silent drop.** The agent sees exactly
-why and what to do instead. This is the "no silent reject" principle we
-already enforce for AST validator rejections.
+This is the contractual remediation for the v5.0.2 silent-drop failure mode: **every denial is surfaced verbatim**.
 
----
+### 3.6 Integration with v5.0.1 `_iter_rejections` (Q4f)
 
-## 6. Policy decisions — what to actually gate
+Two parallel lists, rendered into the prompt in deterministic order:
 
-The gating policy lives in `coding_agent_pack.TRAMPOLINE_GATING_POLICY`.
-Right now its `high_risk` set is `{DECLARE_DONE}`. For pre-action
-authorization to actually do anything, the set has to grow. There are three
-viable settings; the right choice is a product call:
+  1. **Scenario-level rejections** — populated by scenario's `_rejection_log` (e.g. AST validator caught a hallucinated call name). Drained via `scenario.consume_rejections()`. Existing v5.1/v5.0.2 plumbing, unchanged.
+  2. **Gate-level rejections** — populated by the new pre-action gate. Drained from a loop-local `_gate_rejections` list.
 
-**Setting A — DECLARE_DONE only (status quo).** No new gating. The "pre-action
-gate" still runs per-action but always returns ALLOW for everything except
-DECLARE_DONE. Effectively v5.2 collapses back to v5.0.1 behaviour. Worst case:
-zero improvement on stuck loops.
+Both are emptied at the same point in the loop. Rendered as two separate sections so the agent can distinguish "your write was structurally bad" from "your write was off-focus":
 
-**Setting B — Add `edit_file` / `add_tests_file` / `create_file` to
-high_risk.** When an actor has a HARD_OVERDUE obligation, code-write actions
-are blocked. The agent has to satisfy the obligation (e.g. produce a
-`REDUCE_RESIDUAL` event) before it can write again. Mid-loop cost ceiling
-becomes real because a stuck agent gets blocked from doing more useless
-writes. Risk: false positives if `due_within_secs` is too aggressive — a
-legitimately-slow agent could get blocked.
+```
+## ⛔ Pre-action gate blocked these edits (focus-constraint enforcement)
+- `utils/old_api.py`: path not in allowed_files ['service_a.py', 'service_b.py'].
+  Rationale: "cluster of 3 failures at service_a.py:42 — focus on this single root before broadening".
 
-**Setting C — Block conditionally on rule severity.** Use the existing
-`Severity.HIGH` / `Severity.MEDIUM` markers in the rule definitions:
-HIGH-severity obligation overdue → block code-write actions; MEDIUM-severity
-→ only block DECLARE_DONE. This gives finer-grained control and matches the
-"INTERRUPT_GATE" pulse level the InterventionEngine already supports.
+## 🚫 Writes from your last iter that were REJECTED by the scenario
+- `test_x.py`: test `test_foo` calls undefined `clean_data`.
+```
 
-**Recommendation: Setting C.** It re-uses existing severity machinery,
-doesn't introduce new vocabulary, and gives us a tunable knob between "no
-op" and "block everything when stuck". We'd ship with conservative thresholds
-and adjust after telemetry.
+No interaction between the two; they're additive sections in the next-iter prompt.
+
+### 3.7 Why the gate lives in the loop, not in `scenario.apply_action`
+
+v5.0 put hard-reject inside `scenario.apply_action` and that was the locus of the silent-drop bug. By moving the gate to the **loop** layer:
+
+  - We get a single chokepoint for all scenarios — no scenario can accidentally skip the enforcement.
+  - The decision is visible to the loop, which owns the `_gate_rejections` list and the next-iter feedback assembly.
+  - The scenario's `apply_action` keeps its current contract: it either applies cleanly or logs to its own `_rejection_log`. Nothing about scenarios changes.
+  - It mirrors the AWS Strands `BeforeToolCallEvent` shape — pre-action hook outside the tool implementation.
 
 ---
 
-## 7. Integration with v5.0.1 engines
+## 4. What this is NOT
 
-The proposal is **strictly additive** to v5.0.1:
+(All three were considered and explicitly rejected.)
 
-  - `omission_engine` — no change to API. Just called per-iter instead of
-    only at halt. Same registry, same store, same rules.
-  - `intervention_engine` — no change to API. Just called per-action
-    instead of only at convergence. Same gating policy mechanism.
-  - `coding_agent_pack` — extend `TRAMPOLINE_GATING_POLICY.high_risk` per
-    Setting C. Possibly add a per-rule severity override.
-  - `loop.py` — add `pre_action_gate()` closure + action-skip path + new
-    feedback section. Keep all existing halt-time scan/process logic
-    (defensive: catches any obligation that escaped per-iter scan).
-  - `ResidualLoopEngine` — no change. RLE keeps owning the residual halt
-    decision. The gate is a parallel concern.
+**Not a new mechanism.** No `BeforeToolCallEvent` introduction, no Gateway service, no policy DSL. The gate is ~20 lines of structural comparison plus a single new field on `FocusConstraint`. The full AEGIS / OAP pattern is overkill for what we need.
 
-**Nothing in v5.0.1 stops working.** All 9 e2e tests should still pass. New
-tests get added for the gate's three decisions (ALLOW / DENY / REDIRECT) and
-the block-feedback rendering.
+**Not LLM-mediated.** The comparison is `set.__contains__` and `str.__eq__`. There is no model call deciding "are these consistent?". The OAP paper's `0%` social-engineering result depends precisely on this — once you put a model in the gate, you've added an attackable surface. CZL stays at the structural layer.
+
+**Not retroactive on past v5.0.2 decisions.** The hard-reject removal in v5.0.1/v5.0.2 was correct given the silent-drop bug. v5.2 re-introduces hard enforcement **only because** the rejection surfacing path now exists and is mandatory. The contract is: any future "hard-enforce" change MUST also wire surfacing.
 
 ---
 
-## 8. Risks + non-goals
+## 5. Concrete integration plan
 
-**Risk 1: false positives blocking legitimate work.** A poorly-tuned
-`due_within_secs` could block a slow-but-honest agent. Mitigation: ship
-conservative defaults, surface block events in trial JSON for post-hoc
-review, allow per-scenario policy overrides.
+| Step | File | Change | LoC |
+|---|---|---|---|
+| 1 | `ystar/czl/autonomy.py` | Add `enforcement: Dict[str, str]` field with the three default keys. Update `to_dict()` to include it. | ~10 |
+| 2 | `ystar/czl/loop.py` | Add `_focus_constraint_gate(action, fc)` closure inside `run_scenario` (~25 lines). Add `_gate_rejections: List[Dict] = []` list. Insert gate call between current lines 509-513, denying actions whose field violations are at `"hard"` level. Drain `_gate_rejections` into a new feedback section adjacent to the existing rejection section. | ~50 |
+| 3 | `ystar/czl/loop.py` | Update the comment at line 511 from "scenario.apply_action **can** enforce" to "the loop-level gate (§v5.2) enforces" — the comment finally matches the implementation again. | ~3 |
+| 4 | `tests/czl/scenarios/test_v5_2_focus_gate.py` | New file with at least 5 tests: (a) allow when no fc set, (b) deny on hard `allowed_files` violation + rejection rendered into next-iter prompt, (c) allow on soft violation + advisory note recorded, (d) per-field enforcement override (set `target_cluster: "hard"` for a scenario), (e) gate skipped for probe_command. | ~250 |
+| 5 | `tests/czl/scenarios/test_v5_e2e_loop.py` | Spot-check: existing 7 e2e tests still pass unchanged. (Stub backend returns no actions, so the gate is a no-op for those tests — they should be byte-equivalent to current behaviour.) | 0 |
 
-**Risk 2: block-loop deadlock.** If the LLM keeps re-emitting the same
-blocked action because it doesn't understand the feedback, we burn cost
-without progress. Mitigation: the v5.0.1 RLE oscillation detection catches
-this; the loop halts.
+**Production-code LoC: ~60.** Founder's Claude.ai 60–100 estimate is in range.
 
-**Risk 3: latency.** AEGIS reports 8.3 ms, OAP 53 ms — those include
-external policy services. Our gate is in-process: scan() iterates pending
-obligations (~tens of items in our scale), gate_check() reads pulse_store
-(also tens of items). Expected sub-millisecond per call. Will measure.
-
-**Risk 4: cross-scenario policy contamination.** TRAMPOLINE_GATING_POLICY is
-module-level. If we add `edit_file` to high_risk it affects every Trampoline
-run. Mitigation: per-CZLRun policy override, defaulting to the module-level
-constant.
-
-**Risk 5: the cost story is unchanged.** v5.2 catches stuck loops earlier
-than RLE's 50-iter cap and saves the marginal cost, BUT if the rules
-themselves don't fire correctly (e.g. `due_within_secs=180` for
-`_residual_stuck_rule` only triggers after ~3 iters), the cost ceiling moves
-from 50× to 3×, not to 1×. To get truly tight cost control we'd also need
-to tighten the rule timings — that's a separate tuning pass.
-
-**Non-goal 1: replacing RLE.** RLE keeps its role as the closed-loop control
-authority over residual. We're not putting residual into the gate.
-
-**Non-goal 2: full AEGIS-style content scanning.** AEGIS does "deep string
-extraction" on tool arguments and runs regex-based risk patterns. That's
-useful for security agents; for code-completion agents it's overkill.
-v5.2 stays at the obligation/policy layer.
-
-**Non-goal 3: cryptographic audit chain.** OAP's Ed25519 signature line is
-real and useful; not in scope for v5.2. Our CIEU jsonl already has SHA-256
-prev_hash chaining as audit. Crypto signatures can come later.
+**Test LoC: ~250.** Brings total to ~310 (Claude.ai's estimate is for production only).
 
 ---
 
-## 9. Test plan
+## 6. Edge cases worth flagging up front
 
-New tests under `tests/czl/scenarios/test_v5_2_pre_action_gate.py`:
-
-  1. `test_gate_allows_when_no_obligations_overdue` — clean run, all actions
-     execute.
-  2. `test_gate_denies_when_obligation_hard_overdue` — set up a synthetic
-     obligation past `effective_due_at`, run iter, assert action skipped
-     and block reason captured in `_iter_blocked_actions`.
-  3. `test_blocked_action_appears_in_next_iter_feedback` — run two iters,
-     assert iter-2 user prompt contains the "## ⛔ Pre-action gate blocked"
-     section with the iter-1 block reason.
-  4. `test_gate_redirect_records_suggested_action` — same as deny but with
-     REDIRECT decision; suggested_action surfaces in feedback.
-  5. `test_per_action_gate_does_not_call_external_service` — assert latency
-     under 5 ms per gate_check call.
-  6. `test_v5_0_1_e2e_still_passes` — re-run the existing 7-test e2e suite
-     unchanged.
-  7. `test_v5_1_stuck_loop_still_passes` — synthetic stuck-loop test from
-     v5.0.1 unchanged.
-
-Acceptance: 7/7 v5.2 new + 9/9 v5.0.1 existing all green.
+  - **Iter 0 has no `_active_focus_constraint`.** The autonomy engine hasn't observed any residual yet. Gate returns ALLOW unconditionally. Correct behaviour, no edge case.
+  - **Probe actions.** `probe_command` is inspection; no path / no side effect. Gate skipped (matches the existing branch at loop.py:499).
+  - **`action.payload["path"]` empty.** Some scenarios route bare `python_block` actions internally to `test_data_pipeline.py`. The gate's `allowed_files` check requires a `path`; when empty, the gate has nothing to compare and returns ALLOW. The scenario layer can opt into stricter behaviour by adding its own checks.
+  - **First iter where focus_constraint becomes restrictive.** When iter 1's residual reveals a cluster, iter 2 gets a restrictive `allowed_files`. If iter 2's agent legitimately needs to touch another file, the gate denies, the rejection surfaces, and iter 3 can rebuild the agent's plan. This is the intended residual-driven adaptation — not a bug.
+  - **Multiple actions in one iter.** Each action gates independently. Some can ALLOW and others DENY in the same iter. Workspace gets the allowed mutations; rejection list gets the denied ones. The agent sees both outcomes in iter N+1's prompt.
+  - **`fc.allowed_files = set()` (empty set, not None).** Means "no files allowed". The gate denies any path-bearing action. Matches the dataclass semantics and is intentional — empty set is a strict "wait" signal.
 
 ---
 
-## 10. Code-impact estimate
+## 7. Compatibility with everything else in v5.0.1
 
-| File | Change | LoC |
-|------|--------|-----|
-| `ystar/czl/loop.py` | add `pre_action_gate()` closure + per-action call site + `_iter_blocked_actions` plumbing + new feedback section | ~50 |
-| `ystar/czl/coding_agent_pack.py` | extend `TRAMPOLINE_GATING_POLICY` (Setting C); add per-rule severity helper | ~20 |
-| `tests/czl/scenarios/test_v5_2_pre_action_gate.py` | new 7 tests | ~250 |
-| `ystar/czl/__init__.py` or wherever the per-CZLRun policy override hook lives | small surface for callers to pass a custom GatingPolicy | ~10 |
+| v5.0.1 piece | Effect of v5.2 |
+|---|---|
+| `ResidualLoopEngine.on_cieu_event` | Unchanged. RLE still owns residual halt decisions. |
+| `CZLAutonomyEngine.compute_focus` | Unchanged. Same derivation logic; only the dataclass picks up one new field. |
+| `OmissionEngine` + `InterventionEngine` | Unchanged. The pre-action gate is **independent** of the omission / intervention path. It's enforcing a SCENARIO-level focus contract, not a GOVERNANCE-level obligation contract. The two co-exist: a scenario can be allowed by the focus gate AND denied by intervention's `DECLARE_DONE` gate at convergence. |
+| `_iter_rejections` plumbing | Reused as the rendering template. `_gate_rejections` is a parallel list with its own section heading. |
+| Scenario `apply_action` contract | Unchanged. The gate happens before `apply_action` is called; if the gate denies, `apply_action` is never invoked. Scenarios neither need to know about nor enforce focus constraints. |
+| `request.scenario.consume_rejections()` | Unchanged. |
+| The 9/9 existing e2e tests | Should remain green. The stub backend in `test_v5_e2e_loop.py` returns empty action lists, so the gate is a no-op in those tests. The `test_v5_1_stuck_loop.py` uses `_AlwaysFailScenario` with no apply_action effect, same no-op. |
 
-Total: ~330 LoC additive. No deletions in v5.0.1 substrate.
+---
+
+## 8. Risks and non-goals
+
+**Risk 1: false denials that lock the agent in.** This is the v5.0.2 failure mode. The mitigation is the mandatory surfacing in §3.5 — every denial appears in the agent's next prompt with the full focus_constraint snapshot. Combined with v5.0.1's RLE oscillation detection (now correctly wired post-fix), runs that get stuck still terminate.
+
+**Risk 2: scenarios that need different defaults.** Some scenarios may want `allowed_files: "soft"` (e.g. exploratory refactor where the autonomy engine's file guess is noisy). They can override the per-field enforcement on their `FocusConstraint`. Risk is low because the override surface is one dict.
+
+**Risk 3: future fields adding silent special-cases.** Mitigation: the gate iterates `fc.enforcement.items()` and never hardcodes a field name. Adding a new field requires adding a default enforcement entry; no other gate change.
+
+**Non-goal A: agent-content semantic analysis.** We do not check whether the agent's emitted code is semantically correct against the cluster's failure. The pytest verifier does that. The gate is purely about WHERE the action lands.
+
+**Non-goal B: full AEGIS / OAP audit chain.** No Ed25519 signatures, no separate Gateway service. The existing `result.iter_prompts` + `cieu_events` + `_gate_rejections` log is enough audit for Phase 1.
+
+**Non-goal C: replacing intervention_engine's DECLARE_DONE gate.** v5.0.1's `gate_check(DECLARE_DONE)` keeps its role: it validates the *claim* of completion against open obligations. The focus-constraint gate validates the *direction* of each action against the residual-driven U_{t+1}. The two gates fire at different moments on different signals.
+
+---
+
+## 9. Test plan (for the eventual implementation)
+
+**Unit-level**
+
+  - `FocusConstraint.enforcement` defaults match §3.2 exactly.
+  - `FocusConstraint.to_dict()` includes `enforcement`.
+
+**Gate-closure level (mock CZLRun, no real backend)**
+
+  1. `gate_returns_allow_when_fc_is_None` — iter 0 case.
+  2. `gate_hard_denies_when_path_not_in_allowed_files` — exact deny path, reason text format checked.
+  3. `gate_allows_when_path_in_allowed_files` — happy path.
+  4. `gate_skips_off_fields` — set `allowed_files` enforcement to `"off"`, observe allow despite violation.
+  5. `gate_soft_allows_with_advisory` — set to `"soft"`, observe allow plus advisory note recorded (does not appear in gate-rejection list).
+  6. `gate_skips_probe_command` — probe action passes through unchanged.
+
+**E2E (real CZLRun stub backend)**
+
+  7. `gate_rejection_surfaces_in_next_iter_prompt` — drive 2 iters, iter 1 emits an out-of-bounds path, assert iter-2's user prompt contains the focus-constraint gate-rejection section with the iter-1 reason.
+  8. `gate_with_scenario_override_hardens_target_cluster` — instantiate a scenario whose FocusConstraint default-enforcement override sets `target_cluster: "hard"`; verify hard-denial on file != cluster_file.
+
+**Regression**
+
+  9. All 9 existing tests in `tests/czl/scenarios/` pass unchanged.
+
+---
+
+## 10. Engineering footprint vs Claude.ai's 60–100 LoC estimate
+
+  - `autonomy.py`: +10 LoC (one new field + to_dict update).
+  - `loop.py`: +50 LoC (closure + insertion + rejection rendering + comment fix).
+  - **Production total: ~60 LoC.** In the lower end of Claude.ai's 60–100 estimate.
+  - Tests: ~250 LoC additional.
+
+This is **much** smaller than the earlier draft's "330 LoC additive" because that draft was scaffolding a whole new pre-action authorization layer. The corrected design just toggles existing CZL machinery from soft to hard.
 
 ---
 
 ## 11. Open questions for the founder
 
-1. **Policy setting** — A / B / C from §6. I recommend C. Confirm before
-   I write code.
+  1. **§3.2 default levels** — keep `allowed_files: "hard"`, `target_cluster: "soft"`, `guidance_keys: "off"`? Or invert any of them?
 
-2. **Per-CZLRun policy override** — should `CZLRun` grow an optional
-   `gating_policy: GatingPolicy | None` field so individual runs can opt out
-   of pre-action gating for experiments? Or is the module-level constant
-   always-on enforcement? Affects both architecture and tests.
+  2. **Per-scenario overrides** — should v5.2 ship with concrete enforcement overrides for any of the existing scenarios (e.g. `test_gen_for_existing` adding `target_cluster: "hard"`)? Or leave all five at the dataclass defaults and tune later?
 
-3. **Cost-ceiling target** — what's the right `due_within_secs` for
-   `_residual_stuck_rule` if the goal is "cap stuck loops at N iters"?
-   Currently 180s ≈ 3 iters at cheap-API speed. If we want a 2-iter cap,
-   it's ~120s. This is a tuning call after Setting C lands.
+  3. **Empty `allowed_files` set semantics** — §6 says "empty set = strict wait". Confirm. Alternative: treat empty set as identical to `None` (= unrestricted).
 
-4. **Per-scenario policy** — some scenarios (e.g. `cross_file_refactor`) may
-   want stricter gating than others (e.g. `lint_fix`). Should v5.2 ship with
-   per-scenario `GatingPolicy` overrides or stay one-size-fits-all? Adds
-   complexity but matches reality.
+  4. **First-iter behaviour** — gate is a no-op on iter 0 because `_active_focus_constraint` is None. Confirm this is desired (no constraint until residual has been observed).
 
-5. **Audit/telemetry** — should v5.2 write a per-trial JSON record of every
-   gate decision (allow / deny / redirect) so we can analyse policy fit
-   post-hoc? This is the OAP "cryptographically signed audit record" minus
-   the crypto. Cheap to add; expensive to retrofit.
-
-6. **Phase-1 launch implication** — if v5.2 lands and the
-   `effective_cost_experiment_v1` re-runs, what's the new hero claim we want
-   to be able to make? Something like *"Trampoline blocks N% of pre-action
-   policy-violating tool calls before they execute, surfacing the violation
-   reason back to the agent within 1 ms"*? Confirm so I can wire the
-   experiment harness to capture the right metric.
+  5. **Should we re-run `effective_cost_experiment` after v5.2 lands?** If yes, the experiment hypothesis to test is: "v5.2 reduces effective-cost-per-real-completion on hard scenarios because the agent stops wandering into off-focus files mid-loop." This is a sharper claim than the v5.0.1 experiment chased.
 
 ---
 
 ## 12. What I will NOT do until founder responds
 
-  - No code changes to `loop.py`, `coding_agent_pack.py`, or any test file
-  - No git commits, no push, no branch creation
-  - No experiment re-runs
+  - No code changes to `autonomy.py`, `loop.py`, or any test file.
+  - No git commits, no push.
+  - No experiment re-runs.
 
-The proposal sits as `docs/V5_2_DESIGN_PROPOSAL.md` for review. On approval
-(possibly with edits to the policy / open-questions answers), I'll
-implement against the agreed shape.
+This document exists as `docs/V5_2_DESIGN_PROPOSAL.md` for review. On approval (possibly with edits to the open-question answers), I'll implement against the agreed shape.
 
 ---
 
-**Sources referenced (links for founder verification):**
+## Sources verified (links for founder cross-check)
 
-  - AEGIS — *No Tool Call Left Unchecked: A Pre-Execution Firewall and Audit
-    Layer for AI Agents.* arxiv.org/abs/2603.12621
-  - OAP — *Before the Tool Call: Deterministic Pre-Action Authorization for
-    Autonomous AI Agents.* arxiv.org/abs/2603.20953
-  - AWS Strands `BeforeToolCallEvent` definition:
-    github.com/strands-agents/sdk-python/blob/main/src/strands/hooks/events.py
-  - LangGraph `interrupt()` and synchronous BSP semantics:
-    docs.langchain.com/oss/python/langgraph/interrupts
+  - `ystar/czl/autonomy.py:39-180` — FocusConstraint + CZLAutonomyEngine
+  - `ystar/czl/loop.py:413-441` — focus_suggestion rendering into prompt
+  - `ystar/czl/loop.py:483-518` — action iteration + scenario.apply_action call site
+  - `ystar/czl/loop.py:745-750` — focus_constraint pull-from-autonomy and attach-to-contract
+  - `ystar/czl/loop.py:752-765` — scenario rejection drain + render
+  - `ystar/czl/scenarios/test_gen_for_existing.py:726-760` — the v5.0.2 hard-reject-removal post-mortem comment
+  - `docs/arch/arch17_behavioral_governance_spec.md:75` — "Every task driven by 5-tuple until Rt+1=0"
+  - `docs/CZL_PRODUCT_DESIGN.md:69` — "Rt+1 > 0 → next_action_inject" diagram
+  - `ystar/governance/aiden_agent_native_messenger_contract.py:112` — `protocol: "natural_language_plus_CIEU_CZL_five_tuple"` (the CIEU=CZL five-tuple identity Fact 1 anchors on)

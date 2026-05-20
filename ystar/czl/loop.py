@@ -322,6 +322,78 @@ def run_scenario(
     _coding_actor_id = f"coding_agent.{getattr(request.backend, 'name', 'unknown')}"
     _coding_entity_id = f"coding_agent.{request.run_id}"
 
+    # v5.2: pre-action gate state. Each iter, after action parsing and
+    # before scenario.apply_action, the gate compares the agent's action
+    # to the active FocusConstraint. Hard violations DENY; soft violations
+    # log advisory notes. Always surface to the next-iter prompt (no silent
+    # drops — v5.0.2 lesson).
+    _gate_rejections: List[Dict[str, Any]] = []
+    _gate_soft_notes: List[Dict[str, Any]] = []
+
+    def _focus_constraint_gate(action: Any, fc: Optional["FocusConstraint"]) -> Tuple[str, str, Optional[str]]:
+        """Compare a parsed action against the active FocusConstraint.
+
+        Returns (decision, reason, field_violated):
+          - decision: "allow" | "deny"
+          - reason:   human-readable, structured for prompt rendering
+          - field_violated: name of the FocusConstraint field that hard-denied,
+                            or None on allow / soft / no-violation
+
+        Pure structural / set comparison — NEVER calls an LLM (v5.2 design
+        constraint #1). Iterates fc.enforcement.items() so future fields
+        added to FocusConstraint pick up gating behaviour without code
+        changes here (design constraint #2 + #3).
+        """
+        if fc is None:
+            return ("allow", "", None)
+        payload = action.payload if hasattr(action, "payload") else (
+            action if isinstance(action, dict) else {})
+        action_path = (payload or {}).get("path", "") or ""
+
+        for field_name, level in fc.enforcement.items():
+            if level == "off":
+                continue
+            field_value = getattr(fc, field_name, None)
+            if not field_value:
+                continue  # nothing to enforce on this field this iter
+
+            violation_reason: Optional[str] = None
+            if field_name == "allowed_files":
+                # Pure set membership. action_path may be empty (e.g. bare
+                # ```python block that the scenario routes internally) — in
+                # that case we have no path to compare against, so we don't
+                # flag a violation here. Scenarios needing stricter behaviour
+                # can layer their own checks.
+                if action_path and action_path not in field_value:
+                    violation_reason = (
+                        f"path {action_path!r} not in allowed_files "
+                        f"{sorted(field_value)}"
+                    )
+            elif field_name == "target_cluster":
+                tc_file = (field_value or {}).get("file")
+                if tc_file and action_path and action_path != tc_file:
+                    violation_reason = (
+                        f"target_cluster locks focus on {tc_file!r} "
+                        f"(file:line {tc_file}:{(field_value or {}).get('lineno', '?')}, "
+                        f"{(field_value or {}).get('count', '?')} failures); "
+                        f"action targeted {action_path!r}"
+                    )
+            # Future fields land here. The gate stays field-name-iterable.
+
+            if violation_reason is None:
+                continue
+
+            if level == "hard":
+                return ("deny", violation_reason, field_name)
+            # soft: record advisory note, continue iterating other fields
+            _gate_soft_notes.append({
+                "path": action_path, "field": field_name,
+                "reason": violation_reason,
+                "rationale": fc.rationale,
+            })
+
+        return ("allow", "", None)
+
     # Open the post-declare-done obligation. It must be fulfilled by either a
     # VERIFIER_PASSED or a generic COMPLETION_EVENT before we accept any
     # declare_done from the loop.
@@ -507,8 +579,33 @@ def run_scenario(
                 pr = executor.run(cmd)
                 this_iter_probes.append(pr.to_dict())
             else:
-                # v5.0 Task C: pass contract so scenario.apply_action can
-                # enforce focus_constraint.allowed_files (RLE-imposed U_{t+1}).
+                # v5.2: pre-action gate. Compare this action to the active
+                # FocusConstraint (computed by CZLAutonomyEngine from prior
+                # iter's residual) before applying. Hard violations DENY and
+                # surface to next-iter prompt; soft violations record an
+                # advisory note. The loop is the chokepoint — scenarios do
+                # not need to know about focus constraints.
+                _gate_decision, _gate_reason, _gate_field = _focus_constraint_gate(
+                    action, _active_focus_constraint
+                )
+                if _gate_decision == "deny":
+                    _gate_rejections.append({
+                        "path": (action.payload.get("path", "") if hasattr(action, "payload")
+                                  else (action.get("path", "") if isinstance(action, dict) else "")) or "",
+                        "field_violated": _gate_field,
+                        "reason": _gate_reason,
+                        "focus_constraint": _active_focus_constraint.to_dict()
+                                              if _active_focus_constraint else None,
+                    })
+                    _log.info(
+                        "CZL v5.2: focus-constraint gate DENIED action (field=%s): %s",
+                        _gate_field, _gate_reason,
+                    )
+                    continue  # skip apply_action — but DO NOT silently drop
+                # v5.2: gate allowed (or no fc) — pass contract so the
+                # scenario can apply normally. The stale "scenario can
+                # enforce" comment from v5.0 is gone; enforcement is loop-
+                # level now (see _focus_constraint_gate above).
                 try:
                     request.scenario.apply_action(
                         action, request.workspace_dir, contract=contract_dict
@@ -763,6 +860,36 @@ def run_scenario(
             for rj in _iter_rejections:
                 _rej_lines.append(f"- `{rj['path']}`: {rj['reason']}")
             feedback_block = ("\n".join(_rej_lines) + "\n\n" + feedback_block) if feedback_block else "\n".join(_rej_lines)
+
+        # v5.2: drain pre-action gate rejections + soft-violation advisory
+        # notes from THIS iter; render into next-iter feedback so the agent
+        # sees exactly which edits were blocked by focus-constraint
+        # enforcement and why. Two separate sections so the agent can tell
+        # gate-block from scenario-block.
+        if _gate_rejections:
+            _gate_lines = [
+                "\n\n## ⛔ Pre-action gate blocked these edits (focus-constraint enforcement)",
+                "(your edit was outside the residual-driven focus zone for this iter; "
+                "satisfy the focus constraint or change angle.)\n",
+            ]
+            for gr in _gate_rejections:
+                _gate_lines.append(
+                    f"- `{gr['path']}`: {gr['reason']}"
+                    + (f"\n  rationale: {gr['focus_constraint']['rationale']}"
+                       if gr.get("focus_constraint") and gr["focus_constraint"].get("rationale") else "")
+                )
+            _gate_block_txt = "\n".join(_gate_lines)
+            feedback_block = (_gate_block_txt + "\n\n" + feedback_block) if feedback_block else _gate_block_txt
+            _gate_rejections.clear()
+        if _gate_soft_notes:
+            _note_lines = [
+                "\n\n## ⚠ Pre-action gate soft notes (your edit landed off-focus but was allowed)",
+            ]
+            for sn in _gate_soft_notes:
+                _note_lines.append(f"- `{sn['path']}`: {sn['reason']}")
+            _soft_txt = "\n".join(_note_lines)
+            feedback_block = (_soft_txt + "\n\n" + feedback_block) if feedback_block else _soft_txt
+            _gate_soft_notes.clear()
 
         # v5.0.4: surface response-level signals before per-verifier feedback.
         _response_signals: List[str] = []

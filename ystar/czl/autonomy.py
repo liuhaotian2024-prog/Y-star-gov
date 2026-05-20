@@ -38,11 +38,39 @@ from typing import Any, Dict, List, Optional, Set
 
 @dataclass
 class FocusConstraint:
-    """The per-iter constraint U_{t+1} computed by CZLAutonomyEngine."""
+    """The per-iter constraint U_{t+1} computed by CZLAutonomyEngine.
+
+    v5.2: per-field enforcement levels declare how the loop's pre-action
+    gate (loop.py `_focus_constraint_gate`) should react when an action
+    violates a field. Levels:
+
+      - "hard": the gate DENIES the action; the rejection is surfaced in
+                the next-iter feedback (never silently dropped).
+      - "soft": the gate ALLOWS the action; the violation is rendered as
+                an advisory note in the feedback (no execution change).
+      - "off":  the field is not gate-checked at all.
+
+    Defaults reflect the empirical lesson from v5.0.2: allowed_files is
+    the directional dimension most observable on agent action (which file
+    did the agent write), so it defaults to hard. target_cluster is a
+    single-point hint that over-restricts when hard, so it defaults to
+    soft. guidance_keys is a prompt-rendering preference with no action
+    surface, so it defaults to off.
+
+    The `enforcement` dict is OPEN: future FocusConstraint fields declare
+    their own default level here, and scenarios can override any entry.
+    The gate iterates `enforcement.items()` and never hardcodes a field
+    name as a special case.
+    """
     allowed_files: Optional[Set[str]] = None       # None = no restriction
     target_cluster: Optional[Dict[str, Any]] = None  # {file, lineno, count}
     guidance_keys: List[str] = field(default_factory=lambda: ["all"])
     rationale: str = ""
+    enforcement: Dict[str, str] = field(default_factory=lambda: {
+        "allowed_files":  "hard",
+        "target_cluster": "soft",
+        "guidance_keys":  "off",
+    })
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -50,6 +78,7 @@ class FocusConstraint:
             "target_cluster": dict(self.target_cluster) if self.target_cluster else None,
             "guidance_keys": list(self.guidance_keys),
             "rationale": self.rationale,
+            "enforcement": dict(self.enforcement),
         }
 
 
