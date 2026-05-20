@@ -597,20 +597,22 @@ class TestGenForExistingScenario(Scenario):
             "preserves_existing": True,
         }
 
-    def focus_constraint_enforcement_override(self) -> Dict[str, str]:
-        """v5.2: soften `allowed_files` enforcement for test_gen.
-
-        Rationale: autonomy engine derives allowed_files from
-        failure_locations. test_gen's differential_verifier reports
-        failures at source-under-test (data_pipeline.py) line numbers,
-        so the engine puts the source file into allowed_files. But the
-        test_gen scenario's contract is "agent writes to test_*.py,
-        source is read-only". Hard-enforcing the cluster-derived
-        allowed_files would block the agent's legitimate writes to the
-        test file. Soft enforcement keeps the file as a hint without
-        blocking. target_cluster stays at the dataclass default (soft).
+    def focus_constraint_enforcement_override(self) -> Dict[str, Any]:
+        """v5.2: soften allowed_files. v5.3: declare forbidden_operations
+        (source file is read-only for test_gen) + opt sub-file fields in.
         """
-        return {"allowed_files": "soft"}
+        return {
+            "enforcement": {
+                "allowed_files": "soft",       # v5.2 — source can leak into cluster
+                "forbidden_operations": "hard",  # v5.3 — strict deny of source edits
+                "target_functions": "soft",    # v5.3 — hint, agent has freedom
+                "target_test_cases": "soft",   # v5.3 — hint, allow adjacent tests
+            },
+            "forbidden_operations": {
+                ("edit_file", "data_pipeline.py"),
+                ("create_file", "data_pipeline.py"),
+            },
+        }
 
     def y_star_invariants(self) -> Dict[str, Any]:
         return {

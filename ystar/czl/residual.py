@@ -44,6 +44,7 @@ class FailureLocation:
     lineno: int
     kind: str                # "test_failure" | "missing_line" | "missing_branch" | "surviving_mutant" | "contract_mismatch"
     detail: str = ""         # short human-readable detail
+    bottom_function: Optional[str] = None  # v5.3: pytest bottom-frame function name (None for non-pytest)
 
 
 @dataclass
@@ -174,6 +175,7 @@ def build_residual_state(
                     file=f["file"], lineno=int(f["lineno"]),
                     kind="test_failure",
                     detail=f"{f['test_name']} [{f.get('error_type','?')}]",
+                    bottom_function=f.get("function_name") or None,
                 ))
         elif r.verifier_name == "coverage_80":
             for ln in (details.get("missing_lines") or [])[:10]:

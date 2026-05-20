@@ -40,36 +40,29 @@ from typing import Any, Dict, List, Optional, Set
 class FocusConstraint:
     """The per-iter constraint U_{t+1} computed by CZLAutonomyEngine.
 
-    v5.2: per-field enforcement levels declare how the loop's pre-action
-    gate (loop.py `_focus_constraint_gate`) should react when an action
-    violates a field. Levels:
-
-      - "hard": the gate DENIES the action; the rejection is surfaced in
-                the next-iter feedback (never silently dropped).
-      - "soft": the gate ALLOWS the action; the violation is rendered as
-                an advisory note in the feedback (no execution change).
-      - "off":  the field is not gate-checked at all.
-
-    Defaults reflect the empirical lesson from v5.0.2: allowed_files is
-    the directional dimension most observable on agent action (which file
-    did the agent write), so it defaults to hard. target_cluster is a
-    single-point hint that over-restricts when hard, so it defaults to
-    soft. guidance_keys is a prompt-rendering preference with no action
-    surface, so it defaults to off.
-
-    The `enforcement` dict is OPEN: future FocusConstraint fields declare
-    their own default level here, and scenarios can override any entry.
-    The gate iterates `enforcement.items()` and never hardcodes a field
-    name as a special case.
+    v5.2: per-field enforcement levels. v5.3: sub-file granularity via
+    target_functions / target_test_cases / forbidden_operations. New v5.3
+    fields are NOT in the default enforcement dict — scenarios must
+    explicitly declare hard/soft via focus_constraint_enforcement_override.
+    Undeclared = off (gate skips). This is deliberate: avoids v5.2's
+    "machine installed but never fires" failure, and avoids hardcoded
+    defaults that don't fit every scenario.
     """
     allowed_files: Optional[Set[str]] = None       # None = no restriction
     target_cluster: Optional[Dict[str, Any]] = None  # {file, lineno, count}
     guidance_keys: List[str] = field(default_factory=lambda: ["all"])
     rationale: str = ""
+    # v5.3 sub-file granularity (populated by compute_focus from ResidualState):
+    target_functions: Optional[Set[str]] = None         # bottom-frame fn names from pytest failures
+    target_test_cases: Optional[Set[str]] = None        # test names that should pass
+    # v5.3 scenario-domain knowledge (populated via scenario override only):
+    forbidden_operations: Optional[Set[Any]] = None     # Set[Tuple[action_type, target_pattern]]
     enforcement: Dict[str, str] = field(default_factory=lambda: {
         "allowed_files":  "hard",
         "target_cluster": "soft",
         "guidance_keys":  "off",
+        # v5.3 keys (target_functions / target_test_cases / forbidden_operations)
+        # are deliberately ABSENT — scenarios opt in via override.
     })
 
     def to_dict(self) -> Dict[str, Any]:
@@ -78,6 +71,12 @@ class FocusConstraint:
             "target_cluster": dict(self.target_cluster) if self.target_cluster else None,
             "guidance_keys": list(self.guidance_keys),
             "rationale": self.rationale,
+            "target_functions": sorted(self.target_functions) if self.target_functions else None,
+            "target_test_cases": sorted(self.target_test_cases) if self.target_test_cases else None,
+            "forbidden_operations": (
+                sorted([list(t) for t in self.forbidden_operations])
+                if self.forbidden_operations else None
+            ),
             "enforcement": dict(self.enforcement),
         }
 
@@ -181,6 +180,23 @@ class CZLAutonomyEngine:
         fc.guidance_keys = ["all"]
         return fc
 
+    def _derive_subfile(self, fc: "FocusConstraint") -> None:
+        """v5.3: populate target_functions + target_test_cases from already-
+        extracted ResidualState data. Pure set comprehensions; no LLM."""
+        r = self._latest_residual
+        if r is None:
+            return
+        # target_functions ← bottom-frame fn names from pytest failures
+        fns = {loc.bottom_function for loc in r.failure_locations
+               if loc.bottom_function}
+        if fns:
+            fc.target_functions = fns
+        # target_test_cases ← newly_failing (regression) ∪ still_failing
+        tests = set(getattr(r.delta_from_prev, "newly_failing", []) or [])
+        tests |= set(getattr(r.delta_from_prev, "still_failing", []) or [])
+        if tests:
+            fc.target_test_cases = tests
+
     # Interface that RLE will call ------------------------------------------
     def pull_next_action(self, agent_id: str) -> Optional[CZLAction]:
         """Called by RLE._compute_next_action. Returns a CZLAction whose
@@ -191,6 +207,7 @@ class CZLAutonomyEngine:
         if self._latest_residual is None:
             return None
         fc = self.compute_focus()
+        self._derive_subfile(fc)
         desc_payload = {
             "rationale": fc.rationale,
             "focus_constraint": fc.to_dict(),

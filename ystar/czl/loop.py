@@ -865,18 +865,27 @@ def run_scenario(
         _next_action = _czl_autonomy.pull_next_action("czl-agent")
         if _next_action is not None and _next_action.focus_constraint is not None:
             _active_focus_constraint = _next_action.focus_constraint
-            # v5.2: merge scenario's per-field enforcement override so
-            # scenario-specific knowledge (e.g. "source file is read-only
-            # for test_gen") softens cluster-derived allowed_files.
+            # v5.2/v5.3: merge scenario override. Accepts two shapes:
+            #   v5.2 flat: {field: level}
+            #   v5.3 nested: {"enforcement": {field: level}, "forbidden_operations": {...}}
             try:
                 _scen_override = request.scenario.focus_constraint_enforcement_override()
             except AttributeError:
                 _scen_override = None
             if _scen_override:
-                _active_focus_constraint.enforcement = {
-                    **_active_focus_constraint.enforcement,
-                    **_scen_override,
-                }
+                _enf_part = _scen_override.get("enforcement") if (
+                    isinstance(_scen_override, dict) and "enforcement" in _scen_override
+                ) else _scen_override   # v5.2 flat fallback
+                if _enf_part:
+                    _active_focus_constraint.enforcement = {
+                        **_active_focus_constraint.enforcement, **_enf_part,
+                    }
+                # v5.3 scenario-domain fields:
+                if isinstance(_scen_override, dict) and _scen_override.get("forbidden_operations"):
+                    _active_focus_constraint.forbidden_operations = set(
+                        tuple(t) if isinstance(t, list) else t
+                        for t in _scen_override["forbidden_operations"]
+                    )
             contract_dict["_focus_constraint"] = _active_focus_constraint.to_dict()
 
         # v5.0.2: drain any rejections recorded by scenario.apply_action this iter
