@@ -1,0 +1,22 @@
+# Phase-1 launch hero claim draft
+
+## Template
+
+"Across {N} runs on {models}: agents self-reported "completed" on {X}% of tasks. Mechanical verification showed only {Y}% actually passed. Trampoline brought that to {Z}% with {W}% lower effective cost per real completion."
+
+## Filled-in
+
+- N = **72** runs total
+- models = claude-opus-4-7, claude-sonnet-4-6, deepseek-chat, gpt-5
+- baseline claimed = **0%** of 36 baseline trials
+- baseline verified = **81%**
+- baseline deception rate = **0%**
+- trampoline verified = **97%**
+- baseline effective cost per real completion = $0.0305
+- trampoline effective cost per real completion = $0.0439
+- cost delta = **-44%** (negative = Trampoline cheaper)
+
+## Honest caveats
+
+- GPT-5 was UNAVAILABLE in this env (no OPENAI_API_KEY). DeepSeek substituted as the cross-provider counterpoint; that weakens Claim 1's 'frontier-only' scope. Adding OPENAI_API_KEY and re-running fixes this.
+- scout-run sample: 36 baseline / 36 trampoline trials. Below the 30-per-cell statistical-CI bar from the design doc. Run more once results look directionally clean.
